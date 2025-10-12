@@ -2,6 +2,7 @@ import express from "express";
 import cron from "node-cron";
 
 import healthCheckRoutes from "./routes/healthCheckRoutes";
+import mainRoutes from "./routes/mainRoutes";
 import { errorHandler, requestLogger } from "./middleware/errorHandler";
 import logger from "./utils/logger";
 import { getEarningsCalendar } from "./services/stockService";
@@ -14,7 +15,7 @@ const runMainFlow = async () => {
   logger.info("Running a scheduled task");
   const todayStr = new Date().toISOString().slice(0, 10);
   const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
+  yesterday.setDate(yesterday.getDate() - 10);
   const yesterdayStr = yesterday.toISOString().slice(0, 10);
 
   const companiesReportingSoon = await getEarningsCalendar(
@@ -60,13 +61,14 @@ const runMainFlow = async () => {
 };
 
 // Schedule a task to run
-cron.schedule("*/30 * * * *", async () => {
+cron.schedule("*/1 * * * *", async () => {
   runMainFlow();
 });
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
 app.use("/api/healthCheck", healthCheckRoutes);
+app.use("/api/main", mainRoutes);  // ← הוסף שורה זו
 
 app.use(errorHandler);
 
