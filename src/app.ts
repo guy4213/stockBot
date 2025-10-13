@@ -61,7 +61,7 @@ const runMainFlow = async () => {
 };
 
 // Schedule a task to run
-cron.schedule("*/1 * * * *", async () => {
+cron.schedule("*/30 * * * *", async () => {
   runMainFlow();
 });
 app.use(express.json());
