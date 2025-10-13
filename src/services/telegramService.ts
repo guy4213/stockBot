@@ -6,7 +6,7 @@ import { StockData } from "../types";
 dotenv.config({ quiet: true });
 
 const token = process.env.TELEGRAM_BOT_TOKEN as string;
-const bot = new TelegramBot(token);
+const bot = new TelegramBot(token, { polling: true });
 
 logger.info("Telegram bot initialized");
 
