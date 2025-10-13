@@ -43,73 +43,165 @@ const calculateTradeParams = (currentPrice: number, reportStatus: string) => {
   return null;
 };
 
+// export const mainFlow = async (symbol: string) => {
+//   // get info from fmg
+//   const stockData = await getFmgData(symbol);
+//   let reportStatus = "ניטרלי";
+//   if (stockData) {
+//     if (
+//       stockData.lastEpsChangePercent >= 10 &&
+//       stockData.lastRevenueChangePercent >= 5 &&
+//       stockData.yoyEpsChange >= 20 &&
+//       stockData.yoyRevenueChange > 15 &&
+//       stockData.yoyFreeCashFlowChange > 0
+//     ) {
+//       reportStatus = "חיובי מאוד מאוד ";
+//     } else if (count(stockData)) {
+//       reportStatus = "חיובי מאוד";
+//     } else if (
+//       stockData.lastEpsChangePercent <= -10 ||
+//       stockData.lastRevenueChangePercent <= -5 ||
+//       stockData.yoyEpsChange <= 0 ||
+//       stockData.yoyRevenueChange <= 0 ||
+//       stockData.yoyFreeCashFlowChange <= 0
+//     ) {
+//       reportStatus = "שלילי";
+//     }
+//     stockData.reportStatus = reportStatus;
+//     if (!stockData.currentPrice || !stockData.marketCap) {
+//   logger.info(`Skipping ${symbol} - missing market data after filtering`);
+//           return;
+//         }
+
+//     if (stockData.reportStatus !== "ניטרלי") {
+    
+//     // 🆕 חישוב פרמטרי מסחר (Entry, Target, Stop)
+//     const tradeParams = calculateTradeParams(stockData.currentPrice, reportStatus);
+    
+//     if (tradeParams) {
+//       stockData.tradeParams = tradeParams;
+      
+//       // 🆕 הדפסת פרטי המסחר ללוג
+//       logger.info(
+//         `\n📊 ${symbol} - ${reportStatus}\n` +
+//         `   💰 Current Price: $${stockData.currentPrice}\n` +
+//         `   ${tradeParams.direction}\n` +
+//         `   📍 Entry: ${tradeParams.entry}\n` +
+//         `   🎯 Target 1: ${tradeParams.targetFirst}\n` +
+//         `   🎯 Target 2: ${tradeParams.targetSecond}\n` +
+//         `   🛑 Stop Loss: ${tradeParams.stop}\n` +
+//         `   ⚖️  Risk:Reward = ${tradeParams.riskReward}`
+//       );
+//     }
+
+//     // send to AI for analysis
+//     if (aiAnalysisEnabled) {
+//       const aiSummery = await generateText(stockData);
+//       stockData.aiSummery = aiSummery;
+//     }
+    
+//     // send email/telegram if needed
+//     if (sendIsEnabled) {
+//       await sendEmail(stockData);
+//       await sendTelegramMessage(stockData);
+//     }
+    
+//   } else {
+//     logger.info(
+//       `${symbol} - Neutral report, no notification sent`
+//     );
+//   }
+// };
+// }
+
 export const mainFlow = async (symbol: string) => {
-  // get info from fmg
-  const stockData = await getFmgData(symbol);
-  let reportStatus = "ניטרלי";
-  if (stockData) {
-    if (
-      stockData.lastEpsChangePercent >= 10 &&
-      stockData.lastRevenueChangePercent >= 5 &&
-      stockData.yoyEpsChange >= 20 &&
-      stockData.yoyRevenueChange > 15 &&
-      stockData.yoyFreeCashFlowChange > 0
-    ) {
-      reportStatus = "חיובי מאוד מאוד ";
-    } else if (count(stockData)) {
-      reportStatus = "חיובי מאוד";
-    } else if (
-      stockData.lastEpsChangePercent <= -10 ||
-      stockData.lastRevenueChangePercent <= -5 ||
-      stockData.yoyEpsChange <= 0 ||
-      stockData.yoyRevenueChange <= 0 ||
-      stockData.yoyFreeCashFlowChange <= 0
-    ) {
-      reportStatus = "שלילי";
-    }
-    stockData.reportStatus = reportStatus;
-    if (!stockData.currentPrice || !stockData.marketCap) {
-  logger.info(`Skipping ${symbol} - missing market data after filtering`);
-          return;
+  try {
+    // get info from fmg
+    const stockData = await getFmgData(symbol);
+    let reportStatus = "ניטרלי";
+    
+    if (stockData) {
+      if (
+        stockData.lastEpsChangePercent >= 10 &&
+        stockData.lastRevenueChangePercent >= 5 &&
+        stockData.yoyEpsChange >= 20 &&
+        stockData.yoyRevenueChange > 15 &&
+        stockData.yoyFreeCashFlowChange > 0
+      ) {
+        reportStatus = "חיובי מאוד מאוד ";
+      } else if (count(stockData)) {
+        reportStatus = "חיובי מאוד";
+      } else if (
+        stockData.lastEpsChangePercent <= -10 ||
+        stockData.lastRevenueChangePercent <= -5 ||
+        stockData.yoyEpsChange <= 0 ||
+        stockData.yoyRevenueChange <= 0 ||
+        stockData.yoyFreeCashFlowChange <= 0
+      ) {
+        reportStatus = "שלילי";
+      }
+      
+      stockData.reportStatus = reportStatus;
+      
+      if (!stockData.currentPrice || !stockData.marketCap) {
+        logger.info(`Skipping ${symbol} - missing market data after filtering`);
+        return;
+      }
+
+      if (stockData.reportStatus !== "ניטרלי") {
+        // 🆕 חישוב פרמטרי מסחר
+        const tradeParams = calculateTradeParams(stockData.currentPrice, reportStatus);
+        
+        if (tradeParams) {
+          stockData.tradeParams = tradeParams;
+          
+          logger.info(
+            `\n📊 ${symbol} - ${reportStatus}\n` +
+            `   💰 Current Price: $${stockData.currentPrice}\n` +
+            `   ${tradeParams.direction}\n` +
+            `   📍 Entry: ${tradeParams.entry}\n` +
+            `   🎯 Target 1: ${tradeParams.targetFirst}\n` +
+            `   🎯 Target 2: ${tradeParams.targetSecond}\n` +
+            `   🛑 Stop Loss: ${tradeParams.stop}\n` +
+            `   ⚖️  Risk:Reward = ${tradeParams.riskReward}`
+          );
         }
 
-    if (stockData.reportStatus !== "ניטרלי") {
-    
-    // 🆕 חישוב פרמטרי מסחר (Entry, Target, Stop)
-    const tradeParams = calculateTradeParams(stockData.currentPrice, reportStatus);
-    
-    if (tradeParams) {
-      stockData.tradeParams = tradeParams;
-      
-      // 🆕 הדפסת פרטי המסחר ללוג
-      logger.info(
-        `\n📊 ${symbol} - ${reportStatus}\n` +
-        `   💰 Current Price: $${stockData.currentPrice}\n` +
-        `   ${tradeParams.direction}\n` +
-        `   📍 Entry: ${tradeParams.entry}\n` +
-        `   🎯 Target 1: ${tradeParams.targetFirst}\n` +
-        `   🎯 Target 2: ${tradeParams.targetSecond}\n` +
-        `   🛑 Stop Loss: ${tradeParams.stop}\n` +
-        `   ⚖️  Risk:Reward = ${tradeParams.riskReward}`
-      );
+        // send to AI for analysis
+        if (aiAnalysisEnabled) {
+          try {
+            const aiSummery = await generateText(stockData);
+            stockData.aiSummery = aiSummery;
+            logger.info(`✅ AI summary generated for ${symbol}`);
+          } catch (error) {
+            logger.error(`❌ Failed to generate AI summary for ${symbol}:`, error);
+            stockData.aiSummery = "AI analysis unavailable";
+          }
+        }
+        
+        // send email/telegram if needed
+        if (sendIsEnabled) {
+          try {
+            // ✅ IMPORTANT: Add await here!
+            await sendEmail(stockData);
+            logger.info(`✅ Email sent successfully for ${symbol}`);
+          } catch (error) {
+            logger.error(`❌ Failed to send email for ${symbol}:`, error);
+          }
+          
+          try {
+            // ✅ IMPORTANT: Add await here!
+            await sendTelegramMessage(stockData);
+            logger.info(`✅ Telegram message sent successfully for ${symbol}`);
+          } catch (error) {
+            logger.error(`❌ Failed to send Telegram message for ${symbol}:`, error);
+          }
+        }
+      } else {
+        logger.info(`${symbol} - Neutral report, no notification sent`);
+      }
     }
-
-    // send to AI for analysis
-    if (aiAnalysisEnabled) {
-      const aiSummery = await generateText(stockData);
-      stockData.aiSummery = aiSummery;
-    }
-    
-    // send email/telegram if needed
-    if (sendIsEnabled) {
-      await sendEmail(stockData);
-      await sendTelegramMessage(stockData);
-    }
-    
-  } else {
-    logger.info(
-      `${symbol} - Neutral report, no notification sent`
-    );
+  } catch (error) {
+    logger.error(`❌ Error in mainFlow for ${symbol}:`, error);
   }
 };
-}
