@@ -45,7 +45,7 @@ const runMainFlow = async () => {
   }
 
   // 🔹 טען tracking
-  const allProcessedReports = readFile("previouslySentReports.json") as any;
+  const allProcessedReports = readFile("./previouslySentReports.json") as any;
   
   // 🆕 הדפסת כל המניות שקיימות ב-JSON לפני הניקוי
   logger.info(`\n${"=".repeat(60)}`);
@@ -182,7 +182,7 @@ const runMainFlow = async () => {
       };
 
       // 🔹 שמור מיד (למקרה של crash)
-      saveFile("previouslySentReports.json", cleanedTracking);
+      saveFile("./previouslySentReports.json", cleanedTracking);
       
       processedCount++;
       logger.info(`✅ ${symbol} processed and saved successfully`);
@@ -236,7 +236,7 @@ const runMainFlow = async () => {
 };
 
 // 🔹 הרצה מיידית בהפעלה (אופציונלי - להסרת ההערה לבדיקה)
-// runMainFlow();
+runMainFlow();
 
 // 🔹 Schedule: כל 30 דקות
 cron.schedule("*/30 * * * *", async () => {
