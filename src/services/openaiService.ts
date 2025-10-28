@@ -131,88 +131,225 @@ const openai = new OpenAI({
 
 export async function generateText(stockData: any): Promise<string> {
   
-  // בניית הפורמט הדינמי
-  const outputFormat = `
-🔹 סימול: ${stockData.symbol}
-🏢 חברה: ${stockData.companyName || stockData.symbol}
-💰 מחיר נוכחי: $${stockData.currentPrice}
-📊 שווי שוק: $${(stockData.marketCap / 1_000_000_000).toFixed(1)}B
-📈 נפח מסחר יומי: ${(stockData.avgVolume / 1_000_000).toFixed(1)}M מניות
+  // 🎯 מערכת Mira – גרסת PRO 2025 - Prompt מלא
+  const systemPrompt = `
+אתה מערכת ניתוח פיננסי מתקדמת PRO 2025. 
+תפקידך לנתח דוחות כספיים רבעוניים ולסווג אותם בדיוק רב באחת מ-3 קטגוריות:
+1️⃣ חיובי מאוד מאוד (99%) - רק דוחות יוצאי דופן
+2️⃣ חיובי מאוד - דוחות חזקים
+3️⃣ שלילי - רק עם לפחות 6-7 אינדיקציות שליליות ברורות
 
-📊 ביצועים רבעוניים:
-- EPS בפועל: $${stockData.lastEpsActual} (תחזית: $${stockData.lastEpsEstimated})
-  → Beat של ${stockData.lastEpsChangePercent}%
-  
-- הכנסות בפועל: $${(stockData.lastRevenueActual / 1_000_000).toFixed(0)}M (תחזית: $${(stockData.lastRevenueEstimated / 1_000_000).toFixed(0)}M)
-  → Beat של ${stockData.lastRevenueChangePercent}%
+🟢 שלב 1: סינון ראשוני (כבר נעשה)
+✅ שווי שוק ≥ 300M$ 
+✅ נפח מסחר ≥ 5M מניות
 
-📈 צמיחה שנתית (YoY):
-- EPS: ${stockData.yoyEpsChange > 0 ? '+' : ''}${stockData.yoyEpsChange}%
-- הכנסות: ${stockData.yoyRevenueChange > 0 ? '+' : ''}${stockData.yoyRevenueChange}%
-- תזרים מזומנים חופשי: ${stockData.yoyFreeCashFlowChange > 0 ? '+' : ''}${stockData.yoyFreeCashFlowChange}%
+🟢 שלב 2: מנגנון ניקוד משוקלל (8 פרמטרים)
 
-🎯 סיווג: ${stockData.reportStatus}
+| פרמטר | תנאי חיובי | ניקוד | תנאי שלילי | ניקוד |
+|--------|-------------|-------|-------------|-------|
+| EPS vs תחזית | >+5% | +2 | <−10% | −2 |
+| Revenue vs תחזית | >+3% | +1.5 | <−5% | −1.5 |
+| Guidance | raised/maintained | +1 | lowered | −1.5 |
+| YoY EPS | >+10% | +0.5 | <0% | −1 |
+| YoY Revenue | >+5% | +0.25 | <0% | −0.5 |
+| Free Cash Flow | חיובי/משתפר | +0.5 | שלילי/נחלש | −1 |
+| Margins | improving/stable | +0.25 | declining | −0.5 |
+| Sentiment | positive/neutral | +0.5 | negative | −1 |
 
-💼 המלצת מסחר:
-${stockData.tradeParams ? `
-- כיוון: ${stockData.tradeParams.direction}
-- כניסה: ${stockData.tradeParams.entry}
-- יעד ראשון: ${stockData.tradeParams.targetFirst} (+5%)
-- יעד שני: ${stockData.tradeParams.targetSecond} (+15%)
-- סטופ לוס: ${stockData.tradeParams.stop} (-5%)
-- יחס סיכון/סיכוי: ${stockData.tradeParams.riskReward}
-` : 'אין המלצת מסחר'}
+🟢 שלב 3: בקרה ושיקול דעת AI
 
-📝 סיכום והמלצה:
-[כאן תכתוב 3-4 שורות ניתוח מקצועי בעברית]
+✅ תיקון חיובי (+1):
+אם EPS וגם Revenue בטווח −10% עד +5%, 
+אך יש 3+ פרמטרים חיוביים אחרים (Guidance raised, FCF חיובי, Margins improving, Sentiment positive)
+
+⚠️ בקרת ירידה (−1):
+- ירידה שנתית ב-EPS מעל 20%
+- ירידה בשולי רווח ביותר מ-200bps (marginChange < -2%)
+- הורדת Guidance (lowered)
+- FCF שלילי וממשיך להחמיר
+
+🟢 שלב 4: סף סיווג סופי
+
+| ניקוד כולל | סיווג | החלטה |
+|------------|-------|-------|
+| ≥ +4 | חיובי מאוד מאוד (99%) | LONG |
+| +2.5 עד +3.99 | חיובי מאוד | LONG |
+| < +2.5 | שלילי | SHORT |
+
+🔴 החמרת "שלילי": חייב 6+ אינדיקציות שליליות:
+(ירידה EPS, ירידה Revenue, הורדת Guidance, FCF שלילי, ירידת Margins, 
+סנטימנט שלילי, צמיחה YoY שלילית)
+
+🧠 כללי ניתוח:
+1. השתמש בכל 8 הפרמטרים - לא רק חלקם
+2. חשב ניקוד מדויק לפי הטבלה
+3. החל תיקוני בקרה בהתאם
+4. סווג לפי הניקוד הסופי
+5. הנתונים מגיעים ממקורות אמינים (FMP API)
+6. אם פרמטר = "unavailable" → תן לו ניקוד 0 (ניטרלי)
 `;
 
-  const instructions = `
-אתה אנליסט פיננסי מומחה. קיבלת את הנתונים הבאים על דוח רווח רבעוני.
+  const userPrompt = `
+נתח את הדוח הבא בהתאם למערכת PRO 2025:
 
-**תפקידך:**
-1. לנתח את הנתונים הכמותיים שסופקו
-2. לכתוב סיכום מקצועי של 3-4 שורות בעברית
-3. להתייחס לנקודות החוזק/חולשה העיקריות
-4. לתת המלצה ברורה (קנייה/מכירה/המתנה)
+📊 נתוני הדוח:
 
-**חשוב:**
-- אל תמציא נתונים שלא סופקו לך
-- אל תשנה את הסיווג (${stockData.reportStatus}) - הוא כבר חושב
-- התמקד בניתוח איכותי של המשמעות של המספרים
-- השתמש בשפה מקצועית אבל ברורה
+**פרטי חברה:**
+- סימול: ${stockData.symbol}
+- שם: ${stockData.companyName || stockData.symbol}
+- מחיר נוכחי: $${stockData.currentPrice}
+- שווי שוק: $${(stockData.marketCap / 1_000_000_000).toFixed(1)}B
+- נפח מסחר ממוצע: ${(stockData.avgVolume / 1_000_000).toFixed(1)}M
 
-**כל המידע שאתה צריך נמצא כאן:**
-${JSON.stringify(stockData, null, 2)}
+**1. EPS:**
+- בפועל: $${stockData.lastEpsActual}
+- תחזית: $${stockData.lastEpsEstimated}
+- סטייה: ${stockData.lastEpsChangePercent > 0 ? '+' : ''}${stockData.lastEpsChangePercent}%
 
-**התשובה שלך חייבת להיות בפורמט הזה בדיוק:**
+**2. Revenue:**
+- בפועל: $${(stockData.lastRevenueActual / 1_000_000).toFixed(0)}M
+- תחזית: $${(stockData.lastRevenueEstimated / 1_000_000).toFixed(0)}M
+- סטייה: ${stockData.lastRevenueChangePercent > 0 ? '+' : ''}${stockData.lastRevenueChangePercent}%
 
-${outputFormat}
+**3. Guidance (מבוסס Analyst Estimates):**
+- מצב: ${stockData.guidance?.guidance || "unavailable"}
+- טרנד: ${stockData.guidance?.guidanceTrend || "neutral"}
+- שינוי EPS צפוי: ${stockData.guidance?.estimatedEpsGrowth ? stockData.guidance.estimatedEpsGrowth + '%' : 'N/A'}
 
-**דוגמה לסיכום טוב:**
-"החברה הציגה ביצועים חזקים במיוחד עם Beat משמעותי הן ב-EPS והן בהכנסות. 
-הצמיחה השנתית של ${stockData.yoyRevenueChange}% בהכנסות ו-${stockData.yoyEpsChange}% ב-EPS 
-מעידה על מומנטום חיובי. תזרים המזומנים החופשי ${stockData.yoyFreeCashFlowChange > 0 ? 'משתפר' : 'נחלש'} 
-מה שמחזק את איכות הרווחים. בהינתן ${stockData.reportStatus}, זוהי הזדמנות ${stockData.reportStatus.includes('חיובי') ? 'קנייה' : 'מכירה'} 
-עם פוטנציאל עליה של עד 15% לטווח קצר-בינוני."
+**4. YoY Growth:**
+- EPS: ${stockData.yoyEpsChange > 0 ? '+' : ''}${stockData.yoyEpsChange}%
+- Revenue: ${stockData.yoyRevenueChange > 0 ? '+' : ''}${stockData.yoyRevenueChange}%
 
-עכשיו כתוב את הדוח בעברית בפורמט שצוין לעיל.
+**5. YoY Revenue:**
+- צמיחה: ${stockData.yoyRevenueChange > 0 ? '+' : ''}${stockData.yoyRevenueChange}%
+
+**6. Free Cash Flow:**
+- YoY שינוי: ${stockData.yoyFreeCashFlowChange > 0 ? '+' : ''}${stockData.yoyFreeCashFlowChange}%
+- מצב: ${stockData.yoyFreeCashFlowChange > 0 ? 'חיובי' : 'שלילי'}
+
+**7. Margins (שולי רווח):**
+- Gross Margin: ${stockData.margins?.grossMargin || 'N/A'}%
+- Operating Margin: ${stockData.margins?.operatingMargin || 'N/A'}%
+- Net Margin: ${stockData.margins?.netMargin || 'N/A'}%
+- שינוי Net Margin: ${stockData.margins?.marginChange || 'N/A'}%
+- טרנד: ${stockData.margins?.marginTrend || "unknown"}
+
+**8. Sentiment (סנטימנט שוק):**
+- מצב: ${stockData.sentiment?.sentiment || "neutral"}
+- ציון: ${stockData.sentiment?.sentimentScore || "N/A"}
+- טרנד: ${stockData.sentiment?.sentimentTrend || "neutral"}
+
+---
+
+🎯 **בצע את הניתוח לפי שלבים:**
+
+**שלב 1: חשב ניקוד עבור כל פרמטר**
+
+| פרמטר | ערך | ניקוד |
+|--------|-----|-------|
+| EPS vs תחזית | ${stockData.lastEpsChangePercent}% | ? |
+| Revenue vs תחזית | ${stockData.lastRevenueChangePercent}% | ? |
+| Guidance | ${stockData.guidance?.guidanceTrend} | ? |
+| YoY EPS | ${stockData.yoyEpsChange}% | ? |
+| YoY Revenue | ${stockData.yoyRevenueChange}% | ? |
+| FCF | ${stockData.yoyFreeCashFlowChange}% | ? |
+| Margins | ${stockData.margins?.marginTrend} | ? |
+| Sentiment | ${stockData.sentiment?.sentimentTrend} | ? |
+
+**שלב 2: תיקוני בקרה**
+בדוק:
+- האם EPS וגם Revenue חלשים אבל יש 3+ פרמטרים חזקים? → +1
+- האם יש ירידת EPS >20%? → -1
+- האם ירידת Margins >2%? → -1
+- האם הורדת Guidance? → כבר במערכת הניקוד
+
+**שלב 3: סיווג סופי**
+סכום ניקוד → סיווג
+
+---
+
+📝 **התשובה חייבת להיות בפורמט הזה בדיוק:**
+
+📌 סימול: ${stockData.symbol}
+🏢 חברה: ${stockData.companyName || stockData.symbol}
+📅 תאריך ניתוח: ${new Date().toLocaleDateString('he-IL')}
+
+📊 פרטי דוח:
+• EPS: ${stockData.lastEpsActual} מול תחזית ${stockData.lastEpsEstimated} (סטייה ${stockData.lastEpsChangePercent > 0 ? '+' : ''}${stockData.lastEpsChangePercent}%)
+• Revenues: $${(stockData.lastRevenueActual / 1_000_000).toFixed(0)}M מול תחזית $${(stockData.lastRevenueEstimated / 1_000_000).toFixed(0)}M (סטייה ${stockData.lastRevenueChangePercent > 0 ? '+' : ''}${stockData.lastRevenueChangePercent}%)
+• Guidance: ${stockData.guidance?.guidance === 'unavailable' ? 'לא זמין - נחשב ניטרלי' : stockData.guidance?.guidance}
+• Free Cash Flow: ${stockData.yoyFreeCashFlowChange > 0 ? 'חיובי' : 'שלילי'} (YoY: ${stockData.yoyFreeCashFlowChange > 0 ? '+' : ''}${stockData.yoyFreeCashFlowChange}%)
+• YoY Growth: EPS ${stockData.yoyEpsChange > 0 ? '+' : ''}${stockData.yoyEpsChange}% | Revenue ${stockData.yoyRevenueChange > 0 ? '+' : ''}${stockData.yoyRevenueChange}%
+• שולי רווח: ${stockData.margins?.marginTrend === 'unknown' ? 'לא זמין - נחשב ניטרלי' : `Net ${stockData.margins?.netMargin}% (${stockData.margins?.marginTrend})`}
+• סנטימנט: ${stockData.sentiment?.sentiment} (${stockData.sentiment?.sentimentScore || 'N/A'})
+
+⚖️ טבלת ניקוד (הצג חישוב מפורט):
+
+| פרמטר | תוצאה | ניקוד |
+|--------|--------|-------|
+| EPS vs תחזית | ${stockData.lastEpsChangePercent}% | [חשב לפי כללים] |
+| Revenue vs תחזית | ${stockData.lastRevenueChangePercent}% | [חשב לפי כללים] |
+| Guidance | ${stockData.guidance?.guidanceTrend} | [חשב לפי כללים] |
+| YoY EPS | ${stockData.yoyEpsChange}% | [חשב לפי כללים] |
+| YoY Revenue | ${stockData.yoyRevenueChange}% | [חשב לפי כללים] |
+| FCF | ${stockData.yoyFreeCashFlowChange}% | [חשב לפי כללים] |
+| Margins | ${stockData.margins?.marginTrend} | [חשב לפי כללים] |
+| Sentiment | ${stockData.sentiment?.sentimentTrend} | [חשב לפי כללים] |
+| **תיקוני בקרה** | [בדוק תנאים] | [+1/0/-1] |
+| **סה"כ ניקוד** | | **[סכום מדויק]** |
+
+⚖️ סיווג סופי: [חיובי מאוד מאוד / חיובי מאוד / שלילי]
+
+📈 המלצת מסחר:
+כיוון: [LONG 🟢 / SHORT 🔴]
+כניסה: $[חשב: current price ± 2%]
+יעד ראשון: $[חשב: +5% או -5%]
+יעד שני: $[חשב: +15% או -15%]
+סטופ לוס: $[חשב: -5% או +5%]
+יחס סיכון/סיכוי: 1:3
+
+🧩 שיקול דעת AI:
+[כתוב כאן ניתוח איכותי של 3-4 שורות המסביר:
+1. מדוע הדוח קיבל את הסיווג הזה (התייחס לניקוד הכולל)
+2. נקודות חוזק/חולשה עיקריות (צין פרמטרים ספציפיים)
+3. האם Margins/Guidance/Sentiment שיחקו תפקיד משמעותי?
+4. המלצה אסטרטגית]
+
+📝 מסקנה:
+[סיכום של 2-3 שורות עם המלצה ברורה - קנייה/מכירה/המתנה]
+
+---
+
+**חשוב מאוד:**
+- חשב את הניקוד המדויק לפי הטבלה
+- אל תשכח לבדוק תיקוני בקרה
+- אם Guidance/Margins/Sentiment = unavailable → תן ניקוד 0
+- הסבר את החישוב בצורה ברורה
 `;
 
   try {
-    logger.info("Sending prompt to ChatGPT");
+    logger.info("🤖 Sending PRO 2025 prompt to ChatGPT for advanced analysis");
     
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // או המודל שאתה משתמש בו
-      messages: [{ role: "user", content: instructions }],
-      temperature: 0.7,
+      model: "gpt-4o-mini", // דורש GPT-4 לניתוח מורכב. אם אין גישה, השתמש ב-"gpt-4o-mini"
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.3, // נמוך יותר לדיוק רב יותר בניקוד
+      max_tokens: 2500,
     });
     
     const answer = completion.choices[0].message.content;
-    return answer || "Can't get AI response";
+    
+    logger.info("✅ AI analysis completed successfully");
+    
+    return answer || "❌ לא ניתן לקבל תשובה מה-AI";
     
   } catch (error: any) {
-    console.error("OpenAI API error:", error.message);
+    logger.error("❌ OpenAI API error:", error.message);
     throw new Error("Failed to generate text from OpenAI");
   }
 }
+
+

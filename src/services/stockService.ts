@@ -8,6 +8,7 @@ const apiKey = process.env.FMP_API_KEY;
 // 🔹 שני Base URLs שונים
 const stableBaseUrl = "https://financialmodelingprep.com/stable";
 const apiBaseUrl = "https://financialmodelingprep.com/api/v3";
+const apiV4BaseUrl = "https://financialmodelingprep.com/api/v4";
 
 export type EarningRes = {
   symbol: string;
@@ -52,7 +53,6 @@ export const getCashFlow = async (symbol: string) => {
   }
 };
 
-// 🆕 NEW: שליפת נתוני שוק - Market Cap, Volume, Price
 export const getQuote = async (symbol: string) => {
   try {
     const url = `${apiBaseUrl}/quote/${symbol}?apikey=${apiKey}`;
@@ -79,6 +79,82 @@ export const getQuote = async (symbol: string) => {
     };
   } catch (e) {
     logger.error(`getQuote error for ${symbol}:`, e);
+    return null;
+  }
+};
+
+// 🆕 NEW: שליפת Income Statement למאר Margins
+export const getIncomeStatement = async (symbol: string) => {
+  try {
+    const url = `${apiBaseUrl}/income-statement/${symbol}?period=quarter&limit=5&apikey=${apiKey}`;
+    const response = await axios.get(url);
+    
+    if (!response.data || response.data.length === 0) {
+      logger.warn(`No income statement data for ${symbol}`);
+      return null;
+    }
+    
+    return response.data;
+  } catch (e) {
+    logger.error(`getIncomeStatement error for ${symbol}:`, e);
+    return null;
+  }
+};
+
+// 🆕 NEW: שליפת Analyst Estimates (כקירוב ל-Guidance)
+export const getAnalystEstimates = async (symbol: string) => {
+  try {
+    const url = `${apiBaseUrl}/analyst-estimates/${symbol}?period=quarter&limit=2&apikey=${apiKey}`;
+    const response = await axios.get(url);
+    
+    if (!response.data || response.data.length === 0) {
+      logger.warn(`No analyst estimates for ${symbol}`);
+      return null;
+    }
+    
+    return response.data;
+  } catch (e) {
+    logger.error(`getAnalystEstimates error for ${symbol}:`, e);
+    return null;
+  }
+};
+
+// 🆕 NEW: שליפת Social Sentiment
+export const getSocialSentiment = async (symbol: string) => {
+  try {
+    const url = `${apiV4BaseUrl}/social-sentiment?symbol=${symbol}&limit=5&apikey=${apiKey}`;
+    const response = await axios.get(url);
+    
+    if (!response.data || response.data.length === 0) {
+      logger.warn(`No social sentiment data for ${symbol}`);
+      return null;
+    }
+    
+    return response.data;
+  } catch (e) {
+    logger.error(`getSocialSentiment error for ${symbol}:`, e);
+    return null;
+  }
+};
+
+// 🆕 NEW: שליפת Earnings Call Transcript (אופציונלי - כבד!)
+export const getEarningsTranscript = async (
+  symbol: string,
+  quarter: number,
+  year: number
+) => {
+  try {
+    const url = `${apiBaseUrl}/earning_call_transcript/${symbol}?quarter=${quarter}&year=${year}&apikey=${apiKey}`;
+    const response = await axios.get(url);
+    
+    if (!response.data || response.data.length === 0) {
+      logger.warn(`No earnings transcript for ${symbol} Q${quarter} ${year}`);
+      return null;
+    }
+    
+    return response.data[0];
+  } catch (e) {
+    logger.error(`getEarningsTranscript error for ${symbol}:`, e);
     return null;
   }
 };
