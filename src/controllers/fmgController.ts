@@ -271,7 +271,6 @@ export const getFmgData = async (symbol: string): Promise<any> => {
   // 🔹 שלב 9: בניית אובייקט הנתונים המלא
   const stockData = {
     symbol: currentReport.symbol,
-
     // נתוני שוק מ-quote
     currentPrice: quote.price,
     marketCap: quote.marketCap,
