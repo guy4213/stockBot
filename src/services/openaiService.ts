@@ -130,15 +130,6 @@ const openai = new OpenAI({
 // }
 
 
-import { OpenAI } from "openai";
-import dotenv from "dotenv";
-import logger from "../utils/logger"; // הנחה שהנתיב לקובץ הלוגר נכון
-
-dotenv.config({ quiet: true });
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
 
 export async function generateText(stockData: any): Promise<string> {
   
