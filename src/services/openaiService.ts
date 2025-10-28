@@ -132,60 +132,52 @@ const openai = new OpenAI({
 
 
 export async function generateText(stockData: any): Promise<string> {
-  // 🎯 דוגמה לפורמט "דחוס-אבל-מלא" (הכל בהודעה אחת)
-  const hyperCompactFullOutputExample = `
-🔹 **TSLA - Tesla Inc.**
-💰 **מחיר:** $235.50 | **שווי:** $750.2B | **נפח:** 125.3M
-
-**סיכום הדוח**
-• **EPS:** $2.06 vs $1.76 (Beat +17%)
-• **Revenue:** $484M vs $438M (Beat +11%)
-• **YoY:** EPS +15% | Revenue +10.5%
-• **Guidance:** Raised (שיפור)
-• **FCF:** חיובי ומשתפר
-• **Margins:** Net 12.5% (משתפר)
-• **Sentiment:** חיובי
-
-**פירוט ניקוד (+6.5)**
-• EPS Beat (+17%): +2.0
-• Revenue Beat (+11%): +1.5
-• Guidance (Raised): +1.0
-• YoY EPS (+15%): +0.5
-• YoY Revenue (+10.5%): +0.25
-• FCF (Improving): +0.5
-• Margins (Improving): +0.25
-• Sentiment (Positive): +0.5
-• תיקון בקרה: 0
-
-🏆 **סיווג: חיובי מאוד מאוד (99%)**
-
-**המלצת מסחר: 🟢 LONG**
-• **כניסה:** $235–$240
-• **יעד 1:** $270 | **יעד 2:** $300
-• **סטופ:** $225 (יחס 1:3.2)
-
-**ניתוח ומסקנות AI**
-• **ניתוח:** דוח מצטיין עם Beat חזק ב-EPS (+17%) ו-Revenue (+11%).
-• **מומנטUM:** העלאת Guidance, FCF חזק וצמיחה שנתית תומכים בהמשך.
-• **רווחיות:** שיפור בשולי הרווח (Net 12.5%) מראה על יעילות.
-• **מסקנה:** קנייה חזקה. הנתונים הפונדמנטליים מצוינים ומצביעים על המשך עליות.
+  // 🎯 דוגמה לפורמט הפלט הסופי - *בדיוק* לפי התבנית ששלחת
+  const finalOutputFormatExample = `
+📌 סימול: TSLA
+📅 תאריך דוח: 28.10.2025
+📊 פרטי דוח:
+• EPS: $2.06 מול
+תחזית $1.76 (סטייה
++17%)
+• Revenues: $484M מול
+תחזית $438M (סטייה
++11%)
+• Guidance: Raised (שיפור)
+• Free Cash Flow: חיובי ומשתפר
+• YoY Growth: EPS +15% | Revenue +10.5%
+• שולי רווח: Net 12.5% (משתפר)
+• סנטימנט הנהלה: חיובי
+⚖️ ניקוד כולל: +6.5
+⚖️ סיווג סופי: חיובי מאוד מאוד (99%)
+📈 המלצת מסחר:
+כיוון: 🟢 LONG
+כניסה: $235–$240
+יעד רווח: $270
+סטופ לוס: $225
+🧩 שיקול דעת AI:
+דוח מצטיין עם Beat חזק ב-EPS/Revenue. העלאת Guidance ו-FCF חזק תומכים בהמשך.
+📝 מסקנה:
+קנייה חזקה. נתונים פונדמנטליים חזקים מצביעים על המשך עליות.
 `;
 
   // הפרומפט המערכתי המגדיר את אישיות ה-AI ואת כללי הניקוד
   const systemPrompt = `
 אתה מערכת ניתוח פיננסי PRO 2025.
-תפקידך: ניתוח דוחות כספיים והפקת דוח **דחוס מאוד** אך **מלא** להודעת טלגרם **בודדת**.
+תפקידך: לנתח דוחות כספיים לפי כללי הניקוד הפנימיים, ולהחזיר את הפלט *אך ורק* בתבנית הסיכום שסופקה.
 
-🎯 **פורמט פלט נדרש (קריטי!):**
-היעד הוא הודעת טלגרם **בודדת** (עד 4096 תווים).
-הפורמט חייב להיות דחוס מאוד, אבל לכלול את **כל** הנתונים, כולל פירוט הניקוד.
-**הפוך פסקאות ארוכות (כמו 'ניתוח' ו'מסקנה') לנקודות קצרות (bullet points) כפי שמופיע בדוגמה.**
-השתמש באימוג'ים וכותרות מודגשות, אך **ללא קווים מפרידים**.
+🎯 **פורמט פלט נדרש (חובה!):**
+הפלט חייב להיות *בדיוק* בתבנית הבאה. אין להוסיף שום מידע שלא מופיע בתבנית זו.
+**אל תכלול את פירוט 8 סעיפי הניקוד בפלט הסופי**, אלא רק את הניקוד והסיווג הסופיים.
 
-${hyperCompactFullOutputExample}
+${finalOutputFormatExample}
+
+---
+🔹 מערכת ניקוד פנימית (לשימושך הפנימי בלבד לחישוב)
+---
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔹 הערכת ניקוד משוקלל (8 פרמטרים)
+🔹 מערכת ניקוד משוקלל (8 פרמטרים)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 1️⃣ EPS vs תחזית:
@@ -269,7 +261,7 @@ ${hyperCompactFullOutputExample}
 ✓ "שלילי" רק עם 6+ אינדיקציות שליליות ברורות!
 ✓ חשב את תאריך הדוח לפי התאריך הנוכחי.
 ✓ בהמלצת המסחר: חשב יעדים וסטופ-לוס על בסיס המחיר הנוכחי שסופק.
-✓ בניתוח AI מעמיק, הסבר *מדוע* הניקוד ניתן כפי שניתן (אבל ב-bullet points קצרים!).
+✓ **חשוב מכל**: הפלט הסופי *חייב* להיות *אך ורק* בפורמט של הדוגמה למעלה (החל מ-📌).
 `;
 
   // הפרומפט למשתמש, שמכיל את הנתונים הדינמיים ואת המשימה
@@ -333,16 +325,14 @@ ${hyperCompactFullOutputExample}
    • ציון: ${stockData.sentiment?.sentimentScore || 'N/A'}
    • טרנד: ${stockData.sentiment?.sentimentTrend || 'neutral'}
 
-🎯 בצע ניתוח מלא והחזר *בדיוק* את הפורמט ה**דחוס-אבל-מלא** שהוצג ב-system prompt.
-התחל את התשובה שלך ישירות עם:
-🔹 **${stockData.symbol} - ${stockData.companyName || stockData.symbol}**
-...
+🎯 בצע ניתוח מלא והחזר *בדיוק* את הפורמט שמתחיל ב-'📌 סימול:' כפי שהוצג ב-system prompt.
+אל תכלול שום טקסט לפני "📌 סימול: ${stockData.symbol}".
 `;
 
   // לוגיקת קריאת ה-API
   try {
     logger.info(
-      `Sending HYPER-COMPACT prompt to OpenAI for symbol: ${stockData.symbol}`
+      `Sending FINAL TEMPLATE prompt to OpenAI for symbol: ${stockData.symbol}`
     );
 
     const completion = await openai.chat.completions.create({
@@ -352,7 +342,7 @@ ${hyperCompactFullOutputExample}
         { role: 'user', content: userPrompt },
       ],
       temperature: 0.3, // טמפרטורה נמוכה כדי להיצמד לעובדות ולפורמט
-      max_tokens: 2048, // עדיין צריך מספיק מקום ליצירה, גם אם הפלט קצר
+      max_tokens: 2048, // מספיק מקום לפורמט הסיכום הזה
     });
 
     const answer = completion.choices[0].message.content;
@@ -363,9 +353,10 @@ ${hyperCompactFullOutputExample}
     }
 
     logger.info(
-      `Successfully generated HYPER-COMPACT analysis for ${stockData.symbol} (Length: ${answer.length})`
+      `Successfully generated FINAL TEMPLATE analysis for ${stockData.symbol} (Length: ${answer.length})`
     );
-    return answer;
+    // הפלט אמור להתחיל ישירות עם 📌
+    return answer.trim();
   } catch (error: any) {
     logger.error('OpenAI API error:', error.message);
     console.error('OpenAI API error:', error.message);
