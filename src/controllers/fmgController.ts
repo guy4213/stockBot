@@ -204,15 +204,17 @@ export const getFmgData = async (symbol: string): Promise<any> => {
         );
         guidanceData.estimatedEpsGrowth = epsGrowth;
 
-        if (epsGrowth > 3) {
-          guidanceData.guidanceTrend = "raised"; // ניקוד: +1
-          guidanceData.guidance = "raised";
-        } else if (epsGrowth < -3) {
-          guidanceData.guidanceTrend = "lowered"; // ניקוד: -1.5
-          guidanceData.guidance = "lowered";
-        } else {
-          guidanceData.guidanceTrend = "maintained"; // ניקוד: +1 (יציב = טוב)
-          guidanceData.guidance = "maintained";
+        if (epsGrowth !== null) {
+          if (epsGrowth > 3) {
+            guidanceData.guidanceTrend = "raised"; // ניקוד: +1
+            guidanceData.guidance = "raised";
+          } else if (epsGrowth < -3) {
+            guidanceData.guidanceTrend = "lowered"; // ניקוד: -1.5
+            guidanceData.guidance = "lowered";
+          } else {
+            guidanceData.guidanceTrend = "maintained"; // ניקוד: +1 (יציב = טוב)
+            guidanceData.guidance = "maintained";
+          }
         }
       }
     } else {
