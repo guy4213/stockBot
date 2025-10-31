@@ -83,10 +83,7 @@ export const mainFlow = async (symbol: string) => {
         reportStatus = "חיובי מאוד";
       } else if (totalScore <= -2) {
         reportStatus = "שלילי";
-      } else {
-        reportStatus = "נטרלי / מאוזן";
       }
-      
       // בדיקה: אם יש 6+ מדדים שליליים - עבור לשלילי
       let negativeCount = 0;
       if (stockData.lastEpsChangePercent < -3) negativeCount++;
