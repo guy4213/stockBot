@@ -8,6 +8,7 @@ import logger from "./utils/logger";
 import { getEarningsCalendar } from "./services/stockService";
 import { mainFlow } from "./controllers/mainController";
 import { readFile, saveFile } from "./utils/file";
+import { ensureCacheIsUpdated, filterUSStocks, fetchAndCacheUSStocks } from "./utils/usStocksCache";
 
 const app = express();
 
@@ -44,6 +45,22 @@ const runMainFlow = async () => {
     return;
   }
 
+  // 🆕 סינון מניות אמריקאיות בלבד (מהיר מאוד!)
+  const allSymbols = actuallyReported.map((c: any) => c.symbol);
+  const usSymbolsOnly = await filterUSStocks(allSymbols);
+  
+  const usStocksActuallyReported = actuallyReported.filter((company: any) =>
+    usSymbolsOnly.includes(company.symbol)
+  );
+
+  logger.info(`🇺🇸 US stocks only: ${usStocksActuallyReported.length}`);
+  logger.info(`🚫 Foreign stocks filtered: ${actuallyReported.length - usStocksActuallyReported.length}`);
+
+  if (usStocksActuallyReported.length === 0) {
+    logger.info(`📭 No US stocks reported today.`);
+    return;
+  }
+
   // 🔹 טען tracking
   const allProcessedReports = readFile("./previouslySentReports.json") as any;
   
@@ -77,121 +94,55 @@ const runMainFlow = async () => {
   const cutoffStr = cutoffDate.toISOString().slice(0, 10);
   
   const cleanedTracking: any = {};
-  let deletedDates = 0;
-  let deletedSymbolsCount = 0;
-  
-  logger.info(`🧹 Starting cleanup process...`);
-  logger.info(`   Cutoff date: ${cutoffStr} (keeping ${RETENTION_DAYS} days)`);
-  
-  for (const [date, symbols] of Object.entries(allProcessedReports)) {
+  for (const [date, data] of Object.entries(allProcessedReports)) {
     if (date >= cutoffStr) {
-      cleanedTracking[date] = symbols;
-      logger.info(`   ✅ Keeping: ${date} (${Object.keys(symbols as any).length} symbols)`);
-    } else {
-      deletedDates++;
-      const symbolsCount = Object.keys(symbols as any).length;
-      deletedSymbolsCount += symbolsCount;
-      logger.info(`   🗑️  Deleting: ${date} (${symbolsCount} symbols) - older than ${RETENTION_DAYS} days`);
+      cleanedTracking[date] = data;
     }
   }
   
-  if (deletedDates > 0) {
-    logger.info(`\n♻️  Cleanup Summary: Deleted ${deletedDates} dates with ${deletedSymbolsCount} symbols\n`);
-  } else {
-    logger.info(`\n✨ No old data to clean\n`);
-  }
+  logger.info(`🧹 Cleaned old data. Keeping dates from ${cutoffStr} onwards.`);
   
-  // 🔹 אתחל היום אם צריך
+  // 🔹 וודא שהתאריך של היום קיים
   if (!cleanedTracking[todayStr]) {
     cleanedTracking[todayStr] = {};
-    logger.info(`📝 Initialized new date: ${todayStr}`);
   }
 
-  // 🆕 הדפסת המצב אחרי הניקוי
-  logger.info(`\n${"=".repeat(60)}`);
-  logger.info(`📋 HISTORY AFTER CLEANUP`);
-  logger.info(`${"=".repeat(60)}`);
-  
-  const datesAfterCleanup = Object.keys(cleanedTracking).sort().reverse();
-  let totalSymbolsAfterCleanup = 0;
-  
-  for (const date of datesAfterCleanup) {
-    const symbols = cleanedTracking[date];
-    const symbolsList = Object.keys(symbols);
-    totalSymbolsAfterCleanup += symbolsList.length;
-    
-    logger.info(`\n   📅 ${date} (${symbolsList.length} symbols):`);
-    if (symbolsList.length > 0) {
-      logger.info(`      ${symbolsList.join(', ')}`);
-    } else {
-      logger.info(`      (empty - today's reports will be added here)`);
-    }
-  }
-  
-  logger.info(`\n   📊 Total: ${datesAfterCleanup.length} dates, ${totalSymbolsAfterCleanup} symbols`);
-  logger.info(`${"=".repeat(60)}\n`);
-
-  // 🔹 עבד כל דוח חדש
+  // 🔹 לולאה על מניות שדיווחו היום (רק מניות אמריקאיות!)
   let processedCount = 0;
   let skippedCount = 0;
   let errorCount = 0;
 
-  logger.info(`🔍 Starting to process ${actuallyReported.length} reported companies...\n`);
+  for (const company of usStocksActuallyReported) {
+    const symbol = company.symbol;
+    
+    // בדיקה: האם כבר עיבדנו את המניה הזו היום?
+    if (cleanedTracking[todayStr][symbol]?.processed === true) {
+      logger.info(`⏭️  ${symbol} - Already processed today, skipping...`);
+      skippedCount++;
+      continue;
+    }
 
-  for (const company of actuallyReported) {
-    const symbol: string = company.symbol;
+    logger.info(`\n${"─".repeat(50)}`);
+    logger.info(`🔄 Processing: ${symbol}`);
+    logger.info(`${"─".repeat(50)}`);
 
     try {
-      // בדוק אם כבר עיבדנו את המניה הזו (בכל התאריכים של ה-7 ימים!)
-      let alreadyProcessed = false;
-      let processedDate = null;
-      
-      for (const [date, symbols] of Object.entries(cleanedTracking)) {
-        if ((symbols as any)[symbol]) {
-          processedDate = date;
-          alreadyProcessed = true;
-          break;
-        }
-      }
-      
-      if (alreadyProcessed) {
-        skippedCount++;
-        logger.info(`⏭️  [${skippedCount}/${actuallyReported.length}] Skipping ${symbol} - already processed on ${processedDate}`);
-        continue;
-      }
-
-      logger.info(`\n${"─".repeat(60)}`);
-      logger.info(`🔍 [${processedCount + skippedCount + errorCount + 1}/${actuallyReported.length}] Processing ${symbol}...`);
-      logger.info(`   📊 Company: ${symbol}`);
-      logger.info(`   💰 EPS: ${company.epsActual} vs ${company.epsEstimated} (${company.epsActual && company.epsEstimated ? ((company.epsActual - company.epsEstimated) / company.epsEstimated * 100).toFixed(1) + '%' : 'N/A'})`);
-      logger.info(`   💵 Revenue: $${(company.revenueActual / 1_000_000).toFixed(0)}M vs $${(company.revenueEstimated / 1_000_000).toFixed(0)}M`);
-      logger.info(`   ⏰ Time: ${company.time?.toUpperCase() || 'Unknown'}`);
-
-      // 🔹 הרץ ניתוח מלא
       await mainFlow(symbol);
-
-      // 🔹 סמן כמעובד
+      
+      // סמן כמעובד
       cleanedTracking[todayStr][symbol] = {
         processed: true,
-        timestamp: new Date().toISOString(),
-        epsActual: company.epsActual,
-        epsEstimated: company.epsEstimated,
-        revenueActual: company.revenueActual,
-        revenueEstimated: company.revenueEstimated,
-        reportTime: company.time
+        timestamp: new Date().toISOString()
       };
-
-      // 🔹 שמור מיד (למקרה של crash)
-      saveFile("./previouslySentReports.json", cleanedTracking);
+      saveFile("previouslySentReports.json", cleanedTracking);
       
       processedCount++;
-      logger.info(`✅ ${symbol} processed and saved successfully`);
-      logger.info(`${"─".repeat(60)}`);
-
+      logger.info(`✅ ${symbol} - Successfully processed and marked as done`);
+      
     } catch (error: any) {
       errorCount++;
-      logger.error(`\n❌ [${processedCount + skippedCount + errorCount}/${actuallyReported.length}] Error processing ${symbol}:`);
-      logger.error(`   Error: ${error.message}`);
+      logger.error(`❌ Error processing ${symbol}:`);
+      logger.error(`   Message: ${error.message}`);
       logger.error(`   Stack: ${error.stack}`);
       
       // סמן כשגיאה (כדי שלא ננסה שוב ושוב)
@@ -231,33 +182,38 @@ const runMainFlow = async () => {
   logger.info(`   ✅ Successfully Processed: ${processedCount}`);
   logger.info(`   ⏭️  Skipped (already done): ${skippedCount}`);
   logger.info(`   ❌ Errors: ${errorCount}`);
-  logger.info(`   📊 Total Handled: ${processedCount + skippedCount + errorCount}/${actuallyReported.length}`);
+  logger.info(`   📊 Total Handled: ${processedCount + skippedCount + errorCount}/${usStocksActuallyReported.length}`);
   logger.info(`${"═".repeat(60)}\n`);
 };
 
-// 🔹 הרצה מיידית בהפעלה (אופציונלי - להסרת ההערה לבדיקה)
-runMainFlow();
+// 🆕 רענון cache של מניות אמריקאיות (פעם בשבוע)
+const refreshUSStocksCache = async () => {
+  logger.info("\n🔄 Checking if US stocks cache needs refresh...");
+  await ensureCacheIsUpdated();
+};
 
-// 🔹 Schedule: כל 30 דקות
+// 🔹 הרצה מיידית בהפעלה
+(async () => {
+  try {
+    // 1. וודא שה-cache מעודכן
+    await refreshUSStocksCache();
+    
+    // 2. הרץ את תהליך העיבוד
+    await runMainFlow();
+  } catch (error) {
+    logger.error("Error in initial run:", error);
+  }
+})();
+
+// 🔹 Schedule: כל 30 דקות - בדיקת דוחות
 cron.schedule("*/30 * * * *", async () => {
   await runMainFlow();
 });
 
-// 🔹 Schedule: בזמנים קריטיים
-// cron.schedule("0 9 * * *", async () => {
-//   logger.info("\n⏰ === SCHEDULED CHECK: 9:00 AM (BMO Reports) ===\n");
-//   await runMainFlow();
-// });
-
-// cron.schedule("0 18 * * *", async () => {
-//   logger.info("\n⏰ === SCHEDULED CHECK: 6:00 PM (AMC Reports) ===\n");
-//   await runMainFlow();
-// });
-
-// cron.schedule("0 21 * * *", async () => {
-//   logger.info("\n⏰ === SCHEDULED CHECK: 9:00 PM (Final Check) ===\n");
-//   await runMainFlow();
-// });
+// 🔹 Schedule: כל יום ב-3 בבוקר - רענון cache
+cron.schedule("0 3 * * *", async () => {
+  await refreshUSStocksCache();
+});
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
