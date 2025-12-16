@@ -199,10 +199,27 @@ const refreshUSStocksCache = async () => {
     // 1. רענן cache של מניות אמריקאיות
     await refreshUSStocksCache();
 
-    // 2. הרץ Morning Intelligence (רק בבוקר, לא כל פעם)
+    // 2. בדוק אם צריך להריץ Morning Intelligence
+    const todayStr = new Date().toISOString().slice(0, 10);
+    let needsMorningIntelligence = false;
+
+    try {
+      const stocksReportingData = readFile("stocksReportingToday.json") as any;
+
+      // אם הקובץ לא קיים או שהוא מתאריך אחר - צריך לרוץ שוב
+      if (!stocksReportingData || stocksReportingData.date !== todayStr) {
+        needsMorningIntelligence = true;
+        logger.info(`ℹ️  Stock list for ${todayStr} not found. Running Morning Intelligence...`);
+      }
+    } catch (error) {
+      // אם הקובץ לא קיים בכלל
+      needsMorningIntelligence = true;
+      logger.info(`ℹ️  stocksReportingToday.json not found. Running Morning Intelligence...`);
+    }
+
+    // הרץ Morning Intelligence אם צריך (או אם זה בוקר)
     const currentHour = new Date().getHours();
-    if (currentHour >= 6 && currentHour < 10) {
-      // רק בין 6:00-10:00 בבוקר
+    if (needsMorningIntelligence || (currentHour >= 6 && currentHour < 10)) {
       await runMorningIntelligence();
     }
 
