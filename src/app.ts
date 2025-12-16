@@ -5,7 +5,8 @@ import healthCheckRoutes from "./routes/healthCheckRoutes";
 import mainRoutes from "./routes/mainRoutes";
 import { errorHandler, requestLogger } from "./middleware/errorHandler";
 import logger from "./utils/logger";
-import { getEarningsCalendar } from "./services/stockService";
+import { getEarningsCalendar } from "./services/stockService"; // ⚠️ FMP API - מחזיר גם מניות זרות
+import { morningIntelligence } from "./services/grokService"; // ✅ Grok - רק מניות אמריקאיות
 import { mainFlow } from "./controllers/mainController";
 import { readFile, saveFile } from "./utils/file";
 import { ensureCacheIsUpdated, filterUSStocks, fetchAndCacheUSStocks } from "./utils/usStocksCache";
@@ -16,47 +17,72 @@ const RETENTION_DAYS = 7; // שמירה רק לשבוע
 
 const runMainFlow = async () => {
   logger.info("🔄 Running scheduled earnings check...");
-  
+
   const todayStr = new Date().toISOString().slice(0, 10);
   logger.info(`📅 Checking earnings for: ${todayStr}`);
 
-  // 🔹 שלוף רק את דוחות היום
-  const companiesReportingToday = await getEarningsCalendar(todayStr, todayStr);
+  // ✅ שלוף רק מניות אמריקאיות שמדווחות היום (באמצעות Grok!)
+  logger.info("🌐 Using Grok AI to fetch US stocks reporting today...");
 
-  if (!companiesReportingToday || companiesReportingToday.length === 0) {
-    logger.info(`📭 No earnings reports scheduled for ${todayStr}`);
-    return;
+  let usStocksReportingToday;
+  try {
+    const morningData = await morningIntelligence(todayStr);
+    usStocksReportingToday = morningData.stocks;
+
+    logger.info(`✅ Grok found ${usStocksReportingToday.length} US stocks reporting today`);
+
+    // הצג את המניות שנמצאו
+    if (usStocksReportingToday.length > 0) {
+      logger.info(`📋 Stocks found by Grok:`);
+      usStocksReportingToday.forEach((stock, index) => {
+        logger.info(`   ${index + 1}. ${stock.symbol} (${stock.companyName}) - ${stock.reportType} ${stock.windowStart}-${stock.windowEnd}`);
+      });
+    }
+  } catch (error: any) {
+    logger.error(`❌ Grok API error: ${error.message}`);
+    logger.info(`⚠️ Falling back to FMP API...`);
+
+    // Fallback to FMP API if Grok fails
+    const companiesReportingToday = await getEarningsCalendar(todayStr, todayStr);
+
+    if (!companiesReportingToday || companiesReportingToday.length === 0) {
+      logger.info(`📭 No earnings reports scheduled for ${todayStr}`);
+      return;
+    }
+
+    logger.info(`📊 FMP found ${companiesReportingToday.length} companies (including foreign stocks)`);
+
+    // סנן רק מניות שכבר דיווחו
+    const actuallyReported = companiesReportingToday.filter(
+      (company: any) =>
+        company.epsActual !== null &&
+        company.revenueActual !== null
+    );
+
+    logger.info(`✅ Already reported: ${actuallyReported.length}`);
+
+    // סינון מניות אמריקאיות
+    const allSymbols = actuallyReported.map((c: any) => c.symbol);
+    const usSymbolsOnly = await filterUSStocks(allSymbols);
+
+    usStocksReportingToday = actuallyReported
+      .filter((company: any) => usSymbolsOnly.includes(company.symbol))
+      .map((company: any) => ({
+        symbol: company.symbol,
+        companyName: company.symbol, // FMP doesn't provide company name in calendar
+        reportType: "unknown",
+        windowStart: "09:00",
+        windowEnd: "17:00",
+        marketCap: 0,
+        volume: 0,
+        confidence: 70,
+        sources: ["FMP API"]
+      }));
+
+    logger.info(`🇺🇸 US stocks only: ${usStocksReportingToday.length}`);
   }
 
-  logger.info(`📊 Total companies on calendar: ${companiesReportingToday.length}`);
-
-  // 🔹 סנן רק מניות שכבר דיווחו (epsActual !== null)
-  const actuallyReported = companiesReportingToday.filter(
-    (company: any) => 
-      company.epsActual !== null && 
-      company.revenueActual !== null
-  );
-
-  logger.info(`✅ Already reported: ${actuallyReported.length}`);
-  logger.info(`⏳ Still pending: ${companiesReportingToday.length - actuallyReported.length}`);
-
-  if (actuallyReported.length === 0) {
-    logger.info(`⏳ No completed reports yet for ${todayStr}. Will check again in 30 minutes.`);
-    return;
-  }
-
-  // 🆕 סינון מניות אמריקאיות בלבד (מהיר מאוד!)
-  const allSymbols = actuallyReported.map((c: any) => c.symbol);
-  const usSymbolsOnly = await filterUSStocks(allSymbols);
-  
-  const usStocksActuallyReported = actuallyReported.filter((company: any) =>
-    usSymbolsOnly.includes(company.symbol)
-  );
-
-  logger.info(`🇺🇸 US stocks only: ${usStocksActuallyReported.length}`);
-  logger.info(`🚫 Foreign stocks filtered: ${actuallyReported.length - usStocksActuallyReported.length}`);
-
-  if (usStocksActuallyReported.length === 0) {
+  if (usStocksReportingToday.length === 0) {
     logger.info(`📭 No US stocks reported today.`);
     return;
   }
@@ -107,13 +133,13 @@ const runMainFlow = async () => {
     cleanedTracking[todayStr] = {};
   }
 
-  // 🔹 לולאה על מניות שדיווחו היום (רק מניות אמריקאיות!)
+  // 🔹 לולאה על מניות שמדווחות היום (רק מניות אמריקאיות!)
   let processedCount = 0;
   let skippedCount = 0;
   let errorCount = 0;
 
-  for (const company of usStocksActuallyReported) {
-    const symbol = company.symbol;
+  for (const stock of usStocksReportingToday) {
+    const symbol = stock.symbol;
     
     // בדיקה: האם כבר עיבדנו את המניה הזו היום?
     if (cleanedTracking[todayStr][symbol]?.processed === true) {
@@ -182,7 +208,7 @@ const runMainFlow = async () => {
   logger.info(`   ✅ Successfully Processed: ${processedCount}`);
   logger.info(`   ⏭️  Skipped (already done): ${skippedCount}`);
   logger.info(`   ❌ Errors: ${errorCount}`);
-  logger.info(`   📊 Total Handled: ${processedCount + skippedCount + errorCount}/${usStocksActuallyReported.length}`);
+  logger.info(`   📊 Total Handled: ${processedCount + skippedCount + errorCount}/${usStocksReportingToday.length}`);
   logger.info(`${"═".repeat(60)}\n`);
 };
 
