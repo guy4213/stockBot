@@ -1200,11 +1200,15 @@ Return the COMPLETE Hebrew formatted message ready to send to Telegram.`;
     logger.error(`❌ Error in Final Analysis for ${fullData.symbol}:`, error);
     throw error;
   }
+
+
+
 }
 
 // ============================================
 // 5. STOCK PROCESSOR CLASS (NEW)
 // ============================================
+
 
 export class StockProcessor {
   private stocks: StockProcessingState[] = [];
@@ -1213,6 +1217,57 @@ export class StockProcessor {
 
   constructor(private onComplete?: (stock: StockProcessingState) => void) {}
 
+ isMarketWindowOpen(windowStart: string): boolean {
+  // 1. קבלת הזמן הנוכחי בניו יורק
+  const nyTime = new Date().toLocaleString("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  // nyTime יהיה בפורמט "09:30" או "16:05" לפי שעון NY
+
+  // 2. השוואה פשוטה של מחרוזות (HH:MM)
+  // אם השעה בניו יורק (למשל 09:00) קטנה מ-16:05, נחזיר false
+  return nyTime >= windowStart;
+}
+
+// --- עדכון בתוך processNextStock ---
+
+ async  processNextStock(): Promise<void> {
+    if (!this.isRunning) return;
+
+    // חיפוש המניה הבאה שגם הסטטוס שלה מתאים וגם החלון שלה נפתח!
+    const stock = this.stocks.find((s) => {
+        if (s.status === "completed" || s.status === "error") return false;
+        
+        // בדיקת זמנים קריטית
+        if (!this.isMarketWindowOpen(s.windowStart)) {
+            // לוג אופציונלי (כדי שתדע שהוא ממתין)
+            // logger.debug(`⏳ Waiting for ${s.symbol} window (Start: ${s.windowStart} ET)`);
+            return false; 
+        }
+
+        return s.status === "pending" || s.status === "checking";
+    });
+
+    if (!stock) {
+        // אם לא מצאנו מניה שמוכנה *עכשיו*, לא נעצור את הבוט!
+        // יכול להיות שיש מניות שממתינות לערב.
+        const pendingStocks = this.stocks.filter(s => s.status === "pending").length;
+        
+        if (pendingStocks > 0) {
+            logger.info("⏳ No stocks ready for window yet. Waiting for next cycle...");
+            // נחזור עוד מעט (ה-Interval יפעיל אותנו שוב)
+            return; 
+        }
+
+        logger.info("✅ All stocks processed!");
+        this.stop();
+        return;
+    }
+  }
   // Initialize with stocks from morning intelligence
   initialize(morningData: MorningIntelligenceResponse): void {
     logger.info(`🚀 Initializing Stock Processor with ${morningData.stocks.length} stocks`);
@@ -1273,119 +1328,7 @@ export class StockProcessor {
     logger.info("✅ Stock Processor stopped");
   }
 
-  // Process next pending or checking stock
-  private async processNextStock(): Promise<void> {
-    if (!this.isRunning) return;
 
-    // Find next stock to process
-    const stock = this.stocks.find(
-      (s) => s.status === "pending" || s.status === "checking"
-    );
-
-    if (!stock) {
-      logger.info("✅ All stocks processed!");
-      this.stop();
-      return;
-    }
-
-    try {
-      logger.info(`\n${"=".repeat(60)}`);
-      logger.info(`📦 Processing: ${stock.symbol} (${stock.companyName})`);
-      logger.info(`   Status: ${stock.status} | Check #${stock.checkCount + 1}`);
-      logger.info(`${"=".repeat(60)}\n`);
-
-      stock.status = "checking";
-      stock.checkCount += 1;
-      stock.lastCheck = new Date().toISOString();
-
-      // Step 1: Mini-Check - Is report published?
-      const miniCheckResult = await miniCheck(stock.symbol, stock.companyName);
-
-      if (miniCheckResult.result === "YES") {
-        // Report published! Extract full data
-        logger.info(`✅ Report published for ${stock.symbol}! Extracting data...`);
-        stock.status = "extracting";
-
-        // Add delay before extraction to be respectful to API
-        await delay(2000);
-
-        // Step 2: Full Extraction
-        const fullData = await fullExtraction(
-          stock.symbol,
-          stock.companyName,
-          stock.lastCheck.split("T")[0]
-        );
-
-        stock.fullData = fullData;
-
-        // Check AI recommendation
-        if (
-          fullData.aiRecommendation.decision === "SEND" ||
-          fullData.aiRecommendation.decision === "SEND_WITH_WARNING"
-        ) {
-          // Step 3: Final Analysis (Hebrew)
-          logger.info(`📝 Generating final analysis for ${stock.symbol}...`);
-
-          // Add delay before analysis
-          await delay(2000);
-
-          // Calculate Mira Score (simplified - you may have a more complex logic)
-          const miraScore: MiraScore = {
-            totalScore: this.calculateMiraScore(fullData),
-            classification: "POSITIVE", // Simplified
-            breakdown: {
-              epsScore: fullData.eps.beatPercent || 0,
-              revenueScore: fullData.revenue.beatPercent || 0,
-              guidanceScore: fullData.guidance.status === "raised" ? 1 : 0,
-              yoyEpsScore: fullData.yoyGrowth.epsChange || 0,
-              yoyRevenueScore: fullData.yoyGrowth.revenueChange || 0,
-              fcfScore: fullData.cashFlow.yoyChange || 0,
-              marginScore: fullData.margins.changeFromPrior || 0,
-              sentimentScore: fullData.sentiment.score || 0,
-            },
-            exceptions: [],
-          };
-
-          const analysis = await finalAnalysis(fullData, miraScore);
-          stock.analysis = analysis;
-
-          stock.status = "completed";
-          logger.info(`✅ ${stock.symbol} completed successfully!`);
-
-          // Callback for sending to Telegram
-          if (this.onComplete) {
-            this.onComplete(stock);
-          }
-        } else if (fullData.aiRecommendation.decision === "WAIT") {
-          logger.info(`⏳ ${stock.symbol} - Data incomplete, will check again later`);
-          stock.status = "checking";
-        } else {
-          logger.info(`⏭️ ${stock.symbol} - Report not published yet`);
-          stock.status = "checking";
-        }
-      } else if (miniCheckResult.result === "NO") {
-        logger.info(`⏳ ${stock.symbol} - Report not published yet, will check again`);
-        stock.status = "checking";
-      } else {
-        // UNSURE
-        logger.info(`❓ ${stock.symbol} - Status unclear, will check again`);
-        stock.status = "checking";
-      }
-
-      // Add delay between stocks to avoid rate limits
-      if (this.isRunning) {
-        logger.info(`\n⏳ Waiting ${DELAY_BETWEEN_STOCKS_MS / 1000}s before next stock...\n`);
-        await delay(DELAY_BETWEEN_STOCKS_MS);
-      }
-    } catch (error) {
-      logger.error(`❌ Error processing ${stock.symbol}:`, error);
-      stock.status = "error";
-      stock.error = error instanceof Error ? error.message : "Unknown error";
-
-      // Add delay even on error
-      await delay(DELAY_BETWEEN_STOCKS_MS);
-    }
-  }
 
   // Simple Mira Score calculation (you can enhance this)
   private calculateMiraScore(data: FullExtractionResponse): number {
