@@ -433,44 +433,55 @@ export async function morningIntelligence(
 ): Promise<MorningIntelligenceResponse> {
   logger.info(`🌅 Running Morning Intelligence for ${date}...`);
 
-  const prompt = `Go to Yahoo Finance earnings calendar and find companies reporting on ${date}.
+  const prompt = `🚨 CRITICAL TASK: Access the EXACT URL and extract ONLY stocks reporting on ${date}
 
-URL to check: https://finance.yahoo.com/calendar/earnings?day=${date}
+📍 MANDATORY URL TO ACCESS:
+https://finance.yahoo.com/calendar/earnings?day=${date}
 
-Extract all companies reporting earnings on this date.
+⚠️ IMPORTANT RULES:
+1. You MUST access this URL directly using web search
+2. Extract ONLY companies that are ACTUALLY listed on the page for ${date}
+3. DO NOT use your general knowledge or guess which companies report on this date
+4. DO NOT include companies like AAPL, NVDA, GOOG unless they are EXPLICITLY shown on the page for ${date}
+5. If the page shows 0 companies, return empty stocks array
+6. If the page shows only 3 companies (like LEN, WOR, KNW), return only those 3
 
-For each company, extract:
-- symbol (ticker)
-- companyName
-- reportType: "BMO" (Before Market Open) or "AMC" (After Market Close)
-- windowStart, windowEnd (HH:MM format, BMO=06:30-09:00, AMC=16:00-17:30)
-- marketCap: (actual market cap in dollars, or 0 if unknown)
-- volume: (average daily trading volume, or 0 if unknown)
+📊 For EACH company shown on the page, extract:
+- symbol: Stock ticker (EXACTLY as shown)
+- companyName: Full company name
+- reportType: "BMO" or "AMC" (look for timing indicators)
+- windowStart, windowEnd: HH:MM format
+- marketCap: Market cap in dollars (or 0 if not shown)
+- volume: Average volume (or 0 if not shown)
 - confidence: 85
 - sources: ["https://finance.yahoo.com/calendar/earnings?day=${date}"]
 
-Return ONLY valid JSON (no extra text, no markdown):
+📤 Return ONLY valid JSON (no markdown, no extra text):
 {
   "date": "${date}",
   "stocks": [
     {
-      "symbol": "NVDA",
-      "companyName": "NVIDIA Corporation",
+      "symbol": "LEN",
+      "companyName": "Lennar Corporation",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "17:30",
-      "marketCap": 3500000000000,
-      "volume": 45000000,
+      "marketCap": 30000000000,
+      "volume": 1500000,
       "confidence": 85,
       "sources": ["https://finance.yahoo.com/calendar/earnings?day=${date}"]
     }
   ]
 }
 
-Important:
-- Valid JSON only, no trailing commas
-- Extract ALL companies (we'll filter later)
-- If market cap or volume is unknown, set to 0`;
+🔍 VERIFICATION STEPS:
+1. Access the URL: https://finance.yahoo.com/calendar/earnings?day=${date}
+2. Count how many companies are listed
+3. Extract ONLY those companies
+4. Return the exact list
+
+⚠️ If you see companies like AAPL, NVDA, GOOG, double-check the date!
+They likely don't report on ${date} - verify from the actual page.`;
 
   try {
     const response = await callGrokAPI(
