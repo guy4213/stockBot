@@ -58,7 +58,7 @@ export const getCashFlow = async (symbol: string) => {
 
 export const getQuote = async (symbol: string) => {
   try {
-    const url = `${apiBaseUrl}/quote/${symbol}?apikey=${apiKey}`;
+    const url = `${stableBaseUrl}/quote/${symbol}?apikey=${apiKey}`;
     const response = await axios.get(url);
     
     if (!response.data || response.data.length === 0) {

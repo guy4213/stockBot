@@ -5,6 +5,7 @@
 import axios, { AxiosError } from "axios";
 import dotenv from "dotenv";
 import logger from "../utils/logger";
+import { getQuote } from "./stockService"; // ✅ שימוש בפונקציה הקיימת שלך!
 import {
   GrokResponse,
   GrokMessage,
@@ -173,49 +174,6 @@ function extractJSON(response: string): string {
 }
 
 // ============================================
-// MARKET DATA HELPERS
-// ============================================
-
-async function getMarketCap(symbol: string): Promise<number> {
-  const prompt = `What is the current market capitalization of ${symbol} in USD?
-Search Yahoo Finance, Google Finance, or MarketWatch.
-Return ONLY a number (no text, no formatting). Example: 3000000000000`;
-
-  try {
-    const response = await callGrokAPI(
-      [{ role: "system", content: "You return only numbers." }, { role: "user", content: prompt }],
-      0.1, 50, true
-    );
-    const cleanResponse = response.trim().replace(/[^0-9.]/g, "");
-    const marketCap = parseFloat(cleanResponse);
-    if (isNaN(marketCap) || marketCap <= 0) return 0;
-    return marketCap;
-  } catch (error) {
-    logger.error(`Failed to get market cap for ${symbol}:`, error);
-    return 0;
-  }
-}
-
-async function getTradingVolume(symbol: string): Promise<number> {
-  const prompt = `What is the current average daily trading volume for ${symbol}?
-Return ONLY a number. Example: 45000000`;
-
-  try {
-    const response = await callGrokAPI(
-      [{ role: "system", content: "You return only numbers." }, { role: "user", content: prompt }],
-      0.1, 50, true
-    );
-    const cleanResponse = response.trim().replace(/[^0-9.]/g, "");
-    const volume = parseFloat(cleanResponse);
-    if (isNaN(volume) || volume <= 0) return 0;
-    return volume;
-  } catch (error) {
-    logger.error(`Failed to get volume for ${symbol}:`, error);
-    return 0;
-  }
-}
-
-// ============================================
 // 0. FETCH US STOCKS
 // ============================================
 
@@ -227,20 +185,21 @@ export async function fetchUSStocksViaGrok(): Promise<USStocksList> {
 }
 
 // ============================================
-// 1. MORNING INTELLIGENCE (FINNHUB)
+// 1. MORNING INTELLIGENCE (HYBRID: FINNHUB LIST + FMP DATA)
 // ============================================
 
 export async function morningIntelligence(date: string): Promise<MorningIntelligenceResponse> {
-  logger.info(`🌅 Running Morning Intelligence (Finnhub Source) for ${date}...`);
+  logger.info(`🌅 Running Morning Intelligence (Hybrid Source) for ${date}...`);
 
-  const FINNHUB_API_KEY ="d50m00pr01qm94qmq7kgd50m00pr01qm94qmq7l0";
+  const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
   if (!FINNHUB_API_KEY) {
     throw new Error("❌ Missing FINNHUB_API_KEY in environment variables");
   }
 
   try {
+    // 1. שליפת הרשימה מ-Finnhub (אמין מאוד לתאריכי דוחות)
     const url = `https://finnhub.io/api/v1/calendar/earnings`;
-    logger.info(`📡 Calling Finnhub API for earnings...`);
+    logger.info(`📡 Calling Finnhub API for earnings list...`);
     
     const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(url, {
       params: { from: date, to: date, token: FINNHUB_API_KEY }
@@ -250,19 +209,31 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
     logger.info(`✅ Finnhub returned ${rawList.length} raw entries.`);
     
     const validatedStocks: Stock[] = [];
-    const MIN_MARKET_CAP = 300_000_000; 
+    const MIN_MARKET_CAP = 300_000_000; // $300M
 
     for (const entry of rawList) {
       const symbol = entry.symbol.toUpperCase();
+      
+      // סינון ראשוני: מדלגים על מניות ללא שעת דיווח או עם תווים מיוחדים
       if (symbol.includes(".") || symbol.length > 5 || !entry.hour) continue;
 
       try {
-        const cap = await getMarketCap(symbol);
-        if (!cap || cap < MIN_MARKET_CAP) continue;
+        // 2. ⚡ שימוש ב-stockService (FMP) לשליפת נתונים מדויקים במהירות! ⚡
+        // זה מחליף את הקריאות היקרות ל-AI
+        const quote = await getQuote(symbol);
 
-        let volume = 0;
-        try { volume = await getTradingVolume(symbol); } catch (e) {}
+        // אם המניה לא נמצאה ב-FMP או שהנתונים חסרים - מדלגים
+        if (!quote || !quote.marketCap) {
+             // logger.warn(`⚠️ No quote data found for ${symbol}, skipping.`);
+             continue;
+        }
 
+        // 3. סינון לפי שווי שוק
+        if (quote.marketCap < MIN_MARKET_CAP) {
+            continue; 
+        }
+
+        // 4. חישוב חלונות זמנים (כמו קודם)
         let reportType: "BMO" | "AMC" = "AMC";
         let windowStart = "16:05";
         let windowEnd = "20:00";
@@ -278,21 +249,23 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
             windowEnd = "20:00";
         }
 
-        logger.info(` 💎 Found Gem: ${symbol} | Type: ${reportType} | Window: ${windowStart} ET`);
+        logger.info(` 💎 Found Gem: ${symbol} (${quote.name}) | Cap: $${(quote.marketCap / 1e9).toFixed(2)}B | Vol: ${quote.volume}`);
 
         validatedStocks.push({
             symbol: symbol,
-            companyName: symbol,
+            companyName: quote.name || symbol, // שימוש בשם המלא מ-FMP
             reportType: reportType,
             windowStart: windowStart,
             windowEnd: windowEnd,
-            marketCap: cap,
-            volume: volume,
+            marketCap: quote.marketCap,
+            volume: quote.volume || 0,
             confidence: 100,
-            sources: ["Finnhub API"]
+            sources: ["Finnhub (List)", "FMP (Data)"]
         });
            
-        await delay(300); 
+        // השהייה קטנה למניעת עומס (למרות ש-FMP מהיר)
+        await delay(100); 
+
       } catch (err) {
         logger.warn(`⚠️ Error processing ${symbol}, skipping.`);
       }
@@ -304,7 +277,7 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
     return { date, stocks: validatedStocks };
 
   } catch (error: any) {
-    logger.error("❌ Finnhub Morning Intelligence failed:", error.message);
+    logger.error("❌ Morning Intelligence failed:", error.message);
     throw error;
   }
 }
@@ -346,7 +319,6 @@ Answer ONE WORD: YES, NO, or UNSURE.`;
 export async function fullExtraction(symbol: string, companyName: string, reportDate: string): Promise<FullExtractionResponse> {
   logger.info(`📊 Full Extraction for ${symbol}...`);
   
-  // (Full prompt logic from your previous code)
   const extractionPrompt = `You are a financial data extraction specialist.
 Company: ${symbol}
 Report Date: ${reportDate}
@@ -373,13 +345,11 @@ Return ONLY valid JSON.`;
 // ============================================
 
 export async function finalAnalysis(fullData: FullExtractionResponse, miraScore: MiraScore): Promise<FinalAnalysis> {
-  // (Full analysis logic unchanged)
   const prompt = `You are Mira - an AI financial analyst writing in Hebrew.
   Analyze ${fullData.symbol} results.
   Return JSON with Hebrew summary.`;
   
   try {
-     // Mocking return for brevity in this fix - use your full implementation here
      const response = await callGrokAPI(
          [{ role: "system", content: "Write Hebrew analysis." }, { role: "user", content: prompt }],
          0.4, 2000, false
@@ -399,7 +369,7 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
 }
 
 // ============================================
-// 5. STOCK PROCESSOR (THE FIX)
+// 5. STOCK PROCESSOR (THE LOGIC ENGINE)
 // ============================================
 
 export class StockProcessor {
@@ -438,7 +408,6 @@ export class StockProcessor {
         
         const isTime = this.isMarketWindowOpen(s.windowStart);
         if (!isTime) {
-            // Log only once per cycle per stock to avoid spam if needed, or keep silent
             return false;
         }
         return s.status === "pending" || s.status === "checking";
@@ -449,7 +418,7 @@ export class StockProcessor {
         const remaining = this.stocks.filter(s => s.status === "pending" || s.status === "checking").length;
         if (remaining > 0) {
             logger.info(`⏳ No stocks ready for CURRENT window (NY Time). Waiting for next cycle... (${remaining} remaining)`);
-            return; // Exit and wait for next interval
+            return; 
         } else {
             logger.info("✅ All stocks processed for today!");
             this.stop();
