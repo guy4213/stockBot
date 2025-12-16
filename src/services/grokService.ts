@@ -43,9 +43,8 @@ const DELAY_BETWEEN_STOCKS_MS = 2 * 60 * 1000; // 2 minutes delay between proces
 const MAX_API_RETRIES = 3;
 const RETRY_DELAYS = [60000, 120000, 300000]; // 1min, 2min, 5min
 
-// Market cap and volume filters
+// Market cap filter (volume filter removed - see morningIntelligence prompt)
 const MIN_MARKET_CAP = 300000000; // $300M
-const MIN_VOLUME = 5000000; // 5M shares
 
 // ============================================
 // HELPER: Call Grok API with Enhanced Error Handling
@@ -449,10 +448,10 @@ https://finance.yahoo.com/calendar/earnings?day=${date}
 🎯 FILTERING CRITERIA (Apply these filters before returning):
 - ✅ ONLY US stocks (NYSE, NASDAQ, AMEX)
 - ✅ ONLY stocks with Market Cap > $300M (300,000,000)
-- ✅ ONLY stocks with Average Volume > 5M (5,000,000) shares/day
 - ❌ EXCLUDE: Foreign stocks (*.L, *.TO, *.T, etc.)
 - ❌ EXCLUDE: Small-cap stocks (< $300M)
-- ❌ EXCLUDE: Low-volume stocks (< 5M)
+
+⚠️ NOTE: NO volume filter - many legitimate stocks have lower average volume but spike significantly on earnings days (e.g., LEN with ~1.5M, WOR with ~300K)
 
 📊 For EACH company that PASSES the filters, extract:
 - symbol: Stock ticker (EXACTLY as shown, US exchanges only)
@@ -460,7 +459,7 @@ https://finance.yahoo.com/calendar/earnings?day=${date}
 - reportType: "BMO" or "AMC" (look for timing indicators)
 - windowStart, windowEnd: HH:MM format
 - marketCap: Market cap in dollars (MUST be > 300,000,000)
-- volume: Average daily volume (MUST be > 5,000,000)
+- volume: Average daily volume (include actual volume, no minimum required)
 - confidence: 85
 - sources: ["https://finance.yahoo.com/calendar/earnings?day=${date}"]
 
@@ -524,7 +523,7 @@ They likely don't report on ${date} - verify from the actual page.`;
     // ✅ Grok already filtered by:
     // - US stocks only (NYSE, NASDAQ, AMEX)
     // - Market Cap > $300M
-    // - Volume > 5M
+    // - NO volume filter (allows all volumes)
     // So we just validate confidence and display results
 
     // Filter by confidence (optional safety check)
@@ -536,7 +535,7 @@ They likely don't report on ${date} - verify from the actual page.`;
 
     // Display the stocks
     if (validatedStocks.length > 0) {
-      logger.info(`\n   📋 Filtered US Stocks (MCap>$300M, Vol>5M):`);
+      logger.info(`\n   📋 Filtered US Stocks (MCap>$300M, No volume filter):`);
       validatedStocks.forEach((stock, index) => {
         logger.info(
           `      ${index + 1}. ${stock.symbol} (${stock.companyName}) - ${stock.reportType} ${stock.windowStart}-${stock.windowEnd} | MCap: $${(stock.marketCap / 1e9).toFixed(2)}B | Vol: ${(stock.volume / 1e6).toFixed(2)}M`
