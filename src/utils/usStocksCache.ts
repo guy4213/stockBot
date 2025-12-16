@@ -69,13 +69,38 @@ export async function filterUSStocks(symbols: string[]): Promise<string[]> {
     const data = await fs.readFile(JSON_FILE, "utf8");
     const cache = JSON.parse(data);
 
-    // יצירת Set למהירות
+    // יצירת Set למהירות (case-insensitive!)
     const usStocksSet = new Set(
-      cache.stocks.map((s: StockSymbol) => s.symbol)
+      cache.stocks.map((s: StockSymbol) => s.symbol.toUpperCase())
     );
 
-    // סינון
-    const filtered = symbols.filter((symbol) => usStocksSet.has(symbol));
+    // Debug: הצג את הסימבולים הראשונים שמגיעים
+    if (symbols.length > 0) {
+      logger.info(`📋 Debug: First 5 symbols to check: ${symbols.slice(0, 5).join(", ")}`);
+      logger.info(`📋 Debug: Sample cache symbols: ${Array.from(usStocksSet).slice(0, 5).join(", ")}`);
+    }
+
+    // סינון (case-insensitive)
+    const notFoundSymbols: string[] = [];
+    const filtered = symbols.filter((symbol) => {
+      const upperSymbol = symbol.toUpperCase().trim();
+      const exists = usStocksSet.has(upperSymbol);
+
+      // אסוף סימבולים שלא נמצאו
+      if (!exists && notFoundSymbols.length < 10) {
+        notFoundSymbols.push(symbol);
+      }
+
+      return exists;
+    });
+
+    // Debug: הצג סימבולים שלא נמצאו
+    if (notFoundSymbols.length > 0) {
+      logger.warn(`   ⚠️ ${notFoundSymbols.length} symbols not found in cache. Examples:`);
+      notFoundSymbols.slice(0, 5).forEach(sym => {
+        logger.warn(`      - "${sym}"`);
+      });
+    }
 
     logger.info(
       `🇺🇸 Filtered: ${filtered.length}/${symbols.length} are US stocks`
