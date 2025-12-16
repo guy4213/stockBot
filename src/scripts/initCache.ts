@@ -1,44 +1,60 @@
 /**
- * 🚀 סקריפט אתחול פשוט - יצירת cache של מניות אמריקאיות
- * 
+ * 🚀 סקריפט אתחול פשוט - אימות cache של מניות אמריקאיות
+ *
+ * הערה: FMP API לא נדרש יותר! משתמש בקובץ us_stocks_cache.json הקיים.
+ *
  * הרץ מתיקיית src:
  *   cd src
  *   npx ts-node scripts/initCache.ts
- * 
+ *
  * או מהשורש:
  *   npx ts-node src/scripts/initCache.ts
  */
 
 import "../utils/logger"; // טען logger
-import { fetchAndCacheUSStocks, getStockInfo } from "../utils/usStocksCache";
+import { getStockInfo } from "../utils/usStocksCache";
 import logger from "../utils/logger";
+import fs from "fs/promises";
+import path from "path";
 
 async function main() {
   try {
-    // בדיקת API key
-    if (!process.env.FMP_API_KEY) {
-      console.error("\n❌ ERROR: FMP_API_KEY not found in environment!\n");
-      console.error("Solutions:");
-      console.error("  1. Check your .env file exists");
-      console.error("  2. Verify it contains: FMP_API_KEY=your_key_here");
-      console.error("  3. Make sure you're running from the project root\n");
-      console.error("Current directory:", process.cwd());
-      console.error("FMP_API_KEY value:", process.env.FMP_API_KEY || "undefined");
-      process.exit(1);
-    }
-
     logger.info("╔════════════════════════════════════════════════════╗");
-    logger.info("║   🇺🇸 US Stocks Cache Initialization            ║");
+    logger.info("║   🇺🇸 US Stocks Cache Validation                ║");
     logger.info("╚════════════════════════════════════════════════════╝");
     logger.info("");
-    logger.info(`API Key: ${process.env.FMP_API_KEY?.substring(0, 10)}...`);
+    logger.info("ℹ️  Note: FMP API is no longer required!");
+    logger.info("ℹ️  Using existing us_stocks_cache.json file.");
     logger.info("");
 
     const startTime = Date.now();
 
-    // שלב 1: שליפה ושמירה
-    logger.info("📥 Step 1/3: Fetching all US stocks from FMP API...");
-    await fetchAndCacheUSStocks();
+    // שלב 1: בדיקה שהקובץ קיים
+    logger.info("📥 Step 1/3: Checking cache file...");
+    const cacheFile = path.join(__dirname, "../data/us_stocks_cache.json");
+
+    try {
+      await fs.access(cacheFile);
+      const data = await fs.readFile(cacheFile, "utf8");
+      const cache = JSON.parse(data);
+
+      logger.info(`✅ Cache file found!`);
+      logger.info(`   File: ${cacheFile}`);
+      logger.info(`   Total stocks: ${cache.count}`);
+      logger.info(`   Last updated: ${cache.lastUpdated}`);
+
+      // ספירת מניות לפי בורסה
+      const nyseCount = cache.stocks.filter((s: any) => s.exchangeShortName === "NYSE").length;
+      const nasdaqCount = cache.stocks.filter((s: any) => s.exchangeShortName === "NASDAQ").length;
+      const amexCount = cache.stocks.filter((s: any) => s.exchangeShortName === "AMEX").length;
+
+      logger.info(`   NYSE: ${nyseCount} | NASDAQ: ${nasdaqCount} | AMEX: ${amexCount}`);
+    } catch (error) {
+      logger.error("❌ Cache file not found!");
+      logger.error(`   Expected location: ${cacheFile}`);
+      logger.error("   Please ensure the file exists before running.");
+      process.exit(1);
+    }
 
     // שלב 2: אימות
     logger.info("✅ Step 2/3: Validating cache...");
@@ -67,35 +83,35 @@ async function main() {
 
     logger.info("");
     logger.info("╔════════════════════════════════════════════════════╗");
-    logger.info("║   ✅ Cache Initialization Complete               ║");
+    logger.info("║   ✅ Cache Validation Complete                   ║");
     logger.info("╚════════════════════════════════════════════════════╝");
     logger.info("");
     logger.info(`⏱️  Duration: ${duration}s`);
     logger.info("📁 Cache file: src/data/us_stocks_cache.json");
-    logger.info("🔄 Auto-refresh: Every night at 3:00 AM");
+    logger.info("ℹ️  FMP API: Not required (using cached data)");
     logger.info("");
     logger.info("Next steps:");
     logger.info("  1. Start your application: npm run dev");
-    logger.info("  2. The app will now filter only US stocks automatically");
+    logger.info("  2. The app will filter only US stocks automatically");
     logger.info("");
 
     process.exit(0);
   } catch (error: any) {
     logger.error("");
     logger.error("╔════════════════════════════════════════════════════╗");
-    logger.error("║   ❌ Cache Initialization Failed                 ║");
+    logger.error("║   ❌ Cache Validation Failed                     ║");
     logger.error("╚════════════════════════════════════════════════════╝");
     logger.error("");
     logger.error("Error:", error.message);
     logger.error("");
     logger.error("Possible causes:");
-    logger.error("  1. Invalid FMP_API_KEY in .env");
-    logger.error("  2. Network connection issues");
-    logger.error("  3. FMP API rate limit exceeded (wait 1 minute)");
+    logger.error("  1. Cache file (us_stocks_cache.json) is missing");
+    logger.error("  2. Cache file is corrupted or invalid JSON");
+    logger.error("  3. File permissions issue");
     logger.error("");
     logger.error("Debug info:");
     logger.error(`  Current dir: ${process.cwd()}`);
-    logger.error(`  API Key: ${process.env.FMP_API_KEY?.substring(0, 10) || "undefined"}...`);
+    logger.error(`  Expected file: src/data/us_stocks_cache.json`);
     logger.error("");
 
     process.exit(1);

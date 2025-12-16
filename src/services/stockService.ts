@@ -3,6 +3,9 @@ import logger from "../utils/logger";
 import dotenv from "dotenv";
 
 dotenv.config({ quiet: true });
+
+// ⚠️ FMP API is optional now - only needed for earnings/cash flow data
+// Stock listing (us_stocks_cache.json) no longer requires FMP API
 const apiKey = process.env.FMP_API_KEY;
 
 // 🔹 שני Base URLs שונים

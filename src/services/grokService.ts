@@ -275,6 +275,156 @@ Return ONLY a number (no text, no formatting). Example: 45000000`;
 }
 
 // ============================================
+// 0. FETCH US STOCKS LIST (REPLACEMENT FOR FMP API)
+// ============================================
+
+export interface USStockSymbol {
+  symbol: string;
+  name: string;
+  price: number;
+  exchange: string;
+  exchangeShortName: string;
+  type: string;
+}
+
+export interface USStocksList {
+  lastUpdated: string;
+  count: number;
+  stocks: USStockSymbol[];
+}
+
+/**
+ * Fetch all US stocks from NYSE, NASDAQ, and AMEX using Grok web search
+ * This replaces the FMP API call
+ */
+export async function fetchUSStocksViaGrok(): Promise<USStocksList> {
+  logger.info(`🌐 Fetching all US stocks via Grok (NYSE, NASDAQ, AMEX)...`);
+
+  const prompt = `Search for the complete list of all publicly traded stocks on NYSE, NASDAQ, and AMEX exchanges.
+
+For EACH exchange, find:
+1. All stock tickers (symbols)
+2. Company names
+3. Current stock prices (approximate is OK)
+4. Stock type (stock, ETF, ADR, trust, etc.)
+
+Sources to check:
+- NASDAQ official website: https://www.nasdaq.com/market-activity/stocks/screener
+- NYSE official website: https://www.nyse.com/listings_directory/stock
+- Yahoo Finance: https://finance.yahoo.com/screener/
+- MarketWatch stock screener
+- Finviz stock screener
+
+Return ONLY valid JSON in this EXACT format (no markdown, no extra text):
+{
+  "nyse": [
+    {"symbol": "AAPL", "name": "Apple Inc.", "price": 185.50, "type": "stock"},
+    {"symbol": "BAC", "name": "Bank of America Corp", "price": 34.20, "type": "stock"}
+  ],
+  "nasdaq": [
+    {"symbol": "MSFT", "name": "Microsoft Corporation", "price": 378.90, "type": "stock"},
+    {"symbol": "TSLA", "name": "Tesla Inc", "price": 242.80, "type": "stock"}
+  ],
+  "amex": [
+    {"symbol": "SPY", "name": "SPDR S&P 500 ETF Trust", "price": 478.50, "type": "etf"}
+  ]
+}
+
+Important:
+- Include ALL symbols from each exchange (this may be 3000+ stocks total)
+- Valid JSON only, no trailing commas
+- Use "stock" for common stocks, "etf" for ETFs, "adr" for ADRs
+- Price can be approximate from latest data
+- Focus on getting comprehensive coverage`;
+
+  try {
+    const response = await callGrokAPI(
+      [
+        {
+          role: "system",
+          content:
+            "You are a comprehensive stock data extractor. Access stock exchange websites and return complete listings. Return ONLY valid JSON - no markdown, no extra text.",
+        },
+        { role: "user", content: prompt },
+      ],
+      0.1, // Very low temp for accurate extraction
+      16000, // Large token limit for comprehensive list
+      true // Enable web search
+    );
+
+    // Extract and parse JSON
+    const jsonText = extractJSON(response);
+    let data: any;
+
+    try {
+      data = JSON.parse(jsonText);
+    } catch (parseError: any) {
+      logger.error(`❌ JSON Parse Error: ${parseError.message}`);
+      throw parseError;
+    }
+
+    // Transform to our format
+    const allStocks: USStockSymbol[] = [];
+
+    // Process NYSE
+    if (data.nyse && Array.isArray(data.nyse)) {
+      data.nyse.forEach((stock: any) => {
+        allStocks.push({
+          symbol: stock.symbol,
+          name: stock.name,
+          price: stock.price || 0,
+          exchange: "New York Stock Exchange",
+          exchangeShortName: "NYSE",
+          type: stock.type || "stock",
+        });
+      });
+    }
+
+    // Process NASDAQ
+    if (data.nasdaq && Array.isArray(data.nasdaq)) {
+      data.nasdaq.forEach((stock: any) => {
+        allStocks.push({
+          symbol: stock.symbol,
+          name: stock.name,
+          price: stock.price || 0,
+          exchange: "NASDAQ Stock Exchange",
+          exchangeShortName: "NASDAQ",
+          type: stock.type || "stock",
+        });
+      });
+    }
+
+    // Process AMEX
+    if (data.amex && Array.isArray(data.amex)) {
+      data.amex.forEach((stock: any) => {
+        allStocks.push({
+          symbol: stock.symbol,
+          name: stock.name,
+          price: stock.price || 0,
+          exchange: "American Stock Exchange",
+          exchangeShortName: "AMEX",
+          type: stock.type || "stock",
+        });
+      });
+    }
+
+    logger.info(`✅ Fetched ${allStocks.length} US stocks via Grok`);
+    logger.info(`   NYSE: ${data.nyse?.length || 0}`);
+    logger.info(`   NASDAQ: ${data.nasdaq?.length || 0}`);
+    logger.info(`   AMEX: ${data.amex?.length || 0}`);
+
+    return {
+      lastUpdated: new Date().toISOString(),
+      count: allStocks.length,
+      stocks: allStocks,
+    };
+  } catch (error) {
+    logger.error("❌ Failed to fetch US stocks via Grok:", error);
+    throw error;
+  }
+}
+
+// ============================================
 // 1. MORNING INTELLIGENCE (OPTIMIZED)
 // ============================================
 
@@ -1140,6 +1290,7 @@ export class StockProcessor {
 // ============================================
 
 export default {
+  fetchUSStocksViaGrok,
   morningIntelligence,
   miniCheck,
   fullExtraction,

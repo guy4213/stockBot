@@ -1,4 +1,3 @@
-import axios from "axios";
 import fs from "fs/promises";
 import path from "path";
 import logger from "../utils/logger";
@@ -6,13 +5,6 @@ import dotenv from "dotenv";
 
 // טען .env מהשורש של הפרויקט
 dotenv.config({ path: path.join(__dirname, "../../.env") });
-
-const API_KEY = process.env.FMP_API_KEY;
-
-// וידוא שיש API key
-if (!API_KEY) {
-  throw new Error("FMP_API_KEY not found in .env file!");
-}
 
 const JSON_FILE = path.join(__dirname, "../data/us_stocks_cache.json");
 
@@ -26,74 +18,26 @@ interface StockSymbol {
 }
 
 // 🔹 שלב 1: שליפת כל המניות האמריקאיות ושמירה ל-JSON
+// ⚠️ פונקציה זו לא נדרשת יותר - השתמש בקובץ us_stocks_cache.json הקיים!
+// אם אתה צריך לעדכן את הקובץ, עשה זאת ידנית או השתמש בסקריפט חיצוני
 export async function fetchAndCacheUSStocks(): Promise<void> {
+  logger.warn("⚠️ fetchAndCacheUSStocks is deprecated!");
+  logger.warn("   Please use the existing us_stocks_cache.json file.");
+  logger.warn("   FMP API is no longer required.");
+
+  // בדיקה אם הקובץ קיים
   try {
-    logger.info("📥 Fetching all US stocks from FMP API...");
+    await fs.access(JSON_FILE);
+    const data = await fs.readFile(JSON_FILE, "utf8");
+    const cache = JSON.parse(data);
 
-    // שליפה מכל 3 הבורסות האמריקאיות
-    const [nyse, nasdaq, amex] = await Promise.all([
-      axios.get(
-        `https://financialmodelingprep.com/api/v3/symbol/NYSE?apikey=${API_KEY}`
-      ),
-      axios.get(
-        `https://financialmodelingprep.com/api/v3/symbol/NASDAQ?apikey=${API_KEY}`
-      ),
-      axios.get(
-        `https://financialmodelingprep.com/api/v3/symbol/AMEX?apikey=${API_KEY}`
-      ),
-    ]);
-
-    // איחוד כל הנתונים
-    const allStocks: StockSymbol[] = [
-      ...nyse.data,
-      ...nasdaq.data,
-      ...amex.data,
-    ];
-
-    logger.info(`📊 Total symbols fetched: ${allStocks.length}`);
-    logger.info(`   Breaking down by type...`);
-
-    // בדיקה: כמה מכל סוג?
-    const types = allStocks.reduce((acc: any, s) => {
-      acc[s.type] = (acc[s.type] || 0) + 1;
-      return acc;
-    }, {});
-    
-    logger.info(`   Types found: ${JSON.stringify(types)}`);
-
-    // ✅ שמור הכל - לא רק stocks!
-    // הסיבה: גם ETFs, ADRs, Trusts וכו' הם חלק מהשוק האמריקאי
-    const validSymbols = allStocks.filter((s) => {
-      // סנן רק דברים ממש לא רלוונטיים
-      if (!s.symbol || !s.name) return false;
-      if (s.symbol.length > 5) return false; // סימולים ארוכים מדי
-      return true;
-    });
-
-    logger.info(`✅ Keeping ${validSymbols.length} valid symbols (all types)`);
-
-    // שמירה לקובץ JSON עם timestamp
-    const cacheData = {
-      lastUpdated: new Date().toISOString(),
-      count: validSymbols.length,
-      stocks: validSymbols,
-    };
-
-    // וודא שהתיקייה קיימת
-    const dir = path.dirname(JSON_FILE);
-    await fs.mkdir(dir, { recursive: true });
-
-    await fs.writeFile(JSON_FILE, JSON.stringify(cacheData, null, 2));
-
-    logger.info(
-      `✅ Cached ${validSymbols.length} US symbols to ${JSON_FILE}`
-    );
-    logger.info(
-      `   NYSE: ${nyse.data.length} | NASDAQ: ${nasdaq.data.length} | AMEX: ${amex.data.length}`
-    );
-  } catch (error: any) {
-    logger.error("❌ Error fetching US stocks:", error.message);
-    throw error;
+    logger.info(`✅ Cache file exists with ${cache.count} stocks`);
+    logger.info(`   Last updated: ${cache.lastUpdated}`);
+    logger.info("   No need to fetch from API.");
+  } catch (error) {
+    logger.error("❌ Cache file not found!");
+    logger.error("   Please ensure us_stocks_cache.json exists in src/data/");
+    throw new Error("Cache file is required. FMP API is no longer used.");
   }
 }
 
