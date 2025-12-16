@@ -433,7 +433,7 @@ export async function morningIntelligence(
 ): Promise<MorningIntelligenceResponse> {
   logger.info(`🌅 Running Morning Intelligence for ${date}...`);
 
-  const prompt = `🚨 CRITICAL TASK: Access the EXACT URL and extract ONLY stocks reporting on ${date}
+  const prompt = `🚨 CRITICAL TASK: Access the EXACT URL and extract ONLY US stocks reporting on ${date}
 
 📍 MANDATORY URL TO ACCESS:
 https://finance.yahoo.com/calendar/earnings?day=${date}
@@ -446,13 +446,21 @@ https://finance.yahoo.com/calendar/earnings?day=${date}
 5. If the page shows 0 companies, return empty stocks array
 6. If the page shows only 3 companies (like LEN, WOR, KNW), return only those 3
 
-📊 For EACH company shown on the page, extract:
-- symbol: Stock ticker (EXACTLY as shown)
+🎯 FILTERING CRITERIA (Apply these filters before returning):
+- ✅ ONLY US stocks (NYSE, NASDAQ, AMEX)
+- ✅ ONLY stocks with Market Cap > $300M (300,000,000)
+- ✅ ONLY stocks with Average Volume > 5M (5,000,000) shares/day
+- ❌ EXCLUDE: Foreign stocks (*.L, *.TO, *.T, etc.)
+- ❌ EXCLUDE: Small-cap stocks (< $300M)
+- ❌ EXCLUDE: Low-volume stocks (< 5M)
+
+📊 For EACH company that PASSES the filters, extract:
+- symbol: Stock ticker (EXACTLY as shown, US exchanges only)
 - companyName: Full company name
 - reportType: "BMO" or "AMC" (look for timing indicators)
 - windowStart, windowEnd: HH:MM format
-- marketCap: Market cap in dollars (or 0 if not shown)
-- volume: Average volume (or 0 if not shown)
+- marketCap: Market cap in dollars (MUST be > 300,000,000)
+- volume: Average daily volume (MUST be > 5,000,000)
 - confidence: 85
 - sources: ["https://finance.yahoo.com/calendar/earnings?day=${date}"]
 
@@ -510,63 +518,34 @@ They likely don't report on ${date} - verify from the actual page.`;
     }
 
     logger.info(
-      `✅ Morning Intelligence raw data: ${data.stocks.length} stocks found`
+      `✅ Morning Intelligence completed: ${data.stocks.length} stocks found (already filtered by Grok)`
     );
 
-    // Filter by confidence
-    let filteredStocks = data.stocks.filter((stock) => stock.confidence >= 50);
-    logger.info(`   📊 After confidence filter (≥50%): ${filteredStocks.length} stocks`);
+    // ✅ Grok already filtered by:
+    // - US stocks only (NYSE, NASDAQ, AMEX)
+    // - Market Cap > $300M
+    // - Volume > 5M
+    // So we just validate confidence and display results
 
-    // Validate and filter by market cap and volume
-    const validatedStocks = [];
-    for (const stock of filteredStocks) {
-      // Fetch market cap if missing
-      if (!stock.marketCap || stock.marketCap === 0) {
-        try {
-          logger.info(`   🔍 Fetching market cap for ${stock.symbol}...`);
-          stock.marketCap = await getMarketCap(stock.symbol);
-          logger.info(`      Market cap: $${(stock.marketCap / 1e9).toFixed(2)}B`);
+    // Filter by confidence (optional safety check)
+    const validatedStocks = data.stocks.filter((stock) => stock.confidence >= 50);
 
-          // Add small delay to avoid rate limits
-          await delay(1000);
-        } catch (error) {
-          logger.warn(`      ⚠️ Could not fetch market cap for ${stock.symbol}, skipping`);
-          continue;
-        }
-      }
+    if (validatedStocks.length !== data.stocks.length) {
+      logger.info(`   📊 After confidence filter (≥50%): ${validatedStocks.length}/${data.stocks.length} stocks`);
+    }
 
-      // Fetch volume if missing
-      if (!stock.volume || stock.volume === 0) {
-        try {
-          logger.info(`   🔍 Fetching volume for ${stock.symbol}...`);
-          stock.volume = await getTradingVolume(stock.symbol);
-          logger.info(`      Volume: ${(stock.volume / 1e6).toFixed(2)}M`);
-
-          // Add small delay to avoid rate limits
-          await delay(1000);
-        } catch (error) {
-          logger.warn(`      ⚠️ Could not fetch volume for ${stock.symbol}, skipping`);
-          continue;
-        }
-      }
-
-      // Apply filters
-      if (stock.marketCap >= MIN_MARKET_CAP && stock.volume >= MIN_VOLUME) {
-        validatedStocks.push(stock);
+    // Display the stocks
+    if (validatedStocks.length > 0) {
+      logger.info(`\n   📋 Filtered US Stocks (MCap>$300M, Vol>5M):`);
+      validatedStocks.forEach((stock, index) => {
         logger.info(
-          `   ✅ ${stock.symbol} (${stock.companyName}) - ${stock.reportType} ${stock.windowStart}-${stock.windowEnd} | MCap: $${(stock.marketCap / 1e9).toFixed(2)}B | Vol: ${(stock.volume / 1e6).toFixed(2)}M`
+          `      ${index + 1}. ${stock.symbol} (${stock.companyName}) - ${stock.reportType} ${stock.windowStart}-${stock.windowEnd} | MCap: $${(stock.marketCap / 1e9).toFixed(2)}B | Vol: ${(stock.volume / 1e6).toFixed(2)}M`
         );
-      } else {
-        logger.info(
-          `   ❌ ${stock.symbol} - MCap: $${(stock.marketCap / 1e9).toFixed(2)}B, Vol: ${(stock.volume / 1e6).toFixed(2)}M (filtered out)`
-        );
-      }
+      });
     }
 
     data.stocks = validatedStocks;
-    logger.info(
-      `   📊 Final count after filters (MCap>$300M, Vol>5M): ${validatedStocks.length} stocks`
-    );
+    logger.info(`\n   ✅ Total: ${validatedStocks.length} stocks ready for processing\n`);
 
     return data;
   } catch (error) {
