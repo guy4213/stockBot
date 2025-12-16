@@ -25,6 +25,7 @@ import {
   MiraScore,
   StockProcessingState,
   ProcessingStatus,
+  Stock,
 } from "../types/grok.types";
 
 dotenv.config({ quiet: true });
@@ -35,7 +36,7 @@ dotenv.config({ quiet: true });
 
 const GROK_API_URL = "https://api.x.ai/v1/chat/completions";
 const GROK_API_KEY = process.env.GROK_API_KEY;
-const GROK_MODEL = "grok-4-fast-reasoning"; // Optimized: 97% cheaper than grok-3!
+const GROK_MODEL = "grok-3-mini"; // Optimized: 97% cheaper than grok-3!
 
 // Timing configuration
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes between checks
@@ -49,7 +50,29 @@ const MIN_MARKET_CAP = 300000000; // $300M
 // ============================================
 // HELPER: Call Grok API with Enhanced Error Handling
 // ============================================
+interface FinnhubEarningsEntry {
+  symbol: string;
+  date: string;
+  hour: string; // 'amc', 'bmo', etc.
+  year: number;
+  quarter: number;
+  epsEstimate?: number;
+  epsActual?: number;
+  revenueEstimate?: number;
+  revenueActual?: number;
+}
 
+export interface StockInfo {
+  symbol: string;
+  companyName: string; // פינהאב לא תמיד מחזיר שם מלא בקאלנדר, נצטרך להשלים או להשתמש בטיקר
+  reportType: string;
+  marketCap: number;
+}
+
+export interface MorningIntelligenceResponse {
+  date: string;
+  stocks: StockInfo[];
+}
 async function callGrokAPI(
   messages: GrokMessage[],
   temperature: number = 0.3,
@@ -427,131 +450,272 @@ Important:
 // 1. MORNING INTELLIGENCE (OPTIMIZED)
 // ============================================
 
+// ============================================
+// 1. MORNING INTELLIGENCE (FIXED)
+// ============================================
+
+// ============================================
+// 1. MORNING INTELLIGENCE (STRICT MODE)
+// ============================================
+
+// export async function morningIntelligence(
+//   date: string
+// ): Promise<MorningIntelligenceResponse> {
+//   logger.info(`🌅 Running Morning Intelligence for ${date}...`);
+
+//   // שינוי אגרסיבי: איסור מוחלט על המצאת נתונים
+//   const prompt = `🚨 CRITICAL DATA EXTRACTION TASK 🚨
+  
+//   TARGET URL: https://finance.yahoo.com/calendar/earnings?day=${date}
+
+//   INSTRUCTIONS:
+//   1. Go to the URL above via Web Search.
+//   2. Look strictly at the list of companies reporting on THIS SPECIFIC DATE (${date}).
+//   3. Extract symbols/tickers found in the table.
+
+//   ⛔ ZERO TOLERANCE RULES:
+//   1. DO NOT HALLUCINATE. If the list is empty, return empty array [].
+//   2. DO NOT include "popular" stocks (NVDA, AAPL, TSLA, GOOG, MSFT) unless they are EXPLICITLY listed in the table rows for ${date}.
+//   3. If you see "No results found" or an empty table, output ZERO stocks.
+//   4. DO NOT search for "earnings this week". Search ONLY for ${date}.
+
+//   REQUIRED OUTPUT (JSON ONLY):
+//   {
+//     "date": "${date}",
+//     "stocks": [
+//       { "symbol": "XYZ", "companyName": "Real Company on Page", "reportType": "AMC", "marketCap": 0, "confidence": 100 }
+//     ]
+//   }
+
+//   VERIFICATION:
+//   - If you are about to output "NVDA", STOP. Check the URL again. Is NVDA really there? If not, remove it.
+//   `;
+
+//   try {
+//     const response = await callGrokAPI(
+//       [
+//         {
+//           role: "system",
+//           content:
+//             "You are a robotic scraper. You do not think, you only extract text visible on the screen. If no text is found, return empty JSON.",
+//         },
+//         { role: "user", content: prompt },
+//       ],
+//       0, // Temperature 0 = Maximum deterministic behavior
+//       6000,
+//       true // Enable web search
+//     );
+
+//     // Extract and parse JSON
+//     const jsonText = extractJSON(response);
+//     let data: MorningIntelligenceResponse;
+
+//     try {
+//       data = JSON.parse(jsonText);
+//     } catch (parseError: any) {
+//       logger.error(`❌ JSON Parse Error: ${parseError.message}`);
+//       throw parseError;
+//     }
+
+//     logger.info(
+//       `✅ Grok found ${data.stocks.length} raw stocks. Starting validation...`
+//     );
+
+//     // ============================================================
+//     // STEP 2: VALIDATION (Removing Hallucinations)
+//     // ============================================================
+    
+//     const validatedStocks = [];
+//     const MIN_MARKET_CAP = 300000000; // $300M
+
+//     // רשימת "חשודים מידיים" - אם גרוק מחזיר אותם באמצע דצמבר, הוא כנראה משקר
+//     const SUSPICIOUS_STOCKS = ["NVDA", "AAPL", "MSFT", "GOOG", "GOOGL", "TSLA", "AMZN", "META", "NFLX"];
+
+//     for (const stock of data.stocks) {
+//       try {
+//         // 1. Hallucination Check
+//         if (SUSPICIOUS_STOCKS.includes(stock.symbol.toUpperCase())) {
+//             logger.warn(`   ⚠️ DETECTED SUSPICIOUS STOCK: ${stock.symbol}. This is likely a hallucination for date ${date}. SKIPPING.`);
+//             continue; 
+//         }
+
+//         // 2. Foreign Stock Check
+//         if (stock.symbol.includes(".")) {
+//           continue;
+//         }
+
+//         // 3. Market Cap Check
+//         if (!stock.marketCap || stock.marketCap === 0) {
+//             logger.info(`   🔍 Checking Market Cap for ${stock.symbol}...`);
+//             try {
+//                 const cap = await getMarketCap(stock.symbol);
+//                 stock.marketCap = cap;
+//             } catch (e) {
+//                 logger.warn(`   ⚠️ Could not fetch cap for ${stock.symbol}, skipping.`);
+//                 continue; 
+//             }
+//         }
+
+//         if (stock.marketCap >= MIN_MARKET_CAP) {
+//             logger.info(`   ✅ APPROVED: ${stock.symbol} ($${(stock.marketCap/1e9).toFixed(2)}B)`);
+//             validatedStocks.push(stock);
+//         } else {
+//             logger.info(`   ❌ REJECTED: ${stock.symbol} (Small Cap)`);
+//         }
+        
+//         await delay(500); 
+
+//       } catch (err) {
+//         logger.error(`   ❌ Error processing ${stock.symbol}`, err);
+//       }
+//     }
+
+//     data.stocks = validatedStocks;
+    
+//     if (validatedStocks.length === 0) {
+//         logger.info(`📭 No valid US stocks found reporting on ${date}. (This is good! It means no hallucinations).`);
+//     } else {
+//         logger.info(`\n   🎯 Final List: ${validatedStocks.length} stocks ready.\n`);
+//     }
+
+//     return data;
+//   } catch (error) {
+//     logger.error("❌ Morning Intelligence failed:", error);
+//     throw error;
+//   }
+// }
+
+
+
 export async function morningIntelligence(
-  date: string
+  date: string // Format: YYYY-MM-DD
 ): Promise<MorningIntelligenceResponse> {
-  logger.info(`🌅 Running Morning Intelligence for ${date}...`);
+  logger.info(`🌅 Running Morning Intelligence (Finnhub Source) for ${date}...`);
 
-  const prompt = `🚨 CRITICAL TASK: Access the EXACT URL and extract ONLY US stocks reporting on ${date}
-
-📍 MANDATORY URL TO ACCESS:
-https://finance.yahoo.com/calendar/earnings?day=${date}
-
-⚠️ IMPORTANT RULES:
-1. You MUST access this URL directly using web search
-2. Extract ONLY companies that are ACTUALLY listed on the page for ${date}
-3. DO NOT use your general knowledge or guess which companies report on this date
-4. DO NOT include companies like AAPL, NVDA, GOOG unless they are EXPLICITLY shown on the page for ${date}
-5. If the page shows 0 companies, return empty stocks array
-6. If the page shows only 3 companies (like LEN, WOR, KNW), return only those 3
-
-🎯 FILTERING CRITERIA (Apply these filters before returning):
-- ✅ ONLY US stocks (NYSE, NASDAQ, AMEX)
-- ✅ ONLY stocks with Market Cap > $300M (300,000,000)
-- ❌ EXCLUDE: Foreign stocks (*.L, *.TO, *.T, etc.)
-- ❌ EXCLUDE: Small-cap stocks (< $300M)
-
-⚠️ NOTE: NO volume filter - many legitimate stocks have lower average volume but spike significantly on earnings days (e.g., LEN with ~1.5M, WOR with ~300K)
-
-📊 For EACH company that PASSES the filters, extract:
-- symbol: Stock ticker (EXACTLY as shown, US exchanges only)
-- companyName: Full company name
-- reportType: "BMO" or "AMC" (look for timing indicators)
-- windowStart, windowEnd: HH:MM format
-- marketCap: Market cap in dollars (MUST be > 300,000,000)
-- volume: Average daily volume (include actual volume, no minimum required)
-- confidence: 85
-- sources: ["https://finance.yahoo.com/calendar/earnings?day=${date}"]
-
-📤 Return ONLY valid JSON (no markdown, no extra text):
-{
-  "date": "${date}",
-  "stocks": [
-    {
-      "symbol": "LEN",
-      "companyName": "Lennar Corporation",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "17:30",
-      "marketCap": 30000000000,
-      "volume": 1500000,
-      "confidence": 85,
-      "sources": ["https://finance.yahoo.com/calendar/earnings?day=${date}"]
-    }
-  ]
-}
-
-🔍 VERIFICATION STEPS:
-1. Access the URL: https://finance.yahoo.com/calendar/earnings?day=${date}
-2. Count how many companies are listed
-3. Extract ONLY those companies
-4. Return the exact list
-
-⚠️ If you see companies like AAPL, NVDA, GOOG, double-check the date!
-They likely don't report on ${date} - verify from the actual page.`;
+  // בדיקת API KEY
+  const FINNHUB_API_KEY = "d50m00pr01qm94qmq7kgd50m00pr01qm94qmq7l0";
+  if (!FINNHUB_API_KEY) {
+    throw new Error("❌ Missing FINNHUB_API_KEY in environment variables");
+  }
 
   try {
-    const response = await callGrokAPI(
-      [
-        {
-          role: "system",
-          content:
-            "Web scraper. Access Yahoo Finance URL and extract companies. Return ONLY valid JSON - no markdown, no extra text.",
-        },
-        { role: "user", content: prompt },
-      ],
-      0.1,
-      6000,
-      true // Enable web search
-    );
+    // ============================================================
+    // STEP 1: FETCH DATA FROM FINNHUB
+    // ============================================================
+    const url = `https://finnhub.io/api/v1/calendar/earnings`;
+    logger.info(`📡 Calling Finnhub API for earnings...`);
+    
+    // קריאה לפינהאב
+    const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(url, {
+      params: {
+        from: date,
+        to: date,
+        token: FINNHUB_API_KEY
+      }
+    });
 
-    // Extract and parse JSON
-    const jsonText = extractJSON(response);
-    let data: MorningIntelligenceResponse;
+    const rawList = response.data.earningsCalendar || [];
+    logger.info(`✅ Finnhub returned ${rawList.length} raw entries.`);
 
-    try {
-      data = JSON.parse(jsonText);
-    } catch (parseError: any) {
-      logger.error(`❌ JSON Parse Error: ${parseError.message}`);
-      throw parseError;
+    // ============================================================
+    // STEP 2: FILTER & ENRICH TO MATCH 'Stock' INTERFACE
+    // ============================================================
+    
+    const validatedStocks: Stock[] = [];
+    const MIN_MARKET_CAP = 300_000_000; // $300M
+
+    for (const entry of rawList) {
+      const symbol = entry.symbol.toUpperCase();
+
+      // סינון ראשוני: נקודות (מניות זרות), טיקרים ארוכים, או חוסר במידע זמן
+      if (symbol.includes(".") || symbol.length > 5 || !entry.hour) {
+        continue;
+      }
+
+      try {
+        // A. בדיקת שווי שוק (Market Cap)
+        const cap = await getMarketCap(symbol);
+        if (!cap || cap < MIN_MARKET_CAP) {
+           continue; // דילוג על מניות קטנות
+        }
+
+        // B. השלמת ווליום (Volume) - נדרש לפי האינטרפייס שלך
+        // משתמשים בפונקציה getTradingVolume שקיימת אצלך בקוד
+        let volume = 0;
+        try {
+            volume = await getTradingVolume(symbol);
+        } catch (e) {
+            logger.warn(`⚠️ Could not fetch volume for ${symbol}, defaulting to 0`);
+        }
+
+        // C. חישוב חלונות זמנים (Windows) וסוג דיווח
+        // המרה של הנתון הגולמי מפינהאב (bmo/amc) לפורמט שלך
+        let reportType: "BMO" | "AMC" = "AMC"; // ברירת מחדל
+        let windowStart = "16:05";
+        let windowEnd = "20:00";
+
+        const rawHour = entry.hour.toLowerCase();
+
+        if (rawHour === 'bmo') {
+            reportType = "BMO";
+            windowStart = "07:00";
+            windowEnd = "09:30"; // לפני הפתיחה
+        } else if (rawHour === 'amc') {
+            reportType = "AMC";
+            windowStart = "16:05"; // קצת אחרי הסגירה
+            windowEnd = "20:00";
+        } else {
+            // אם כתוב 'dmh' (במהלך המסחר) או משהו לא ברור, נסווג כ-AMC לבדיקה בסוף היום
+            reportType = "AMC"; 
+        }
+
+        logger.info(` 💎 Found Gem: ${symbol} | Type: ${reportType} | Cap: $${(cap / 1e9).toFixed(2)}B`);
+
+        // D. בניית האובייקט הסופי לפי המבנה של Stock
+        const stockObj: Stock = {
+            symbol: symbol,
+            companyName: symbol, // פינהאב לא נותן שם מלא, נשאיר סימבול בינתיים
+            reportType: reportType,
+            windowStart: windowStart,
+            windowEnd: windowEnd,
+            marketCap: cap,
+            volume: volume,
+            confidence: 100, // זה מגיע מ-API רשמי, אז הוודאות גבוהה
+            sources: ["Finnhub API"]
+        };
+           
+        validatedStocks.push(stockObj);
+
+        // Rate Limit Protection
+        await delay(300); 
+
+      } catch (err) {
+        logger.warn(`⚠️ Error processing ${symbol}, skipping.`);
+      }
     }
 
-    logger.info(
-      `✅ Morning Intelligence completed: ${data.stocks.length} stocks found (already filtered by Grok)`
-    );
+    // מיון לפי שווי שוק
+    validatedStocks.sort((a, b) => b.marketCap - a.marketCap);
 
-    // ✅ Grok already filtered by:
-    // - US stocks only (NYSE, NASDAQ, AMEX)
-    // - Market Cap > $300M
-    // - NO volume filter (allows all volumes)
-    // So we just validate confidence and display results
+    logger.info(`\n 🎯 Final Clean List: ${validatedStocks.length} stocks ready for automation.\n`);
 
-    // Filter by confidence (optional safety check)
-    const validatedStocks = data.stocks.filter((stock) => stock.confidence >= 50);
+    return {
+      date,
+      stocks: validatedStocks
+    };
 
-    if (validatedStocks.length !== data.stocks.length) {
-      logger.info(`   📊 After confidence filter (≥50%): ${validatedStocks.length}/${data.stocks.length} stocks`);
-    }
-
-    // Display the stocks
-    if (validatedStocks.length > 0) {
-      logger.info(`\n   📋 Filtered US Stocks (MCap>$300M, No volume filter):`);
-      validatedStocks.forEach((stock, index) => {
-        logger.info(
-          `      ${index + 1}. ${stock.symbol} (${stock.companyName}) - ${stock.reportType} ${stock.windowStart}-${stock.windowEnd} | MCap: $${(stock.marketCap / 1e9).toFixed(2)}B | Vol: ${(stock.volume / 1e6).toFixed(2)}M`
-        );
-      });
-    }
-
-    data.stocks = validatedStocks;
-    logger.info(`\n   ✅ Total: ${validatedStocks.length} stocks ready for processing\n`);
-
-    return data;
-  } catch (error) {
-    logger.error("❌ Morning Intelligence failed:", error);
+  } catch (error: any) {
+    logger.error("❌ Finnhub Morning Intelligence failed:", error.message);
     throw error;
   }
 }
+
+
+
+
+
+
+
 
 // ============================================
 // 2. MINI-CHECK (INDIVIDUAL STOCK)

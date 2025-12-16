@@ -1,0 +1,46 @@
+{
+    "date": "2025-12-16",
+    "lastUpdated": "2025-12-16T13:51:17.527Z",
+    "count": 3,
+    "stocks": [
+        {
+            "symbol": "GIS",
+            "companyName": "GIS",
+            "reportType": "BMO",
+            "windowStart": "07:00",
+            "windowEnd": "09:30",
+            "marketCap": 38500000000,
+            "volume": 3500000,
+            "confidence": 100,
+            "sources": [
+                "Finnhub API"
+            ]
+        },
+        {
+            "symbol": "LEN",
+            "companyName": "LEN",
+            "reportType": "AMC",
+            "windowStart": "16:05",
+            "windowEnd": "20:00",
+            "marketCap": 28500000000,
+            "volume": 2500000,
+            "confidence": 100,
+            "sources": [
+                "Finnhub API"
+            ]
+        },
+        {
+            "symbol": "WOR",
+            "companyName": "WOR",
+            "reportType": "AMC",
+            "windowStart": "16:05",
+            "windowEnd": "20:00",
+            "marketCap": 2300000000,
+            "volume": 250000,
+            "confidence": 100,
+            "sources": [
+                "Finnhub API"
+            ]
+        }
+    ]
+}
