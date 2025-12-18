@@ -390,47 +390,82 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   logger.info(`📝 Generating Final Telegram Report for ${fullData.symbol}...`);
 
   const tradeParams = calculateTradeParams(fullData.marketData.price, miraScore.classification);
-  
+
+  // Calculate deviation percentages
+  const epsDeviation = fullData.eps.estimate
+    ? (((fullData.eps.actual - fullData.eps.estimate) / Math.abs(fullData.eps.estimate)) * 100).toFixed(2)
+    : "N/A";
+  const revenueDeviation = fullData.revenue.estimate
+    ? (((fullData.revenue.actual - fullData.revenue.estimate) / fullData.revenue.estimate) * 100).toFixed(2)
+    : "N/A";
+
   const prompt = `
-  You are Mira, an AI financial analyst.
-  Create a COMPLETE, FORMATTED Telegram report in Hebrew.
+אתה Mira, אנליסט פיננסי AI מומחה.
+צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
 
-  DATA:
-  Symbol: ${fullData.symbol}
-  EPS: ${fullData.eps.actual} (Est ${fullData.eps.estimate})
-  Revenue: ${fullData.revenue.actual} (Est ${fullData.revenue.estimate})
-  Guidance: ${fullData.guidance.status}
-  Score: ${miraScore.totalScore}
-  Trade: ${tradeParams.direction} (${tradeParams.entryPrice}/${tradeParams.targetPrice}/${tradeParams.stopPrice})
-  Highlight: ${fullData.highlights[0] || "N/A"}
+📊 נתונים:
+סימול: ${fullData.symbol}
+שם: ${fullData.companyName}
+תאריך: ${fullData.reportDate}
 
-  OUTPUT FORMAT (Hebrew):
-  📌 סימול: ${fullData.symbol}
-  📊 תוצאות:
-  • EPS: $${fullData.eps.actual} (צפי: $${fullData.eps.estimate})
-  • הכנסות: $${(fullData?.revenue?.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B)
-  • תחזית: ${fullData.guidance.status}
+EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
+הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
+תחזית: ${fullData.guidance.status}
+Free Cash Flow: ${fullData.cashFlow.freeCashFlow > 0 ? 'חיובי' : 'שלילי'}${fullData.cashFlow.trendDescription ? ` (${fullData.cashFlow.trendDescription})` : ''}
+YoY Growth: EPS ${fullData.yoyGrowth.epsGrowth}% | Revenue ${fullData.yoyGrowth.revenueGrowth}%
+שולי רווח: Net ${fullData.margins.netMargin}% | Operating ${fullData.margins.operatingMargin}%
+סנטימנט: ${fullData.sentiment.overall}
 
-  ⚖️ ניקוד: ${miraScore.totalScore}
-  🏁 סיווג: ${miraScore.classification}
+ניקוד: ${miraScore.totalScore}
+סיווג: ${miraScore.classification}
 
-  📈 אסטרטגיה (${tradeParams.direction}):
-  📍 כניסה: ${tradeParams.entryPrice}
-  🎯 יעד: ${tradeParams.targetPrice}
-  🛑 סטופ: ${tradeParams.stopPrice}
+המלצה: ${tradeParams.direction}
+כניסה: ${tradeParams.entryPrice || 0}
+יעד: ${tradeParams.targetPrice || 0}
+סטופ: ${tradeParams.stopPrice || 0}
 
-  💡 ${fullData.highlights[0]}
+הדגשים: ${fullData.highlights.join(', ')}
+דאגות: ${fullData.concerns.join(', ')}
 
-  🤖 סיכום: [1 sentence analysis]
+פורמט הדוח (בעברית בלבד!):
 
-  Return ONLY the text.
+📌 סימול: ${fullData.symbol}
+📅 תאריך דוח: ${fullData.reportDate}
+
+📊 פרטי דוח:
+• EPS: $${fullData.eps.actual} מול תחזית $${fullData.eps.estimate} (סטייה ${epsDeviation}%)
+• Revenues: $${(fullData.revenue.actual / 1e6).toFixed(0)}M מול תחזית $${(fullData.revenue.estimate / 1e6).toFixed(0)}M (סטייה ${revenueDeviation}%)
+• Guidance: ${fullData.guidance.status === 'raised' ? 'הועלה' : fullData.guidance.status === 'lowered' ? 'הופחת' : fullData.guidance.status === 'maintained' ? 'נשמר' : fullData.guidance.status}
+• Free Cash Flow: ${fullData.cashFlow.freeCashFlow > 0 ? 'חיובי' : 'שלילי'}${fullData.cashFlow.trendDescription ? ` (${fullData.cashFlow.trendDescription})` : ''}
+• YoY Growth: EPS ${fullData.yoyGrowth.epsGrowth}% | Revenue ${fullData.yoyGrowth.revenueGrowth}%
+• שולי רווח: Net ${fullData.margins.netMargin}% | Operating ${fullData.margins.operatingMargin}%
+• סנטימנט הנהלה: ${fullData.sentiment.overall === 'positive' ? 'חיובי' : fullData.sentiment.overall === 'negative' ? 'שלילי' : 'ניטרלי'}
+
+⚖ ניקוד כולל: ${miraScore.totalScore}
+⚖ סיווג סופי: ${miraScore.classification === 'POSITIVE' ? 'חיובי' : miraScore.classification === 'NEGATIVE' ? 'שלילי' : 'ניטרלי'}
+
+📈 המלצת מסחר:
+
+כיוון: ${tradeParams.direction === 'LONG' ? 'LONG 🟢' : tradeParams.direction === 'SHORT' ? 'SHORT 🔴' : 'NEUTRAL ⚪'}
+כניסה: $${tradeParams.entryPrice || 0}
+יעד רווח: $${tradeParams.targetPrice || 0}
+סטופ לוס: $${tradeParams.stopPrice || 0}
+
+🧩 שיקול דעת AI:
+[כתוב ניתוח מפורט של 3-4 שורות בעברית המסביר למה הדוח קיבל את הסיווג הזה, מה הנקודות החזקות והחלשות, ומה המשמעות למשקיעים. התייחס לסטיות מהתחזיות, צמיחה, FCF, ותחזית.]
+
+📝 מסקנה:
+[כתוב משפט אחד בעברית המסכם את ההמלצה הסופית - האם לקנות/למכור/להמתין]
+
+חשוב: כל הטקסט חייב להיות בעברית בלבד! אסור אנגלית!
+החזר רק את הטקסט בפורמט למעלה, ללא markdown.
   `;
 
   try {
      const telegramMessage = await callGrokAPI(
-         [{ role: "system", content: "Output text only." }, { role: "user", content: prompt }], 
-         0.4, 
-         1000, 
+         [{ role: "system", content: "אתה אנליסט פיננסי. החזר רק טקסט בעברית, ללא markdown." }, { role: "user", content: prompt }],
+         0.4,
+         2000,  // Increased token limit for detailed report
          false
      );
 
@@ -458,9 +493,9 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
          dataSources: ["Finnhub", "FMP", "Grok"],
          confidence: 100
      };
-  } catch (e) { 
+  } catch (e) {
       logger.error(`❌ Error generating Final Analysis:`, e);
-      throw e; 
+      throw e;
   }
 }
 
