@@ -11,7 +11,10 @@ const bot = new TelegramBot(token, { polling: true });
 logger.info("Telegram bot initialized");
 
 bot.on("message", (msg) => {
-  logger.info(`Incoming message chat ID: ${msg.chat.id}`);
+  logger.info(`📨 Incoming message chat ID: ${msg.chat.id}`);
+  logger.info(`📋 Chat Type: ${msg.chat.type}`);
+  logger.info(`📝 Chat Title: ${msg.chat.title || 'N/A'}`);
+  logger.info(`👤 From: ${msg.from?.first_name} (${msg.from?.username || 'no username'})`);
 });
 
 bot.onText(/\/start/, (msg) => {
@@ -19,6 +22,20 @@ bot.onText(/\/start/, (msg) => {
     msg.chat.id,
     `Hello ${msg.from?.first_name}! I'm your bot 👋`
   );
+});
+
+bot.onText(/\/chatid/, (msg) => {
+  const chatInfo = `
+🆔 Chat ID: ${msg.chat.id}
+📱 Chat Type: ${msg.chat.type}
+${msg.chat.title ? `📋 Chat Title: ${msg.chat.title}` : ''}
+${msg.chat.username ? `🔗 Username: @${msg.chat.username}` : ''}
+
+✅ Use this Chat ID in your .env file:
+TELEGRAM_CHAT_ID=${msg.chat.id}
+  `;
+  bot.sendMessage(msg.chat.id, chatInfo);
+  logger.info(`📞 Chat ID requested: ${msg.chat.id}`);
 });
 
 export async function sendTelegramMessage(
