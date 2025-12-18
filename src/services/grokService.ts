@@ -1,11 +1,8 @@
-// ============================================
-// GROK SERVICE - xAI API Integration (OPTIMIZED)
-// ============================================
-
 import axios, { AxiosError } from "axios";
 import dotenv from "dotenv";
 import logger from "../utils/logger";
-import { getQuote } from "./stockService"; // ✅ שימוש בפונקציה הקיימת שלך!
+// ✅ שימוש ב-FMP לקבלת נתונים מדויקים במקום AI
+import { getQuote } from "./stockService"; 
 import {
   GrokResponse,
   GrokMessage,
@@ -22,64 +19,29 @@ import {
 
 dotenv.config({ quiet: true });
 
-// ============================================
-// CONFIGURATION
-// ============================================
-
 const GROK_API_URL = "https://api.x.ai/v1/chat/completions";
 const GROK_API_KEY = process.env.GROK_API_KEY;
 const GROK_MODEL = "grok-3-mini"; 
 
-// Timing configuration
-const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes between checks
-const DELAY_BETWEEN_STOCKS_MS = 2 * 60 * 1000; // 2 minutes delay between processing stocks
+const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const DELAY_BETWEEN_STOCKS_MS = 2 * 60 * 1000;
 const MAX_API_RETRIES = 3;
-const RETRY_DELAYS = [60000, 120000, 300000]; 
 
-// ============================================
-// INTERFACES
-// ============================================
-
-interface FinnhubEarningsEntry {
-  symbol: string;
-  date: string;
-  hour: string;
-  year: number;
-  quarter: number;
-  epsEstimate?: number;
-  epsActual?: number;
-  revenueEstimate?: number;
-  revenueActual?: number;
-}
-
-export interface USStockSymbol {
-  symbol: string;
-  name: string;
-  price: number;
-  exchange: string;
-  exchangeShortName: string;
-  type: string;
-}
-
-export interface USStocksList {
-  lastUpdated: string;
-  count: number;
-  stocks: USStockSymbol[];
+interface ExtendedStock extends Stock {
+    quarter?: number;
+    fiscalYear?: number;
 }
 
 // ============================================
 // HELPER: Call Grok API
 // ============================================
-
 async function callGrokAPI(
   messages: GrokMessage[],
   temperature: number = 0.3,
   maxTokens: number = 4000,
   enableWebSearch: boolean = false
 ): Promise<string> {
-  if (!GROK_API_KEY) {
-    throw new Error("GROK_API_KEY is not set in environment variables");
-  }
+  if (!GROK_API_KEY) throw new Error("GROK_API_KEY missing");
 
   const requestBody: any = {
     model: GROK_MODEL,
@@ -90,455 +52,518 @@ async function callGrokAPI(
   };
 
   if (enableWebSearch) {
-    requestBody.search_parameters = {
-      mode: "auto",
-      return_citations: true,
-      max_search_results: 20,
-    };
+    requestBody.search_parameters = { mode: "auto", return_citations: true, max_search_results: 20 };
   }
 
   for (let attempt = 0; attempt <= MAX_API_RETRIES; attempt++) {
-    const startTime = Date.now();
-
     try {
-      if (attempt === 0) {
-        logger.info(`📡 Calling Grok API (model: ${GROK_MODEL})...`);
-        if (enableWebSearch) {
-          logger.info(`   ⏳ Please wait... Grok is searching the web...`);
-        }
-      } else {
-        logger.info(`📡 Retry attempt ${attempt}/${MAX_API_RETRIES}...`);
-      }
-
-      const response = await axios.post<GrokResponse>(
-        GROK_API_URL,
-        requestBody,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${GROK_API_KEY}`,
-          },
+      const response = await axios.post<GrokResponse>(GROK_API_URL, requestBody, {
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${GROK_API_KEY}` },
           timeout: 600000, 
-        }
-      );
-
-      const duration = Date.now() - startTime;
-      const usage = response.data.usage;
-      const content = response.data.choices[0].message.content;
-
-      logger.info(
-        `✅ Grok API call successful (${Math.floor(duration / 1000)}s) | Tokens: ${usage.total_tokens}`
-      );
-
-      return content;
+      });
+      return response.data.choices[0].message.content;
     } catch (error) {
-      const duration = Date.now() - startTime;
-
-      if (axios.isAxiosError(error)) {
-        const axiosError = error as AxiosError;
-        if (axiosError.response?.status === 429 && attempt < MAX_API_RETRIES) {
-          const waitTime = RETRY_DELAYS[attempt];
-          logger.warn(`⚠️ Rate limit (429). Waiting ${waitTime / 1000}s...`);
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
+      if (axios.isAxiosError(error) && error.response?.status === 429 && attempt < MAX_API_RETRIES) {
+          await new Promise(r => setTimeout(r, 60000 * (attempt + 1)));
           continue;
-        }
-        logger.error(`❌ Grok API error: ${axiosError.message}`);
-      } else {
-        logger.error(`❌ Unexpected error calling Grok API:`, error);
       }
-
       if (attempt >= MAX_API_RETRIES) throw error;
     }
   }
   throw new Error("Max retries exceeded");
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+function delay(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-function extractJSON(response: string): string {
-  let jsonText = response.trim();
-  if (jsonText.startsWith("```json")) {
-    jsonText = jsonText.replace(/```json\n?/g, "").replace(/```\n?/g, "");
-  } else if (jsonText.startsWith("```")) {
-    jsonText = jsonText.replace(/```\n?/g, "");
-  }
-  const firstBrace = jsonText.indexOf("{");
-  const lastBrace = jsonText.lastIndexOf("}");
-  if (firstBrace === -1 || lastBrace === -1) {
-    throw new Error("No JSON object found in response");
-  }
-  jsonText = jsonText.substring(firstBrace, lastBrace + 1);
-  return jsonText.replace(/,(\s*[}\]])/g, "$1");
+function extractJSON(text: string): string {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end === -1) throw new Error("No JSON found");
+  return text.substring(start, end + 1);
 }
 
 // ============================================
-// 0. FETCH US STOCKS
+// 1. MORNING INTELLIGENCE
 // ============================================
-
-export async function fetchUSStocksViaGrok(): Promise<USStocksList> {
-  logger.info(`🌐 Fetching all US stocks via Grok...`);
-  // (Implementation shortened for brevity, logic remains same as provided previously)
-  // ... Assuming standard implementation ...
-  return { lastUpdated: new Date().toISOString(), count: 0, stocks: [] };
+interface FinnhubEarningsEntry { 
+    symbol: string; 
+    hour: string; 
+    quarter: number; 
+    year: number;
+    epsActual?: number | null;
+    revenueActual?: number | null;
 }
 
-// ============================================
-// 1. MORNING INTELLIGENCE (HYBRID: FINNHUB LIST + FMP DATA)
-// ============================================
+async function checkFinnhubUpdates(symbol: string, date: string): Promise<boolean> {
+    const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
+    if (!FINNHUB_API_KEY) return false;
+
+    const yesterday = new Date(date);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+
+    try {
+        const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
+            `https://finnhub.io/api/v1/calendar/earnings`, 
+            { params: { from: yesterdayStr, to: date, token: FINNHUB_API_KEY, symbol: symbol } }
+        );
+
+        const entries = response.data.earningsCalendar || [];
+        const entry = entries.find(e => e.symbol.toUpperCase() === symbol.toUpperCase());
+
+        if (entry) {
+            if (entry.epsActual !== null && entry.epsActual !== undefined) {
+                logger.info(`🔥 FINNHUB SIGNAL: ${symbol} released earnings! EPS Actual: ${entry.epsActual}`);
+                return true;
+            }
+        }
+        return false;
+    } catch (error) {
+        logger.error(`❌ Error checking Finnhub updates for ${symbol}`, error);
+        return false;
+    }
+}
+
+async function verifyEarningsDate(symbol: string, date: string): Promise<boolean> {
+    // השארנו את זה ככה למקרה שנרצה להחזיר
+    return true; 
+}
 
 export async function morningIntelligence(date: string): Promise<MorningIntelligenceResponse> {
-  logger.info(`🌅 Running Morning Intelligence (Hybrid Source) for ${date}...`);
+  logger.info(`🌅 Running Morning Intelligence (Hybrid) for ${date}...`);
 
-  const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
-  if (!FINNHUB_API_KEY) {
-    throw new Error("❌ Missing FINNHUB_API_KEY in environment variables");
-  }
+  const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY; 
+  if (!FINNHUB_API_KEY) throw new Error("Missing FINNHUB_API_KEY");
 
-  try {
-    // 1. שליפת הרשימה מ-Finnhub (אמין מאוד לתאריכי דוחות)
-    const url = `https://finnhub.io/api/v1/calendar/earnings`;
-    logger.info(`📡 Calling Finnhub API for earnings list...`);
-    
-    const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(url, {
-      params: { from: date, to: date, token: FINNHUB_API_KEY }
-    });
+  // const yesterday = new Date(date);
+  // yesterday.setDate(yesterday.getDate() - 1);
+  // const yesterdayStr = yesterday.toISOString().split('T')[0];
 
-    const rawList = response.data.earningsCalendar || [];
-    logger.info(`✅ Finnhub returned ${rawList.length} raw entries.`);
-    
-    const validatedStocks: Stock[] = [];
-    const MIN_MARKET_CAP = 300_000_000; // $300M
+  logger.info(`📡 Calling Finnhub API (Range: ${date} - ${date})...`);
+  
+  const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
+    `https://finnhub.io/api/v1/calendar/earnings`, 
+    { params: { from: date, to: date, token: FINNHUB_API_KEY } }
+  );
 
-    for (const entry of rawList) {
-      const symbol = entry.symbol.toUpperCase();
+  const rawList = response.data.earningsCalendar || [];
+  logger.info(`✅ Finnhub returned ${rawList.length} raw entries.`);
+
+  const validatedStocks: ExtendedStock[] = [];
+  const MIN_MARKET_CAP = 300_000_000; 
+  const MIN_VOLUME = 5_000_000;       
+
+  const processedSymbols = new Set<string>();
+
+  for (const entry of rawList) {
+    const symbol = entry.symbol.toUpperCase();
+    if (processedSymbols.has(symbol)) continue;
+    processedSymbols.add(symbol);
+
+    if (symbol.includes(".") || symbol.length > 5 || !entry.hour) continue;
+
+    try {
+      const quote = await getQuote(symbol);
       
-      // סינון ראשוני: מדלגים על מניות ללא שעת דיווח או עם תווים מיוחדים
-      if (symbol.includes(".") || symbol.length > 5 || !entry.hour) continue;
-
-      try {
-        // 2. ⚡ שימוש ב-stockService (FMP) לשליפת נתונים מדויקים במהירות! ⚡
-        // זה מחליף את הקריאות היקרות ל-AI
-        const quote = await getQuote(symbol);
-
-        // אם המניה לא נמצאה ב-FMP או שהנתונים חסרים - מדלגים
-        if (!quote || !quote.marketCap) {
-             // logger.warn(`⚠️ No quote data found for ${symbol}, skipping.`);
-             continue;
-        }
-
-        // 3. סינון לפי שווי שוק
-        if (quote.marketCap < MIN_MARKET_CAP) {
-            continue; 
-        }
-
-        // 4. חישוב חלונות זמנים (כמו קודם)
-        let reportType: "BMO" | "AMC" = "AMC";
-        let windowStart = "16:05";
-        let windowEnd = "20:00";
-
-        const rawHour = entry.hour.toLowerCase();
-        if (rawHour === 'bmo') {
-            reportType = "BMO";
-            windowStart = "07:00";
-            windowEnd = "09:30";
-        } else if (rawHour === 'amc') {
-            reportType = "AMC";
-            windowStart = "16:05";
-            windowEnd = "20:00";
-        }
-
-        logger.info(` 💎 Found Gem: ${symbol} (${quote.name}) | Cap: $${(quote.marketCap / 1e9).toFixed(2)}B | Vol: ${quote.volume}`);
-
-        validatedStocks.push({
-            symbol: symbol,
-            companyName: quote.name || symbol, // שימוש בשם המלא מ-FMP
-            reportType: reportType,
-            windowStart: windowStart,
-            windowEnd: windowEnd,
-            marketCap: quote.marketCap,
-            volume: quote.volume || 0,
-            confidence: 100,
-            sources: ["Finnhub (List)", "FMP (Data)"]
-        });
-           
-        // השהייה קטנה למניעת עומס (למרות ש-FMP מהיר)
-        await delay(100); 
-
-      } catch (err) {
-        logger.warn(`⚠️ Error processing ${symbol}, skipping.`);
+      if (!quote) {
+          logger.warn(`❌ Skipping ${symbol}: FMP returned NULL (Rate limit?)`);
+          await delay(1000);
+          continue;
       }
+
+      if (!quote.marketCap) {
+          logger.warn(`❌ Skipping ${symbol}: No Market Cap data`);
+          continue;
+      }
+
+      if (quote.marketCap < MIN_MARKET_CAP) {
+          // logger.info(`❌ Skipping ${symbol}: Small Cap ($${(quote.marketCap/1e6).toFixed(0)}M)`);
+          continue;
+      }
+
+      // if ((quote.volume || 0) < MIN_VOLUME) {
+      //      // logger.info(`❌ Skipping ${symbol}: Low Volume (${(quote.volume || 0).toLocaleString()})`);
+      //      continue;
+      // }
+
+      let reportType: "BMO" | "AMC" = entry.hour.toLowerCase() === 'bmo' ? "BMO" : "AMC";
+      let windowStart = reportType === "BMO" ? "07:00" : "16:05";
+      let windowEnd = reportType === "BMO" ? "09:30" : "20:00";
+      
+      const quarter = entry.quarter;
+      const fiscalYear = entry.year;
+
+      logger.info(` 💎 Found: ${symbol} (${quote.name}) | Q${quarter} ${fiscalYear} | Cap: $${(quote.marketCap / 1e9).toFixed(2)}B`);
+
+      validatedStocks.push({
+          symbol: symbol,
+          companyName: quote.name || symbol,
+          reportType: reportType,
+          windowStart: windowStart,
+          windowEnd: windowEnd,
+          marketCap: quote.marketCap,
+          volume: quote.volume || 0,
+          confidence: 100,
+          sources: ["Finnhub", "FMP"],
+          // @ts-ignore
+          quarter: quarter, 
+          // @ts-ignore
+          fiscalYear: fiscalYear 
+      });
+      
+      await delay(500); // דיליי למניעת חסימה
+
+    } catch (err: any) {
+      logger.error(`⚠️ CRASH processing ${symbol}: ${err.message}`);
     }
-
-    validatedStocks.sort((a, b) => b.marketCap - a.marketCap);
-    logger.info(`\n 🎯 Final Clean List: ${validatedStocks.length} stocks ready.\n`);
-
-    return { date, stocks: validatedStocks };
-
-  } catch (error: any) {
-    logger.error("❌ Morning Intelligence failed:", error.message);
-    throw error;
   }
+
+  validatedStocks.sort((a, b) => b.marketCap - a.marketCap);
+  logger.info(`✅ Final List: ${validatedStocks.length} stocks.`);
+  return { date, stocks: validatedStocks };
 }
 
 // ============================================
 // 2. MINI-CHECK
 // ============================================
-
-export async function miniCheck(symbol: string, companyName: string): Promise<MiniCheckResponse> {
-  logger.info(`🔍 Mini-Check for ${symbol}...`);
+export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {
+  logger.info(`🔍 AI Fallback Check for ${symbol}...`);
   const now = new Date().toISOString();
   const today = now.split("T")[0];
-
-  const prompt = `Quick verification task.
-Company: ${symbol}
-Today's date: ${today}
-Has this company published their quarterly earnings report TODAY?
-Search IR website, SEC EDGAR, Financial news.
-Answer ONE WORD: YES, NO, or UNSURE.`;
+  const specificTerm = (quarter && fiscalYear) ? `Q${quarter} ${fiscalYear}` : "Quarterly";
+  
+  const prompt = `
+  TARGET: ${symbol} (${companyName})
+  SPECIFIC REPORT: ${specificTerm} Earnings
+  DATE: ${today}
+  MISSION: Check if Earnings Press Release published TODAY.
+  Look for HEADLINES like "${symbol} Reports ${specificTerm} Results".
+  Reply ONE WORD: YES or NO.
+  `;
 
   try {
-    const response = await callGrokAPI(
-      [{ role: "system", content: "Answer with ONE word only: YES, NO, or UNSURE." }, { role: "user", content: prompt }],
-      0.1, 10, true
-    );
-    const result = response.trim().toUpperCase() as MiniCheckResult;
-    logger.info(`✅ Mini-Check for ${symbol}: ${result}`);
-    return { symbol, checkTime: now, result: ["YES", "NO", "UNSURE"].includes(result) ? result : "UNSURE" };
-  } catch (error) {
-    logger.error(`❌ Error in Mini-Check for ${symbol}:`, error);
-    return { symbol, checkTime: now, result: "UNSURE" };
+    const res = await callGrokAPI([{ role: "user", content: prompt }], 0.3, 50, true);
+    const cleanRes = res.trim().toUpperCase();
+    let finalResult: MiniCheckResult = "UNSURE";
+    if (cleanRes.includes("YES")) finalResult = "YES";
+    else if (cleanRes.includes("NO")) finalResult = "NO";
+    else if (cleanRes.includes("REPORTS") || cleanRes.includes("RELEASED")) finalResult = "YES";
+
+    return { symbol, checkTime: now, result: finalResult };
+  } catch (e: any) { 
+      return { symbol, checkTime: now, result: "UNSURE" }; 
   }
 }
 
 // ============================================
-// 3. FULL EXTRACTION
+// 3. FULL EXTRACTION & SCORING
 // ============================================
 
+function calculateDetailedScore(data: FullExtractionResponse): MiraScore {
+    let totalScore = 0;
+    const scoreBreakdown: string[] = [];
+    const exceptions: string[] = [];
+    let negativeCount = 0;
+
+    const epsChange = data.eps.beatPercent || 0;
+    if (epsChange > 10) { totalScore += 2; }
+    else if (epsChange >= 5) { totalScore += 1.5; }
+    else if (epsChange >= 3) { totalScore += 1; }
+    else if (epsChange >= -3) { totalScore += 0; }
+    else if (epsChange >= -5) { totalScore += -0.5; }
+    else if (epsChange >= -10) { totalScore += -1; }
+    else { totalScore += -1.5; }
+    if (epsChange < -3) negativeCount++;
+
+    const revChange = data.revenue.beatPercent || 0;
+    if (revChange > 7) { totalScore += 1.5; }
+    else if (revChange >= 3) { totalScore += 1; }
+    else if (revChange >= -3) { totalScore += 0; }
+    else { totalScore += -1; }
+    if (revChange < -3) negativeCount++;
+
+    const guidance = data.guidance.status.toLowerCase();
+    if (guidance.includes('raised')) { totalScore += 1; }
+    else if (guidance.includes('maintained')) { totalScore += 0.5; }
+    else if (guidance.includes('lowered')) { totalScore += -1.5; negativeCount++; }
+
+    const yoyEps = data.yoyGrowth.epsChange || 0;
+    if (yoyEps > 30) { totalScore += 1; }
+    else if (yoyEps >= 10) { totalScore += 0.5; }
+    else if (yoyEps < -10) { totalScore += -0.5; negativeCount++; }
+
+    const yoyRev = data.yoyGrowth.revenueChange || 0;
+    if (yoyRev > 20) { totalScore += 1; }
+    else if (yoyRev >= 10) { totalScore += 0.5; }
+    else if (yoyRev < 0) { totalScore += -0.5; negativeCount++; }
+
+    const fcfChange = data.cashFlow.yoyChange || 0;
+    if (fcfChange > 0) { totalScore += 0.5; }
+    else if (fcfChange < 0) { totalScore += -0.5; negativeCount++; }
+
+    if (data.margins.trend === 'improving') { totalScore += 0.5; }
+    else if (data.margins.trend === 'declining') { totalScore -= 0.5; negativeCount++; }
+
+    if (data.sentiment.overall === 'positive') { totalScore += 0.5; }
+    else if (data.sentiment.overall === 'negative') { totalScore -= 0.5; negativeCount++; }
+
+    let classification = "NEUTRAL";
+    if (totalScore >= 4) classification = "POSITIVE";
+    else if (totalScore >= 2) classification = "POSITIVE";
+    else if (totalScore <= -2) classification = "NEGATIVE";
+
+    if (negativeCount >= 6) {
+        classification = "NEGATIVE";
+        exceptions.push(`⚠️ Override: ${negativeCount} negative indicators → NEGATIVE`);
+    }
+
+    return {
+        totalScore,
+        classification,
+        breakdown: { epsScore: epsChange, revenueScore: revChange, guidanceScore: 0, yoyEpsScore: yoyEps, yoyRevenueScore: yoyRev, fcfScore: fcfChange, marginScore: 0, sentimentScore: 0 },
+        exceptions
+    };
+}
+
+function calculateTradeParams(price: number, classification: string) {
+    const safePrice = price || 0;
+    if (classification === "POSITIVE" && safePrice > 0) {
+        return {
+            direction: "LONG 🟢",
+            entryPrice: Number((safePrice * 0.98).toFixed(2)),
+            targetPrice: Number((safePrice * 1.05).toFixed(2)),
+            stopPrice: Number((safePrice * 0.95).toFixed(2))
+        };
+    } else if (classification === "NEGATIVE" && safePrice > 0) {
+        return {
+            direction: "SHORT 🔴",
+            entryPrice: Number((safePrice * 1.02).toFixed(2)),
+            targetPrice: Number((safePrice * 0.95).toFixed(2)),
+            stopPrice: Number((safePrice * 1.05).toFixed(2))
+        };
+    }
+    return { direction: "NEUTRAL ⚪", entryPrice: 0, targetPrice: 0, stopPrice: 0 };
+}
+
+// ============================================
+// 4. FULL EXTRACTION (FORCE SYMBOL) 🛑
+// ============================================
 export async function fullExtraction(symbol: string, companyName: string, reportDate: string): Promise<FullExtractionResponse> {
-  logger.info(`📊 Full Extraction for ${symbol}...`);
-  
-  const extractionPrompt = `You are a financial data extraction specialist.
-Company: ${symbol}
-Report Date: ${reportDate}
-Mission: Extract ALL financial data (EPS, Revenue, Guidance, Margins).
-Return ONLY valid JSON.`;
+  logger.info(`📊 Extracting ${symbol}...`);
+  const extractionPrompt = `
+  EXTRACT DATA FOR: ${symbol} (${companyName})
+  DATE: ${reportDate}
 
+  REQUIRED JSON FIELDS:
+  - eps: { beatPercent: number, actual: number, estimate: number }
+  - revenue: { beatPercent: number, actual: number, estimate: number }
+  - guidance: { status: "raised"|"lowered"|"maintained"|"unavailable" }
+  - yoyGrowth: { epsChange: number, revenueChange: number }
+  - cashFlow: { yoyChange: number }
+  - margins: { trend: "improving"|"stable"|"declining" }
+  - sentiment: { overall: "positive"|"neutral"|"negative" }
+  - marketData: { price: number }
+  - highlights: string[] (2 key points)
+  - concerns: string[]
+  
+  Return ONLY valid JSON.
+  `;
+  
   try {
-    const response = await callGrokAPI(
-      [{ role: "system", content: "Return valid JSON only." }, { role: "user", content: extractionPrompt }],
-      0.2, 4000, true
-    );
-    const jsonText = extractJSON(response);
-    const data: FullExtractionResponse = JSON.parse(jsonText);
-    logger.info(`✅ Full Extraction completed. Recommendation: ${data.aiRecommendation.decision}`);
+    const res = await callGrokAPI([{ role: "system", content: "Return valid JSON." }, { role: "user", content: extractionPrompt }], 0.2, 4000, true);
+    const jsonText = extractJSON(res);
+    const data = JSON.parse(jsonText);
+    
+    // 🛑 FORCE SYMBOL INJECTION - התיקון הקריטי!
+    data.symbol = symbol;
+    data.companyName = companyName;
+    data.reportDate = reportDate;
+    
     return data;
-  } catch (error) {
-    logger.error(`❌ Error in Full Extraction for ${symbol}:`, error);
-    throw error;
-  }
+  } catch (e) { logger.error(`Extraction failed for ${symbol}`, e); throw e; }
 }
 
 // ============================================
-// 4. FINAL ANALYSIS
+// 5. FINAL ANALYSIS (TELEGRAM FORMAT)
 // ============================================
-
 export async function finalAnalysis(fullData: FullExtractionResponse, miraScore: MiraScore): Promise<FinalAnalysis> {
-  const prompt = `You are Mira - an AI financial analyst writing in Hebrew.
-  Analyze ${fullData.symbol} results.
-  Return JSON with Hebrew summary.`;
+  logger.info(`📝 Generating Final Telegram Report for ${fullData.symbol}...`);
+
+  const tradeParams = calculateTradeParams(fullData.marketData.price, miraScore.classification);
   
+  const prompt = `
+  You are Mira, an AI financial analyst.
+  Create a COMPLETE, FORMATTED Telegram report in Hebrew.
+
+  DATA:
+  Symbol: ${fullData.symbol}
+  EPS: ${fullData.eps.actual} (Est ${fullData.eps.estimate})
+  Revenue: ${fullData.revenue.actual} (Est ${fullData.revenue.estimate})
+  Guidance: ${fullData.guidance.status}
+  Score: ${miraScore.totalScore}
+  Trade: ${tradeParams.direction} (${tradeParams.entryPrice}/${tradeParams.targetPrice}/${tradeParams.stopPrice})
+  Highlight: ${fullData.highlights[0] || "N/A"}
+
+  OUTPUT FORMAT (Hebrew):
+  📌 סימול: ${fullData.symbol}
+  📊 תוצאות:
+  • EPS: $${fullData.eps.actual} (צפי: $${fullData.eps.estimate})
+  • הכנסות: $${(fullData?.revenue?.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B)
+  • תחזית: ${fullData.guidance.status}
+
+  ⚖️ ניקוד: ${miraScore.totalScore}
+  🏁 סיווג: ${miraScore.classification}
+
+  📈 אסטרטגיה (${tradeParams.direction}):
+  📍 כניסה: ${tradeParams.entryPrice}
+  🎯 יעד: ${tradeParams.targetPrice}
+  🛑 סטופ: ${tradeParams.stopPrice}
+
+  💡 ${fullData.highlights[0]}
+
+  🤖 סיכום: [1 sentence analysis]
+
+  Return ONLY the text.
+  `;
+
   try {
-     const response = await callGrokAPI(
-         [{ role: "system", content: "Write Hebrew analysis." }, { role: "user", content: prompt }],
-         0.4, 2000, false
+     const telegramMessage = await callGrokAPI(
+         [{ role: "system", content: "Output text only." }, { role: "user", content: prompt }], 
+         0.4, 
+         1000, 
+         false
      );
+
+     // 🛑 LOG THE GENERATED MESSAGE
+     logger.info(`📝 Generated Message Preview: ${telegramMessage.substring(0, 50)}...`);
+
+     if (!telegramMessage || telegramMessage.trim().length === 0) {
+         throw new Error("Grok returned empty summary");
+     }
+
      return {
          symbol: fullData.symbol,
          date: fullData.reportDate,
-         summary: response,
+         summary: telegramMessage,
          miraScore,
-         tradingRecommendation: { direction: "NEUTRAL", entryPrice: 0, targetPrice: 0, stopPrice: 0},
-         aiReasoning: "Analysis",
-         conclusion: "Conclusion",
-         dataSources: [],
+         tradingRecommendation: tradeParams,
+         aiReasoning: "Generated by Grok",
+         conclusion: "Report Generated",
+         dataSources: ["Finnhub", "FMP", "Grok"],
          confidence: 100
      };
-  } catch (e) { throw e; }
+  } catch (e) { 
+      logger.error(`❌ Error generating Final Analysis:`, e);
+      throw e; 
+  }
 }
 
 // ============================================
-// 5. STOCK PROCESSOR (THE LOGIC ENGINE)
+// 6. STOCK PROCESSOR (ENGINE)
 // ============================================
-
 export class StockProcessor {
-  private stocks: StockProcessingState[] = [];
+  private stocks: (StockProcessingState & { quarter?: number, fiscalYear?: number })[] = [];
   private isRunning: boolean = false;
   private checkInterval: NodeJS.Timeout | null = null;
 
   constructor(private onComplete?: (stock: StockProcessingState) => void) {}
 
-  // 🛠️ THE CRITICAL FIX: NY TIME CHECK 🛠️
   private isMarketWindowOpen(windowStart: string): boolean {
-    try {
-      // Get current time in New York
-      const nyTime = new Date().toLocaleString("en-US", {
-        timeZone: "America/New_York",
-        hour12: false,
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      
-      // Compare HH:MM strings (e.g., "09:00" < "16:05")
-      return nyTime >= windowStart;
-    } catch (error) {
-      logger.error("Error checking NY time:", error);
-      return false;
-    }
-  }
-
-  // 🛠️ THE LOGIC ENGINE 🛠️
-  private async processNextStock(): Promise<void> {
-    if (!this.isRunning) return;
-
-    // 1. Find a stock that is both PENDING AND within its OPEN WINDOW
-    const stock = this.stocks.find((s) => {
-        if (s.status === "completed" || s.status === "error") return false;
-        
-        const isTime = this.isMarketWindowOpen(s.windowStart);
-        if (!isTime) {
-            return false;
-        }
-        return s.status === "pending" || s.status === "checking";
-    });
-
-    // 2. No stock ready NOW?
-    if (!stock) {
-        const remaining = this.stocks.filter(s => s.status === "pending" || s.status === "checking").length;
-        if (remaining > 0) {
-            logger.info(`⏳ No stocks ready for CURRENT window (NY Time). Waiting for next cycle... (${remaining} remaining)`);
-            return; 
-        } else {
-            logger.info("✅ All stocks processed for today!");
-            this.stop();
-            return;
-        }
-    }
-
-    // 3. Process the found stock
-    try {
-        logger.info(`\n${"=".repeat(60)}`);
-        logger.info(`📦 Processing: ${stock.symbol} (${stock.companyName})`);
-        logger.info(`   Window Open: ${stock.windowStart} ET | Status: ${stock.status}`);
-        logger.info(`${"=".repeat(60)}\n`);
-
-        stock.status = "checking";
-        stock.checkCount++;
-        stock.lastCheck = new Date().toISOString();
-
-        // A. Mini Check
-        const miniCheckResult = await miniCheck(stock.symbol, stock.companyName);
-
-        if (miniCheckResult.result === "YES") {
-            logger.info(`✅ Report published! Extracting...`);
-            stock.status = "extracting";
-            await delay(2000);
-
-            // B. Full Extraction
-            const fullData = await fullExtraction(stock.symbol, stock.companyName, stock.lastCheck.split("T")[0]);
-            stock.fullData = fullData;
-
-            if (fullData.aiRecommendation.decision === "SEND" || fullData.aiRecommendation.decision === "SEND_WITH_WARNING") {
-                // C. Final Analysis & Send
-                const miraScore: MiraScore = {
-                    totalScore: this.calculateMiraScore(fullData),
-                    classification: "POSITIVE",
-                    breakdown: { epsScore: 0, revenueScore: 0, guidanceScore: 0, yoyEpsScore: 0, yoyRevenueScore: 0, fcfScore: 0, marginScore: 0, sentimentScore: 0 },
-                    exceptions: []
-                };
-                
-                const analysis = await finalAnalysis(fullData, miraScore);
-                stock.analysis = analysis;
-                stock.status = "completed";
-                logger.info(`✅ ${stock.symbol} COMPLETED.`);
-                
-                if (this.onComplete) this.onComplete(stock);
-
-            } else {
-                logger.info(`⏸️ Analysis says WAIT/NOT READY. Re-queueing.`);
-                stock.status = "checking";
-            }
-        } else {
-            logger.info(`⏳ Not published yet (${miniCheckResult.result}). Waiting.`);
-            stock.status = "checking";
-        }
-
-        // Rate limit safety
-        if (this.isRunning) {
-            logger.info(`⏳ Cooling down ${DELAY_BETWEEN_STOCKS_MS/1000}s...`);
-            await delay(DELAY_BETWEEN_STOCKS_MS);
-        }
-
-    } catch (error) {
-        logger.error(`❌ Error processing ${stock.symbol}:`, error);
-        stock.status = "error";
-        await delay(DELAY_BETWEEN_STOCKS_MS);
-    }
-  }
-
-  // --- Boilerplate Methods ---
-
-  initialize(morningData: MorningIntelligenceResponse): void {
-    logger.info(`🚀 Initializing Stock Processor with ${morningData.stocks.length} stocks`);
-    this.stocks = morningData.stocks.map((stock) => ({
-      symbol: stock.symbol,
-      companyName: stock.companyName,
-      reportType: stock.reportType,
-      windowStart: stock.windowStart,
-      windowEnd: stock.windowEnd,
-      marketCap: stock.marketCap,
-      volume: stock.volume,
-      status: "pending" as ProcessingStatus,
-      lastCheck: null,
-      checkCount: 0,
-      error: null,
-      fullData: null,
-      analysis: null,
-    }));
-  }
-
-  start(): void {
-    if (this.isRunning) { logger.warn("Already running"); return; }
-    logger.info(`🚀 Starting Processor (Interval: ${CHECK_INTERVAL_MS/1000}s)`);
-    this.isRunning = true;
-    this.processNextStock();
-    this.checkInterval = setInterval(() => this.processNextStock(), CHECK_INTERVAL_MS);
-  }
-
-  stop(): void {
-    logger.info("🛑 Stopping Processor");
-    this.isRunning = false;
-    if (this.checkInterval) { clearInterval(this.checkInterval); this.checkInterval = null; }
-  }
-
-  private calculateMiraScore(data: FullExtractionResponse): number {
-    let score = 0;
-    if (data.eps.beatPercent && data.eps.beatPercent > 0) score++;
-    if (data.revenue.beatPercent && data.revenue.beatPercent > 0) score++;
-    return score;
+    const nyTime = new Date().toLocaleString("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit" });
+    return nyTime >= windowStart;
   }
 
   getStatus() {
       return { total: this.stocks.length, pending: this.stocks.filter(s => s.status === 'pending').length };
   }
+
+  private async processNextStock(): Promise<void> {
+    if (!this.isRunning) return;
+
+    const stock = this.stocks.find((s) => {
+        if (s.status !== "pending" && s.status !== "checking") return false;
+        if (!this.isMarketWindowOpen(s.windowStart)) return false;
+        return true;
+    });
+
+    if (!stock) {
+        const remaining = this.stocks.filter(s => s.status === "pending" || s.status === "checking").length;
+        if (remaining > 0) {
+            logger.info(`⏳ No stocks ready for CURRENT window (NY Time). Waiting... (${remaining} left)`);
+            return;
+        } else {
+            logger.info("✅ All done for today.");
+            this.stop();
+            return;
+        }
+    }
+
+    try {
+        logger.info(`📦 Processing ${stock.symbol} (Window: ${stock.windowStart})...`);
+        stock.status = "checking";
+        stock.checkCount++;
+        
+        const finnhubHasData = await checkFinnhubUpdates(stock.symbol, new Date().toISOString().split("T")[0]);
+        let reportConfirmed = false;
+
+        if (finnhubHasData) {
+            logger.info(`🚀 FINNHUB CONFIRMED: ${stock.symbol} reported! Skipping AI check.`);
+            reportConfirmed = true;
+        } else {
+            const miniCheckResult = await miniCheck(stock.symbol, stock.companyName, stock.quarter, stock.fiscalYear);
+            if (miniCheckResult.result === "YES") {
+                logger.info(`🤖 AI FOUND REPORT: ${stock.symbol} reported!`);
+                reportConfirmed = true;
+            }
+        }
+
+        if (reportConfirmed) {
+            logger.info(`✅ Report Found! Running Full Analysis...`);
+            stock.status = "extracting";
+            await delay(2000);
+            
+            const fullData = await fullExtraction(stock.symbol, stock.companyName, new Date().toISOString().split("T")[0]);
+            stock.fullData = fullData;
+            
+            const miraScore = calculateDetailedScore(fullData);
+            logger.info(`🧮 Score for ${stock.symbol}: ${miraScore.totalScore} (${miraScore.classification})`);
+
+            const analysis = await finalAnalysis(fullData, miraScore);
+            
+            stock.analysis = analysis;
+            stock.status = "completed";
+            
+            if (this.onComplete) this.onComplete(stock);
+            
+        } else {
+            logger.info(`⏳ Not published yet (Finnhub & AI both negative). Waiting.`);
+            stock.status = "checking";
+        }
+    } catch (e) {
+        logger.error(`Error ${stock.symbol}`, e);
+        stock.status = "error";
+    }
+    
+    if (this.isRunning) await delay(DELAY_BETWEEN_STOCKS_MS);
+  }
+
+  initialize(data: MorningIntelligenceResponse) { 
+      this.stocks = data.stocks.map(s => ({
+          ...s, 
+          status: 'pending', 
+          checkCount: 0, 
+          lastCheck: null, 
+          error: null, 
+          fullData: null, 
+          analysis: null,
+          // @ts-ignore
+          quarter: s.quarter, 
+          // @ts-ignore
+          fiscalYear: s.fiscalYear
+      } as any)); 
+  }
+  start() { this.isRunning = true; this.processNextStock(); this.checkInterval = setInterval(() => this.processNextStock(), CHECK_INTERVAL_MS); }
+  stop() { this.isRunning = false; if (this.checkInterval) clearInterval(this.checkInterval); }
 }
 
-export default {
-  fetchUSStocksViaGrok,
-  morningIntelligence,
-  miniCheck,
-  fullExtraction,
-  finalAnalysis,
-  StockProcessor,
-};
+export default { morningIntelligence, miniCheck, fullExtraction, finalAnalysis, StockProcessor };

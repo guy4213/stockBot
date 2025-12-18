@@ -149,9 +149,18 @@ async function checkSingleStock(
     logger.info(`📝 Step 3: Generating Hebrew analysis...`);
 
     // Calculate Mira Score (simplified)
+    const totalScore = calculateSimpleMiraScore(fullData);
+    
+    // Derive classification from totalScore
+    const deriveClassification = (score: number): "POSITIVE" | "NEUTRAL" | "NEGATIVE" => {
+      if (score > 0) return "POSITIVE";
+      if (score < 0) return "NEGATIVE";
+      return "NEUTRAL";
+    };
+    
     const miraScore = {
-      totalScore: calculateSimpleMiraScore(fullData),
-      classification: "POSITIVE" as const,
+      totalScore,
+      classification: deriveClassification(totalScore),
       breakdown: {
         epsScore: fullData.eps.beatPercent || 0,
         revenueScore: fullData.revenue.beatPercent || 0,

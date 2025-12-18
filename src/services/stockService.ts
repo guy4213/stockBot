@@ -8,7 +8,9 @@ dotenv.config({ quiet: true });
 // Stock listing (us_stocks_cache.json) no longer requires FMP API
 const apiKey = process.env.FMP_API_KEY;
 
-// 🔹 שני Base URLs שונים
+if (!apiKey) {
+  logger.warn("FMP_API_KEY not found. Some features will be unavailable.");
+}// 🔹 שני Base URLs שונים
 const stableBaseUrl = "https://financialmodelingprep.com/stable";
 const apiBaseUrl = "https://financialmodelingprep.com/api/v3";
 const apiV4BaseUrl = "https://financialmodelingprep.com/api/v4";
@@ -58,7 +60,7 @@ export const getCashFlow = async (symbol: string) => {
 
 export const getQuote = async (symbol: string) => {
   try {
-    const url = `${stableBaseUrl}/quote/${symbol}?apikey=${apiKey}`;
+    const url = `${stableBaseUrl}/quote?symbol=${symbol}&apikey=${apiKey}`;
     const response = await axios.get(url);
     
     if (!response.data || response.data.length === 0) {

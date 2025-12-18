@@ -87,7 +87,7 @@ export interface MiniCheckResponse {
 // ============================================
 
 export interface MarketData {
-  price: number | null;
+  price: number ;
   marketCap: number | null;
   volume: number | null;
   source: string;
@@ -102,8 +102,8 @@ export interface EPS {
 }
 
 export interface Revenue {
-  actual: number | null;
-  estimate: number | null;
+  actual: number ;
+  estimate: number ;
   beat: number | null;
   beatPercent: number | null;
   source: string;
@@ -197,7 +197,7 @@ export interface MiraScoreBreakdown {
 
 export interface MiraScore {
   totalScore: number;
-  classification: "STRONG_POSITIVE" | "POSITIVE" | "NEUTRAL" | "NEGATIVE" | "STRONG_NEGATIVE";
+  classification: string;
   breakdown: MiraScoreBreakdown;
   exceptions: string[];
 }
@@ -207,7 +207,7 @@ export interface MiraScore {
 // ============================================
 
 export interface TradingRecommendation {
-  direction: "LONG" | "SHORT" | "NEUTRAL";
+  direction: string;
   entryPrice: number | null;
   targetPrice: number | null;
   stopPrice: number | null;
