@@ -24,12 +24,16 @@ bot.onText(/\/start/, (msg) => {
 export async function sendTelegramMessage(
   stockData: StockData | any
 ): Promise<void> {
-  const message = stockData.aiSummery;
+  const message = stockData.summary || stockData.aiSummery;
   const id = process.env.TELEGRAM_CHAT_ID;
   if (!id) {
     throw new Error("No Telegram chat ID provided");
   }
-  logger.info(`Sending Telegram message to chat ID ${id}`);
 
+  if (!message || message.trim().length === 0) {
+    throw new Error(`Cannot send empty message for stock ${stockData.symbol || 'unknown'}`);
+  }
+
+  logger.info(`Sending Telegram message to chat ID ${id}`);
   await bot.sendMessage(id, message);
 }
