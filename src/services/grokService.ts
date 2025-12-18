@@ -348,8 +348,19 @@ function calculateTradeParams(price: number, classification: string) {
 // ============================================
 // 4. FULL EXTRACTION (FORCE SYMBOL) 🛑
 // ============================================
-export async function fullExtraction(symbol: string, companyName: string, reportDate: string): Promise<FullExtractionResponse> {
+// In grokService.ts
+
+// ============================================
+// 4. FULL EXTRACTION (FORCE SYMBOL) 🛑
+// ============================================
+export async function fullExtraction(
+  symbol: string, 
+  companyName: string, 
+  reportDate: string,
+  currentPrice?: number  // ✅ NEW: Accept price from FMP
+): Promise<FullExtractionResponse> {
   logger.info(`📊 Extracting ${symbol}...`);
+  
   const extractionPrompt = `
   EXTRACT DATA FOR: ${symbol} (${companyName})
   DATE: ${reportDate}
@@ -370,17 +381,34 @@ export async function fullExtraction(symbol: string, companyName: string, report
   `;
   
   try {
-    const res = await callGrokAPI([{ role: "system", content: "Return valid JSON." }, { role: "user", content: extractionPrompt }], 0.2, 4000, true);
+    const res = await callGrokAPI([
+      { role: "system", content: "Return valid JSON." }, 
+      { role: "user", content: extractionPrompt }
+    ], 0.2, 4000, true);
+    
     const jsonText = extractJSON(res);
     const data = JSON.parse(jsonText);
     
-    // 🛑 FORCE SYMBOL INJECTION - התיקון הקריטי!
+    // 🛑 FORCE SYMBOL INJECTION
     data.symbol = symbol;
     data.companyName = companyName;
     data.reportDate = reportDate;
     
+    // ✅ FIX: Override price with FMP data if available
+    if (currentPrice && currentPrice > 0) {
+      logger.info(`💰 Using FMP price: $${currentPrice} (overriding AI extraction)`);
+      data.marketData = data.marketData || {};
+      data.marketData.price = currentPrice;
+      data.marketData.source = "FMP (Real-time)";
+    } else if (!data.marketData?.price || data.marketData.price === 0) {
+      logger.warn(`⚠️ No valid price found for ${symbol} (FMP: ${currentPrice}, AI: ${data.marketData?.price})`);
+    }
+    
     return data;
-  } catch (e) { logger.error(`Extraction failed for ${symbol}`, e); throw e; }
+  } catch (e) { 
+    logger.error(`Extraction failed for ${symbol}`, e); 
+    throw e; 
+  }
 }
 
 // ============================================
@@ -391,13 +419,23 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
 
   const tradeParams = calculateTradeParams(fullData.marketData.price, miraScore.classification);
 
-  // Calculate deviation percentages
+  // ✅ FIX: Handle undefined/null values with fallback
   const epsDeviation = fullData.eps.estimate
     ? (((fullData.eps.actual - fullData.eps.estimate) / Math.abs(fullData.eps.estimate)) * 100).toFixed(2)
     : "N/A";
   const revenueDeviation = fullData.revenue.estimate
     ? (((fullData.revenue.actual - fullData.revenue.estimate) / fullData.revenue.estimate) * 100).toFixed(2)
     : "N/A";
+
+  // ✅ FIX: Safe access with defaults
+  const yoyEpsGrowth = fullData.yoyGrowth?.epsChange?.toFixed(2) || fullData.yoyGrowth?.epsGrowth || "לא זמין";
+  const yoyRevGrowth = fullData.yoyGrowth?.revenueChange?.toFixed(2) || fullData.yoyGrowth?.revenueGrowth || "לא זמין";
+  const netMargin = fullData.margins?.netMargin?.toFixed(2) || "לא זמין";
+  const opMargin = fullData.margins?.operatingMargin?.toFixed(2) || "לא זמין";
+  const fcfStatus = fullData.cashFlow?.freeCashFlow 
+    ? (fullData.cashFlow.freeCashFlow > 0 ? 'חיובי' : 'שלילי')
+    : 'לא זמין';
+  const fcfTrend = fullData.cashFlow?.trendDescription ? ` (${fullData.cashFlow.trendDescription})` : '';
 
   const prompt = `
 אתה Mira, אנליסט פיננסי AI מומחה.
@@ -411,18 +449,23 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
 EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
 הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
 תחזית: ${fullData.guidance.status}
-Free Cash Flow: ${fullData.cashFlow.freeCashFlow > 0 ? 'חיובי' : 'שלילי'}${fullData.cashFlow.trendDescription ? ` (${fullData.cashFlow.trendDescription})` : ''}
-YoY Growth: EPS ${fullData.yoyGrowth.epsGrowth}% | Revenue ${fullData.yoyGrowth.revenueGrowth}%
-שולי רווח: Net ${fullData.margins.netMargin}% | Operating ${fullData.margins.operatingMargin}%
+Free Cash Flow: ${fcfStatus}${fcfTrend}
+YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
+שולי רווח: Net ${netMargin}% | Operating ${opMargin}%
 סנטימנט: ${fullData.sentiment.overall}
 
 ניקוד: ${miraScore.totalScore}
 סיווג: ${miraScore.classification}
 
+⚠️ חשוב: ההמלצה חייבת להיות תואמת לסיווג!
+- אם הסיווג "POSITIVE" → כיוון חייב להיות "LONG 🟢"
+- אם הסיווג "NEGATIVE" → כיוון חייב להיות "SHORT 🔴"
+- אם הסיווג "NEUTRAL" → כיוון יכול להיות "NEUTRAL ⚪"
+
 המלצה: ${tradeParams.direction}
-כניסה: ${tradeParams.entryPrice || 0}
-יעד: ${tradeParams.targetPrice || 0}
-סטופ: ${tradeParams.stopPrice || 0}
+${tradeParams.entryPrice > 0 ? `כניסה: $${tradeParams.entryPrice}` : ''}
+${tradeParams.targetPrice > 0 ? `יעד: $${tradeParams.targetPrice}` : ''}
+${tradeParams.stopPrice > 0 ? `סטופ: $${tradeParams.stopPrice}` : ''}
 
 הדגשים: ${fullData.highlights.join(', ')}
 דאגות: ${fullData.concerns.join(', ')}
@@ -433,52 +476,72 @@ YoY Growth: EPS ${fullData.yoyGrowth.epsGrowth}% | Revenue ${fullData.yoyGrowth.
 📅 תאריך דוח: ${fullData.reportDate}
 
 📊 פרטי דוח:
-• EPS: $${fullData.eps.actual} מול תחזית $${fullData.eps.estimate} (סטייה ${epsDeviation}%)
-• Revenues: $${(fullData.revenue.actual / 1e6).toFixed(0)}M מול תחזית $${(fullData.revenue.estimate / 1e6).toFixed(0)}M (סטייה ${revenueDeviation}%)
-• Guidance: ${fullData.guidance.status === 'raised' ? 'הועלה' : fullData.guidance.status === 'lowered' ? 'הופחת' : fullData.guidance.status === 'maintained' ? 'נשמר' : fullData.guidance.status}
-• Free Cash Flow: ${fullData.cashFlow.freeCashFlow > 0 ? 'חיובי' : 'שלילי'}${fullData.cashFlow.trendDescription ? ` (${fullData.cashFlow.trendDescription})` : ''}
-• YoY Growth: EPS ${fullData.yoyGrowth.epsGrowth}% | Revenue ${fullData.yoyGrowth.revenueGrowth}%
-• שולי רווח: Net ${fullData.margins.netMargin}% | Operating ${fullData.margins.operatingMargin}%
-• סנטימנט הנהלה: ${fullData.sentiment.overall === 'positive' ? 'חיובי' : fullData.sentiment.overall === 'negative' ? 'שלילי' : 'ניטרלי'}
+- EPS: $${fullData.eps.actual} מול תחזית $${fullData.eps.estimate} (סטייה ${epsDeviation}%)
+- Revenues: $${(fullData.revenue.actual / 1e6).toFixed(0)}M מול תחזית $${(fullData.revenue.estimate / 1e6).toFixed(0)}M (סטייה ${revenueDeviation}%)
+- Guidance: ${fullData.guidance.status === 'raised' ? 'הועלה' : fullData.guidance.status === 'lowered' ? 'הופחת' : fullData.guidance.status === 'maintained' ? 'נשמר' : fullData.guidance.status}
+- Free Cash Flow: ${fcfStatus}${fcfTrend}
+- YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
+- שולי רווח: Net ${netMargin}% | Operating ${opMargin}%
+- סנטימנט הנהלה: ${fullData.sentiment.overall === 'positive' ? 'חיובי' : fullData.sentiment.overall === 'negative' ? 'שלילי' : 'ניטרלי'}
 
 ⚖ ניקוד כולל: ${miraScore.totalScore}
 ⚖ סיווג סופי: ${miraScore.classification === 'POSITIVE' ? 'חיובי' : miraScore.classification === 'NEGATIVE' ? 'שלילי' : 'ניטרלי'}
 
 📈 המלצת מסחר:
 
-כיוון: ${tradeParams.direction === 'LONG' ? 'LONG 🟢' : tradeParams.direction === 'SHORT' ? 'SHORT 🔴' : 'NEUTRAL ⚪'}
-כניסה: $${tradeParams.entryPrice || 0}
-יעד רווח: $${tradeParams.targetPrice || 0}
-סטופ לוס: $${tradeParams.stopPrice || 0}
+${tradeParams.entryPrice > 0 ? `
+כיוון: ${tradeParams.direction}
+כניסה: $${tradeParams.entryPrice}
+יעד רווח: $${tradeParams.targetPrice}
+סטופ לוס: $${tradeParams.stopPrice}
+` : `
+כיוון: ${tradeParams.direction}
+⚠️ לא ניתן לחשב נקודות כניסה/יעד עקב מחיר מניה לא זמין
+`}
 
 🧩 שיקול דעת AI:
-[כתוב ניתוח מפורט של 3-4 שורות בעברית המסביר למה הדוח קיבל את הסיווג הזה, מה הנקודות החזקות והחלשות, ומה המשמעות למשקיעים. התייחס לסטיות מהתחזיות, צמיחה, FCF, ותחזית.]
+[כתוב ניתוח מפורט של 3-4 שורות בעברית המסביר למה הדוח קיבל את הסיווג הזה, מה הנקודות החזקות והחלשות, ומה המשמעות למשקיעים. התייחס לסטיות מהתחזיות, צמיחה, FCF, ותחזית. אם יש נתונים חסרים - ציין זאת.]
 
 📝 מסקנה:
-[כתוב משפט אחד בעברית המסכם את ההמלצה הסופית - האם לקנות/למכור/להמתין]
+[כתוב משפט אחד בעברית המסכם את ההמלצה הסופית - האם לקנות/למכור/להמתין. וודא שההמלצה תואמת את הכיוון למעלה!]
 
-חשוב: כל הטקסט חייב להיות בעברית בלבד! אסור אנגלית!
-החזר רק את הטקסט בפורמט למעלה, ללא markdown.
+חשוב: 
+1. כל הטקסט חייב להיות בעברית בלבד! אסור אנגלית!
+2. ההמלצה במסקנה חייבת להתאים לכיוון המסחר (${tradeParams.direction})
+3. אם יש "undefined" או "N/A" - אמור במפורש שהנתון לא זמין
+4. החזר רק את הטקסט בפורמט למעלה, ללא markdown.
   `;
 
   try {
      const telegramMessage = await callGrokAPI(
-         [{ role: "system", content: "אתה אנליסט פיננסי. החזר רק טקסט בעברית, ללא markdown." }, { role: "user", content: prompt }],
+         [{ 
+             role: "system", 
+             content: "אתה אנליסט פיננסי. החזר רק טקסט בעברית, ללא markdown. וודא שההמלצות עקביות עם הסיווג." 
+         }, { 
+             role: "user", 
+             content: prompt 
+         }],
          0.4,
-         2000,  // Increased token limit for detailed report
+         2000,
          false
      );
 
-     // 🛑 LOG THE GENERATED MESSAGE
      logger.info(`📝 Generated Message Preview: ${telegramMessage.substring(0, 50)}...`);
      logger.info(`📏 Message Length: ${telegramMessage.length} characters`);
-     logger.info(`🔍 Full Message:\n${telegramMessage}`);
 
      if (!telegramMessage || telegramMessage.trim().length === 0) {
          throw new Error("Grok returned empty summary");
      }
 
      const trimmedMessage = telegramMessage.trim();
+
+     // ✅ VALIDATION: Check for consistency
+     if (miraScore.classification === 'POSITIVE' && !trimmedMessage.includes('LONG')) {
+         logger.warn(`⚠️ Inconsistency detected: POSITIVE classification but no LONG recommendation`);
+     }
+     if (miraScore.classification === 'NEGATIVE' && !trimmedMessage.includes('SHORT')) {
+         logger.warn(`⚠️ Inconsistency detected: NEGATIVE classification but no SHORT recommendation`);
+     }
 
      logger.info(`✅ Returning summary (${trimmedMessage.length} chars)`);
 
@@ -498,7 +561,6 @@ YoY Growth: EPS ${fullData.yoyGrowth.epsGrowth}% | Revenue ${fullData.yoyGrowth.
       throw e;
   }
 }
-
 // ============================================
 // 6. STOCK PROCESSOR (ENGINE)
 // ============================================
@@ -518,7 +580,9 @@ export class StockProcessor {
       return { total: this.stocks.length, pending: this.stocks.filter(s => s.status === 'pending').length };
   }
 
-  private async processNextStock(): Promise<void> {
+ // In StockProcessor.processNextStock()
+
+private async processNextStock(): Promise<void> {
     if (!this.isRunning) return;
 
     const stock = this.stocks.find((s) => {
@@ -563,7 +627,23 @@ export class StockProcessor {
             stock.status = "extracting";
             await delay(2000);
             
-            const fullData = await fullExtraction(stock.symbol, stock.companyName, new Date().toISOString().split("T")[0]);
+            // ✅ FIX: Get fresh price from FMP before extraction
+            let currentPrice: number | undefined;
+            try {
+                const quote = await getQuote(stock.symbol);
+                currentPrice = quote?.price || undefined;
+                logger.info(`💰 Fetched current price for ${stock.symbol}: $${currentPrice}`);
+            } catch (e) {
+                logger.warn(`⚠️ Could not fetch current price for ${stock.symbol}`);
+            }
+            
+            // ✅ Pass price to fullExtraction
+            const fullData = await fullExtraction(
+                stock.symbol, 
+                stock.companyName, 
+                new Date().toISOString().split("T")[0],
+                currentPrice  // ✅ NEW: Pass FMP price
+            );
             stock.fullData = fullData;
             
             const miraScore = calculateDetailedScore(fullData);
@@ -586,7 +666,7 @@ export class StockProcessor {
     }
     
     if (this.isRunning) await delay(DELAY_BETWEEN_STOCKS_MS);
-  }
+}
 
   initialize(data: MorningIntelligenceResponse) { 
       this.stocks = data.stocks.map(s => ({
