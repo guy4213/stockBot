@@ -7,8 +7,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 2106710179,
-      "volume": 21696443,
+      "marketCap": 2109969658,
+      "volume": 22681254,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -51,8 +51,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 1025718590,
-      "volume": 5995070,
+      "marketCap": 1022359250,
+      "volume": 7294642,
       "confidence": 100,
       "sources": [
         "Finnhub",

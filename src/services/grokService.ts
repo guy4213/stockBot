@@ -411,10 +411,7 @@ function calculateTradeParams(price: number, classification: string) {
     };
 }
 
-// ============================================
-// 4. FULL EXTRACTION (FORCE SYMBOL) 🛑
-// ============================================
-// In grokService.ts
+
 
 // ============================================
 // 4. FULL EXTRACTION (FORCE SYMBOL) 🛑
