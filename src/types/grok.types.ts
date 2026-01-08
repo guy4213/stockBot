@@ -53,16 +53,27 @@ export interface GrokResponse {
 // Morning Intelligence Types
 // ============================================
 
+// types/grok.types.ts
+
 export interface Stock {
   symbol: string;
   companyName: string;
-  reportType: "BMO" | "AMC"; // Before Market Open / After Market Close
-  windowStart: string; // HH:MM format
-  windowEnd: string; // HH:MM format
+  reportType: "BMO" | "AMC";
+  windowStart: string;
+  windowEnd: string;
   marketCap: number;
   volume: number;
   confidence: number;
   sources: string[];
+  quarter?: number;
+  fiscalYear?: number;
+  // ✅ הוסף את זה
+  finnhubData?: {
+    epsActual: number | null;
+    epsEstimate: number | null;
+    revenueActual: number | null;
+    revenueEstimate: number | null;
+  };
 }
 
 export interface MorningIntelligenceResponse {

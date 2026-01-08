@@ -37,8 +37,8 @@ interface ExtendedStock extends Stock {
 // ============================================
 async function callGrokAPI(
   messages: GrokMessage[],
-  temperature: number = 0.3,
-  maxTokens: number = 4000,
+  temperature: number = 0.2,
+  maxTokens: number = 6000,
   enableWebSearch: boolean = false
 ): Promise<string> {
   if (!GROK_API_KEY) throw new Error("GROK_API_KEY missing");
@@ -135,10 +135,6 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
   const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY; 
   if (!FINNHUB_API_KEY) throw new Error("Missing FINNHUB_API_KEY");
 
-  // const yesterday = new Date(date);
-  // yesterday.setDate(yesterday.getDate() - 1);
-  // const yesterdayStr = yesterday.toISOString().split('T')[0];
-
   logger.info(`📡 Calling Finnhub API (Range: ${date} - ${date})...`);
   
   const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
@@ -151,8 +147,7 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
 
   const validatedStocks: ExtendedStock[] = [];
   const MIN_MARKET_CAP = 300_000_000; 
-  const MIN_VOLUME = 5_000_000;       
-
+  const MIN_VOLUME = 5_000_000; 
   const processedSymbols = new Set<string>();
 
   for (const entry of rawList) {
@@ -165,35 +160,17 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
     try {
       const quote = await getQuote(symbol);
       
-      if (!quote) {
-          logger.warn(`❌ Skipping ${symbol}: FMP returned NULL (Rate limit?)`);
-          await delay(1000);
+      if (!quote || !quote.marketCap || quote.marketCap < MIN_MARKET_CAP) {
           continue;
       }
-
-      if (!quote.marketCap) {
-          logger.warn(`❌ Skipping ${symbol}: No Market Cap data`);
+   if (!quote || !quote.volume || quote.volume  < MIN_VOLUME) {
           continue;
       }
-
-      if (quote.marketCap < MIN_MARKET_CAP) {
-          // logger.info(`❌ Skipping ${symbol}: Small Cap ($${(quote.marketCap/1e6).toFixed(0)}M)`);
-          continue;
-      }
-
-      // if ((quote.volume || 0) < MIN_VOLUME) {
-      //      // logger.info(`❌ Skipping ${symbol}: Low Volume (${(quote.volume || 0).toLocaleString()})`);
-      //      continue;
-      // }
-
       let reportType: "BMO" | "AMC" = entry.hour.toLowerCase() === 'bmo' ? "BMO" : "AMC";
       let windowStart = reportType === "BMO" ? "07:00" : "16:05";
       let windowEnd = reportType === "BMO" ? "09:30" : "20:00";
       
-      const quarter = entry.quarter;
-      const fiscalYear = entry.year;
-
-      logger.info(` 💎 Found: ${symbol} (${quote.name}) | Q${quarter} ${fiscalYear} | Cap: $${(quote.marketCap / 1e9).toFixed(2)}B`);
+      logger.info(` 💎 Found: ${symbol} (${quote.name}) | Q${entry.quarter} ${entry.year} | Cap: $${(quote.marketCap / 1e9).toFixed(2)}B|Volume:$${(quote.volume / 1e9).toFixed(2)}B`);
 
       validatedStocks.push({
           symbol: symbol,
@@ -205,13 +182,18 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
           volume: quote.volume || 0,
           confidence: 100,
           sources: ["Finnhub", "FMP"],
-          // @ts-ignore
-          quarter: quarter, 
-          // @ts-ignore
-          fiscalYear: fiscalYear 
+          quarter: entry.quarter,
+          fiscalYear: entry.year,
+          // ✅ שמור את הנתונים מ-Finnhub!
+          finnhubData: {
+              epsActual: entry.epsActual,
+              epsEstimate: entry.epsEstimate,
+              revenueActual: entry.revenueActual,
+              revenueEstimate: entry.revenueEstimate
+          }
       });
       
-      await delay(500); // דיליי למניעת חסימה
+      await delay(500);
 
     } catch (err: any) {
       logger.error(`⚠️ CRASH processing ${symbol}: ${err.message}`);
@@ -327,22 +309,47 @@ function calculateDetailedScore(data: FullExtractionResponse): MiraScore {
 
 function calculateTradeParams(price: number, classification: string) {
     const safePrice = price || 0;
-    if (classification === "POSITIVE" && safePrice > 0) {
+    
+    // ✅ בדיקה ראשונית - אם אין מחיר בכלל
+    if (safePrice === 0 || !safePrice) {
+        logger.warn(`⚠️ Cannot calculate trade params - price is invalid: ${price}`);
+        return { 
+            direction: classification === "POSITIVE" ? "LONG 🟢" : 
+                      classification === "NEGATIVE" ? "SHORT 🔴" : "NEUTRAL ⚪", 
+            entryPrice: 0, 
+            targetPrice: 0, 
+            stopPrice: 0,
+            hasPriceData: false  // ✅ דגל שמציין שאין מחיר
+        };
+    }
+    
+    // ✅ יש מחיר תקין
+    if (classification === "POSITIVE") {
         return {
             direction: "LONG 🟢",
             entryPrice: Number((safePrice * 0.98).toFixed(2)),
             targetPrice: Number((safePrice * 1.05).toFixed(2)),
-            stopPrice: Number((safePrice * 0.95).toFixed(2))
+            stopPrice: Number((safePrice * 0.95).toFixed(2)),
+            hasPriceData: true
         };
-    } else if (classification === "NEGATIVE" && safePrice > 0) {
+    } else if (classification === "NEGATIVE") {
         return {
             direction: "SHORT 🔴",
             entryPrice: Number((safePrice * 1.02).toFixed(2)),
             targetPrice: Number((safePrice * 0.95).toFixed(2)),
-            stopPrice: Number((safePrice * 1.05).toFixed(2))
+            stopPrice: Number((safePrice * 1.05).toFixed(2)),
+            hasPriceData: true
         };
     }
-    return { direction: "NEUTRAL ⚪", entryPrice: 0, targetPrice: 0, stopPrice: 0 };
+    
+    // ✅ NEUTRAL - אבל עם מחיר תקין
+    return { 
+        direction: "NEUTRAL ⚪", 
+        entryPrice: Number(safePrice.toFixed(2)),   // ✅ שים את המחיר הנוכחי
+        targetPrice: Number((safePrice * 1.03).toFixed(2)),  // ✅ יעד קטן של 3%
+        stopPrice: Number((safePrice * 0.97).toFixed(2)),    // ✅ סטופ של 3%
+        hasPriceData: true  // ✅ יש מחיר!
+    };
 }
 
 // ============================================
@@ -357,67 +364,395 @@ export async function fullExtraction(
   symbol: string, 
   companyName: string, 
   reportDate: string,
-  currentPrice?: number  // ✅ NEW: Accept price from FMP
+  currentPrice?: number,
+  finnhubData?: {
+    epsActual: number | null;
+    epsEstimate: number | null;
+    revenueActual: number | null;
+    revenueEstimate: number | null;
+  }
 ): Promise<FullExtractionResponse> {
   logger.info(`📊 Extracting ${symbol}...`);
   
-  const extractionPrompt = `
-  EXTRACT DATA FOR: ${symbol} (${companyName})
-  DATE: ${reportDate}
+  // ✅ אם יש נתוני Finnhub - השתמש בהם ישירות!
+  if (finnhubData && 
+      finnhubData.epsActual !== null && 
+      finnhubData.revenueActual !== null) {
+    
+    logger.info(`🎯 Using Finnhub data directly for ${symbol}!`);
+    
+    const epsActual = finnhubData.epsActual;
+    const epsEstimate = finnhubData.epsEstimate || epsActual;
+    const revenueActual = finnhubData.revenueActual;
+    const revenueEstimate = finnhubData.revenueEstimate || revenueActual;
+    
+    const epsBeatPercent = epsEstimate !== 0 
+      ? ((epsActual - epsEstimate) / Math.abs(epsEstimate)) * 100 
+      : 0;
+    
+    const revBeatPercent = revenueEstimate !== 0
+      ? ((revenueActual - revenueEstimate) / revenueEstimate) * 100
+      : 0;
 
-  REQUIRED JSON FIELDS:
-  - eps: { beatPercent: number, actual: number, estimate: number }
-  - revenue: { beatPercent: number, actual: number, estimate: number }
-  - guidance: { status: "raised"|"lowered"|"maintained"|"unavailable" }
-  - yoyGrowth: { epsChange: number, revenueChange: number }
-  - cashFlow: { yoyChange: number }
-  - margins: { trend: "improving"|"stable"|"declining" }
-  - sentiment: { overall: "positive"|"neutral"|"negative" }
-  - marketData: { price: number }
-  - highlights: string[] (2 key points)
-  - concerns: string[]
+    logger.info(`📊 ${symbol} - EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)`);
+    logger.info(`📊 ${symbol} - Revenue: $${(revenueActual / 1e9).toFixed(2)}B vs $${(revenueEstimate / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)`);
+
+    // ✅ בנה את האובייקט עם נתונים אמיתיים
+    const data: FullExtractionResponse = {
+      symbol,
+      companyName,
+      reportDate,
+      eps: {
+        actual: epsActual,
+        estimate: epsEstimate,
+        beatPercent: epsBeatPercent
+      },
+      revenue: {
+        actual: revenueActual,
+        estimate: revenueEstimate,
+        beatPercent: revBeatPercent
+      },
+      guidance: {
+        status: "unavailable"
+      },
+      yoyGrowth: {
+        epsChange: null,
+        revenueChange: null
+      },
+      cashFlow: {
+        freeCashFlow: null,
+        yoyChange: null
+      },
+      margins: {
+        netMargin: null,
+        operatingMargin: null,
+        trend: "unavailable"
+      },
+      sentiment: {
+        overall: "neutral"
+      },
+      marketData: {
+        price: currentPrice || null
+      },
+      highlights: [],
+      concerns: []
+    };
+
+    // ✅ עכשיו תשתמש ב-AI רק לנתונים חסרים (guidance, sentiment, highlights)
+    try {
+      const quarter = Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
+      const year = new Date(reportDate).getFullYear();
+      
+      const supplementPrompt = `
+You are a financial data analyst extracting information from official earnings reports.
+
+TARGET COMPANY: ${symbol} (${companyName})
+REPORT DATE: ${reportDate}
+QUARTER: Q${quarter} ${year}
+
+KNOWN DATA (Already extracted from Finnhub - DO NOT EXTRACT AGAIN):
+- EPS: ${epsActual} vs estimate ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
+- Revenue: $${(revenueActual / 1e9).toFixed(2)}B vs estimate $${(revenueEstimate / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
+
+CRITICAL INSTRUCTIONS:
+1. Search ONLY in these sources (in order of priority):
+   a) ${companyName} Investor Relations website:
+      - ir.${symbol.toLowerCase()}.com
+      - investors.${companyName.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '')}.com
+      - ${companyName.toLowerCase().replace(/\s+/g, '')}.com/investors
+   
+   b) Official earnings press release for Q${quarter} ${year}
+   
+   c) Conference call transcript from the earnings call
+
+2. DO NOT use news articles, analyst reports, or third-party summaries
+3. DO NOT use sites like SeekingAlpha, Yahoo Finance, Bloomberg (only for last resort)
+4. Look for the OFFICIAL press release with title like:
+   - "${symbol} Reports Q${quarter} ${year} Results"
+   - "${companyName} Announces ${quarter}Q Earnings"
+   - "${companyName} Reports Quarterly Financial Results"
+
+EXTRACT ONLY THESE 4 ITEMS:
+
+1. **Guidance Status**: Did management raise/lower/maintain guidance for next quarter or full year?
+   - Look for phrases: "raising full-year guidance", "updating outlook", "reaffirming guidance", "increasing forecast"
+   - Return: "raised" | "lowered" | "maintained" | "unavailable"
+   
+2. **Management Sentiment**: Overall tone from CEO/CFO in prepared remarks
+   - Positive: Optimistic language, strong growth emphasis, exceeding expectations
+   - Neutral: Stable outlook, meeting expectations, balanced tone
+   - Negative: Challenges emphasized, cautious outlook, disappointing results
+   - Return: "positive" | "neutral" | "negative"
+
+3. **Key Highlights** (exactly 2 bullet points):
+   - Major achievements from the quarter
+   - Record metrics, product launches, market expansions
+   - Cost savings, margin improvements
+   
+4. **Key Concerns** (exactly 2 bullet points):
+   - Risks mentioned by management
+   - Challenges, headwinds, competitive pressures
+   - Areas that missed expectations
+
+SEARCH QUERY EXAMPLES TO USE:
+- "site:ir.${symbol.toLowerCase()}.com Q${quarter} ${year} earnings"
+- "${symbol} investor relations quarterly results ${reportDate}"
+- "${companyName} Q${quarter} ${year} earnings press release"
+- "${symbol} earnings call transcript ${reportDate}"
+
+OUTPUT FORMAT - Return ONLY this JSON structure:
+{
+  "guidance": { 
+    "status": "raised" | "lowered" | "maintained" | "unavailable"
+  },
+  "sentiment": { 
+    "overall": "positive" | "neutral" | "negative"
+  },
+  "highlights": [
+    "First specific achievement or positive metric",
+    "Second specific achievement or positive metric"
+  ],
+  "concerns": [
+    "First specific risk or challenge mentioned",
+    "Second specific risk or challenge mentioned"
+  ]
+}
+
+VALIDATION RULES:
+- If you cannot find the official IR page or press release → status: "unavailable"
+- If you find only news articles → try harder to find IR sources first
+- Highlights and concerns must be specific (not generic statements)
+- Return ONLY the JSON - NO markdown, NO explanations, NO extra text
+`;
+
+      logger.info(`🤖 Calling AI to supplement with guidance & sentiment...`);
+      logger.info(`🔍 AI will search: ir.${symbol.toLowerCase()}.com and ${companyName} Investor Relations`);
+      
+      const aiRes = await callGrokAPI(
+        [
+          { 
+            role: "system", 
+            content: "You are a financial data extraction API specialized in parsing official company investor relations documents. You MUST prioritize IR websites over news articles. Return ONLY valid JSON with no markdown formatting or explanations." 
+          },
+          { 
+            role: "user", 
+            content: supplementPrompt 
+          }
+        ],
+        0.1,  // ✅ טמפרטורה נמוכה מאוד - פחות "יצירתיות"
+        2500,
+        true  // ✅ Enable web search
+      );
+
+      let cleanedRes = aiRes.trim();
+      // ✅ נקה markdown בכל הצורות האפשריות
+      if (cleanedRes.startsWith('```json')) {
+        cleanedRes = cleanedRes.replace(/```json\n?/g, '').replace(/```\n?$/g, '');
+      }
+      if (cleanedRes.startsWith('```')) {
+        cleanedRes = cleanedRes.replace(/^```\n?/g, '').replace(/```\n?$/g, '');
+      }
+      cleanedRes = cleanedRes.trim();
+
+      const aiData = JSON.parse(cleanedRes);
+      
+      // ✅ מיזוג עם הנתונים מ-Finnhub + אימות
+      if (aiData.guidance && aiData.guidance.status) {
+        data.guidance = aiData.guidance;
+        logger.info(`📈 Guidance: ${data.guidance.status}`);
+      } else {
+        logger.warn(`⚠️ No valid guidance found`);
+      }
+      
+      if (aiData.sentiment && aiData.sentiment.overall) {
+        data.sentiment = aiData.sentiment;
+        logger.info(`💭 Sentiment: ${data.sentiment.overall}`);
+      } else {
+        logger.warn(`⚠️ No valid sentiment found`);
+      }
+      
+      if (aiData.highlights && Array.isArray(aiData.highlights) && aiData.highlights.length >= 2) {
+        data.highlights = aiData.highlights.slice(0, 2); // לקחת רק 2 ראשונים
+        logger.info(`✨ Highlights: ${data.highlights.join(' | ')}`);
+      } else {
+        logger.warn(`⚠️ No valid highlights found (got ${aiData.highlights?.length || 0})`);
+        data.highlights = ["Data not available from IR sources", "Data not available from IR sources"];
+      }
+      
+      if (aiData.concerns && Array.isArray(aiData.concerns) && aiData.concerns.length >= 2) {
+        data.concerns = aiData.concerns.slice(0, 2); // לקחת רק 2 ראשונים
+        logger.info(`⚠️ Concerns: ${data.concerns.join(' | ')}`);
+      } else {
+        logger.warn(`⚠️ No valid concerns found (got ${aiData.concerns?.length || 0})`);
+        data.concerns = ["Data not available from IR sources", "Data not available from IR sources"];
+      }
+
+      logger.info(`✅ AI supplement complete: Guidance=${data.guidance.status}, Sentiment=${data.sentiment.overall}`);
+
+    } catch (e: any) {
+      logger.error(`❌ AI supplement failed for ${symbol}:`, e.message);
+      logger.warn(`⚠️ Using default values for guidance/sentiment/highlights/concerns`);
+      // ברירות מחדל כבר מוגדרות למעלה
+    }
+
+    // ✅ Override price with FMP data if available
+    if (currentPrice && currentPrice > 0) {
+      logger.info(`💰 Using FMP price: $${currentPrice}`);
+      data.marketData.price = currentPrice;
+    } else {
+      logger.warn(`⚠️ No valid price available for ${symbol}`);
+    }
+
+    return data;
+  }
   
-  Return ONLY valid JSON.
-  `;
+  // ============================================
+  // ✅ FALLBACK: אם אין נתוני Finnhub - נסה AI מלא
+  // ============================================
+  logger.warn(`⚠️ No Finnhub data for ${symbol}, falling back to full AI extraction`);
   
+  const quarter = Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
+  const year = new Date(reportDate).getFullYear();
+  
+  const extractionPrompt = `
+You are a financial data extraction bot. Your ONLY job is to return valid JSON.
+
+SYMBOL: ${symbol}
+COMPANY: ${companyName}
+DATE: ${reportDate}
+QUARTER: Q${quarter} ${year}
+
+CRITICAL INSTRUCTIONS:
+1. Search for the official earnings press release from ${companyName} Investor Relations
+2. Prioritize IR websites: ir.${symbol.toLowerCase()}.com or investors.${companyName.toLowerCase().replace(/\s+/g, '')}.com
+3. Extract ONLY the following data from official sources
+4. If a field is unavailable, use null (NOT 0, NOT empty string)
+5. Return ONLY valid JSON - NO explanations, NO markdown, NO extra text
+
+REQUIRED JSON STRUCTURE:
+{
+  "symbol": "${symbol}",
+  "companyName": "${companyName}",
+  "reportDate": "${reportDate}",
+  "eps": {
+    "actual": <number or null>,
+    "estimate": <number or null>,
+    "beatPercent": <number or null>
+  },
+  "revenue": {
+    "actual": <number in dollars or null>,
+    "estimate": <number in dollars or null>,
+    "beatPercent": <number or null>
+  },
+  "guidance": {
+    "status": "raised" | "lowered" | "maintained" | "unavailable"
+  },
+  "yoyGrowth": {
+    "epsChange": <number or null>,
+    "revenueChange": <number or null>
+  },
+  "cashFlow": {
+    "freeCashFlow": <number or null>,
+    "yoyChange": <number or null>
+  },
+  "margins": {
+    "netMargin": <number or null>,
+    "operatingMargin": <number or null>,
+    "trend": "improving" | "stable" | "declining" | "unavailable"
+  },
+  "sentiment": {
+    "overall": "positive" | "neutral" | "negative"
+  },
+  "marketData": {
+    "price": <number or null>
+  },
+  "highlights": [<string>, <string>],
+  "concerns": [<string>, <string>]
+}
+
+CRITICAL RULES:
+- Do NOT invent data
+- Do NOT use 0 for missing data - use null
+- Do NOT add explanations or markdown
+- Return ONLY the JSON object
+- Search official IR sources first before using news articles
+`;
+
   try {
-    const res = await callGrokAPI([
-      { role: "system", content: "Return valid JSON." }, 
-      { role: "user", content: extractionPrompt }
-    ], 0.2, 4000, true);
+    const res = await callGrokAPI(
+      [
+        { 
+          role: "system", 
+          content: "You are a data extraction API specialized in official investor relations documents. Return ONLY valid JSON. No markdown. No explanations. Prioritize IR websites." 
+        }, 
+        { 
+          role: "user", 
+          content: extractionPrompt 
+        }
+      ], 
+      0.1,
+      4000, 
+      true
+    );
     
-    const jsonText = extractJSON(res);
-    const data = JSON.parse(jsonText);
+    // ✅ נקה markdown אם יש
+    let cleanedRes = res.trim();
+    if (cleanedRes.startsWith('```json')) {
+      cleanedRes = cleanedRes.replace(/```json\n?/g, '').replace(/```\n?$/g, '');
+    }
+    if (cleanedRes.startsWith('```')) {
+      cleanedRes = cleanedRes.replace(/^```\n?/g, '').replace(/```\n?$/g, '');
+    }
+    cleanedRes = cleanedRes.trim();
     
-    // 🛑 FORCE SYMBOL INJECTION
+    const data = JSON.parse(cleanedRes);
+    
+    // 🛑 FORCE SYMBOL INJECTION (למקרה שה-AI שכח)
     data.symbol = symbol;
     data.companyName = companyName;
     data.reportDate = reportDate;
     
-    // ✅ FIX: Override price with FMP data if available
+    // ✅ Override price with FMP data if available
     if (currentPrice && currentPrice > 0) {
       logger.info(`💰 Using FMP price: $${currentPrice} (overriding AI extraction)`);
       data.marketData = data.marketData || {};
       data.marketData.price = currentPrice;
-      data.marketData.source = "FMP (Real-time)";
-    } else if (!data.marketData?.price || data.marketData.price === 0) {
-      logger.warn(`⚠️ No valid price found for ${symbol} (FMP: ${currentPrice}, AI: ${data.marketData?.price})`);
+    }
+    
+    // ✅ VALIDATION: Check for fake zeros
+    if (data.revenue?.actual === 0 || data.revenue?.estimate === 0) {
+      logger.warn(`⚠️ ${symbol}: Revenue data looks suspicious (0 values) - AI may have failed`);
+    }
+    if (data.eps?.actual === 0 && data.eps?.estimate === 0) {
+      logger.warn(`⚠️ ${symbol}: EPS data looks suspicious (0 values) - AI may have failed`);
+    }
+    
+    // ✅ אימות שיש לפחות כמה נתונים בסיסיים
+    if (!data.eps?.actual && !data.revenue?.actual) {
+      logger.error(`❌ ${symbol}: AI returned no meaningful data - both EPS and Revenue are null/0`);
     }
     
     return data;
-  } catch (e) { 
-    logger.error(`Extraction failed for ${symbol}`, e); 
+  } catch (e: any) { 
+    logger.error(`❌ Full AI extraction failed for ${symbol}:`, e.message); 
     throw e; 
   }
 }
-
 // ============================================
 // 5. FINAL ANALYSIS (TELEGRAM FORMAT)
 // ============================================
 export async function finalAnalysis(fullData: FullExtractionResponse, miraScore: MiraScore): Promise<FinalAnalysis> {
   logger.info(`📝 Generating Final Telegram Report for ${fullData.symbol}...`);
 
-  const tradeParams = calculateTradeParams(fullData.marketData.price, miraScore.classification);
+
+    const currentPrice = fullData.marketData?.price || 0;
+  
+  if (!currentPrice || currentPrice === 0) {
+    logger.warn(`⚠️ No valid price for ${fullData.symbol} - cannot calculate trade parameters`);
+  } else {
+    logger.info(`💰 Using price $${currentPrice} for ${fullData.symbol} trade calculations`);
+  }
+  const tradeParams = calculateTradeParams(currentPrice, miraScore.classification);
 
   // ✅ FIX: Handle undefined/null values with fallback
   const epsDeviation = fullData.eps.estimate
@@ -437,7 +772,7 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
     : 'לא זמין';
   const fcfTrend = fullData.cashFlow?.trendDescription ? ` (${fullData.cashFlow.trendDescription})` : '';
 
-  const prompt = `
+const prompt = `
 אתה Mira, אנליסט פיננסי AI מומחה.
 צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
 
@@ -445,6 +780,7 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
 סימול: ${fullData.symbol}
 שם: ${fullData.companyName}
 תאריך: ${fullData.reportDate}
+מחיר נוכחי: $${currentPrice}
 
 EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
 הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
@@ -460,12 +796,22 @@ YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
 ⚠️ חשוב: ההמלצה חייבת להיות תואמת לסיווג!
 - אם הסיווג "POSITIVE" → כיוון חייב להיות "LONG 🟢"
 - אם הסיווג "NEGATIVE" → כיוון חייב להיות "SHORT 🔴"
-- אם הסיווג "NEUTRAL" → כיוון יכול להיות "NEUTRAL ⚪"
+- אם הסיווג "NEUTRAL" → כיוון "NEUTRAL ⚪" (צפה בזהירות)
 
 המלצה: ${tradeParams.direction}
-${tradeParams.entryPrice > 0 ? `כניסה: $${tradeParams.entryPrice}` : ''}
-${tradeParams.targetPrice > 0 ? `יעד: $${tradeParams.targetPrice}` : ''}
-${tradeParams.stopPrice > 0 ? `סטופ: $${tradeParams.stopPrice}` : ''}
+מחיר נוכחי: $${currentPrice}
+${tradeParams.hasPriceData ? `
+${tradeParams.direction === "NEUTRAL ⚪" ? `
+נקודות ניטור:
+- כניסה אפשרית: $${tradeParams.entryPrice}
+- יעד זהיר: $${tradeParams.targetPrice} (+3%)
+- סטופ: $${tradeParams.stopPrice} (-3%)
+` : `
+כניסה: $${tradeParams.entryPrice}
+יעד: $${tradeParams.targetPrice}
+סטופ: $${tradeParams.stopPrice}
+`}
+` : `⚠️ לא ניתן לחשב נקודות מסחר - מחיר מניה לא זמין`}
 
 הדגשים: ${fullData.highlights.join(', ')}
 דאגות: ${fullData.concerns.join(', ')}
@@ -474,11 +820,12 @@ ${tradeParams.stopPrice > 0 ? `סטופ: $${tradeParams.stopPrice}` : ''}
 
 📌 סימול: ${fullData.symbol}
 📅 תאריך דוח: ${fullData.reportDate}
+💰 מחיר נוכחי: $${currentPrice}
 
 📊 פרטי דוח:
 - EPS: $${fullData.eps.actual} מול תחזית $${fullData.eps.estimate} (סטייה ${epsDeviation}%)
 - Revenues: $${(fullData.revenue.actual / 1e6).toFixed(0)}M מול תחזית $${(fullData.revenue.estimate / 1e6).toFixed(0)}M (סטייה ${revenueDeviation}%)
-- Guidance: ${fullData.guidance.status === 'raised' ? 'הועלה' : fullData.guidance.status === 'lowered' ? 'הופחת' : fullData.guidance.status === 'maintained' ? 'נשמר' : fullData.guidance.status}
+- Guidance: ${fullData.guidance.status === 'raised' ? 'הועלה' : fullData.guidance.status === 'lowered' ? 'הופחת' : fullData.guidance.status === 'maintained' ? 'נשמר' : 'לא זמין'}
 - Free Cash Flow: ${fcfStatus}${fcfTrend}
 - YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
 - שולי רווח: Net ${netMargin}% | Operating ${opMargin}%
@@ -489,29 +836,38 @@ ${tradeParams.stopPrice > 0 ? `סטופ: $${tradeParams.stopPrice}` : ''}
 
 📈 המלצת מסחר:
 
-${tradeParams.entryPrice > 0 ? `
 כיוון: ${tradeParams.direction}
-כניסה: $${tradeParams.entryPrice}
+מחיר נוכחי: $${currentPrice}
+${tradeParams.hasPriceData ? `
+${tradeParams.direction === "NEUTRAL ⚪" ? `
+נקודות ניטור (עבור NEUTRAL):
+- מחיר בסיס: $${tradeParams.entryPrice}
+- יעד זהיר: $${tradeParams.targetPrice} (+3%)
+- סטופ הגנה: $${tradeParams.stopPrice} (-3%)
+(המתן לאות ברורה יותר לפני כניסה)
+` : `
+כניסה מומלצת: $${tradeParams.entryPrice}
 יעד רווח: $${tradeParams.targetPrice}
 סטופ לוס: $${tradeParams.stopPrice}
-` : `
-כיוון: ${tradeParams.direction}
-⚠️ לא ניתן לחשב נקודות כניסה/יעד עקב מחיר מניה לא זמין
 `}
+` : `⚠️ לא ניתן לחשב נקודות מסחר - מחיר מניה לא זמין`}
 
 🧩 שיקול דעת AI:
-[כתוב ניתוח מפורט של 3-4 שורות בעברית המסביר למה הדוח קיבל את הסיווג הזה, מה הנקודות החזקות והחלשות, ומה המשמעות למשקיעים. התייחס לסטיות מהתחזיות, צמיחה, FCF, ותחזית. אם יש נתונים חסרים - ציין זאת.]
+[כתוב ניתוח מפורט של 3-4 שורות בעברית המסביר למה הדוח קיבל את הסיווג הזה, מה הנקודות החזקות והחלשות, ומה המשמעות למשקיעים. התייחס לסטיות מהתחזיות, צמיחה, FCF, ותחזית. אם יש נתונים חסרים - ציין זאת. השתמש במחיר הנוכחי $${currentPrice} בהקשר של ההמלצה.]
 
 📝 מסקנה:
-[כתוב משפט אחד בעברית המסכם את ההמלצה הסופית - האם לקנות/למכור/להמתין. וודא שההמלצה תואמת את הכיוון למעלה!]
+[כתוב משפט אחד בעברית המסכם את ההמלצה הסופית. 
+${tradeParams.direction === "NEUTRAL ⚪" ? 'עבור NEUTRAL: המלץ להמתין ולצפות בפיתוחים נוספים לפני קבלת החלטה.' : ''}
+וודא שההמלצה תואמת את הכיוון למעלה!]
 
 חשוב: 
 1. כל הטקסט חייב להיות בעברית בלבד! אסור אנגלית!
 2. ההמלצה במסקנה חייבת להתאים לכיוון המסחר (${tradeParams.direction})
 3. אם יש "undefined" או "N/A" - אמור במפורש שהנתון לא זמין
 4. החזר רק את הטקסט בפורמט למעלה, ללא markdown.
-  `;
-
+5. המחיר הנוכחי הוא $${currentPrice} - השתמש בו בניתוח!
+${tradeParams.direction === "NEUTRAL ⚪" ? '6. עבור NEUTRAL: הדגש שצריך להמתין לאות ברורה יותר לפני כניסה לפוזיציה.' : ''}
+`;
   try {
      const telegramMessage = await callGrokAPI(
          [{ 
@@ -627,32 +983,51 @@ private async processNextStock(): Promise<void> {
             stock.status = "extracting";
             await delay(2000);
             
-            // ✅ FIX: Get fresh price from FMP before extraction
+            // ✅ GET PRICE FROM FMP
             let currentPrice: number | undefined;
             try {
                 const quote = await getQuote(stock.symbol);
                 currentPrice = quote?.price || undefined;
-                logger.info(`💰 Fetched current price for ${stock.symbol}: $${currentPrice}`);
-            } catch (e) {
-                logger.warn(`⚠️ Could not fetch current price for ${stock.symbol}`);
+                
+                if (currentPrice && currentPrice > 0) {
+                    logger.info(`💰 Fetched current price for ${stock.symbol}: $${currentPrice}`);
+                } else {
+                    logger.error(`❌ FMP returned invalid price for ${stock.symbol}: ${currentPrice}`);
+                    currentPrice = undefined;
+                }
+            } catch (e: any) {
+                logger.error(`❌ Could not fetch current price for ${stock.symbol}: ${e.message}`);
+                currentPrice = undefined;
             }
             
-            // ✅ Pass price to fullExtraction
+            // ✅ העבר את המחיר ונתוני Finnhub ל-fullExtraction
             const fullData = await fullExtraction(
                 stock.symbol, 
                 stock.companyName, 
                 new Date().toISOString().split("T")[0],
-                currentPrice  // ✅ NEW: Pass FMP price
+                currentPrice,  // ✅ המחיר מועבר כאן
+                // @ts-ignore - העבר את הנתונים מ-Finnhub אם קיימים
+                stock.finnhubData
             );
             stock.fullData = fullData;
+            
+            // ✅ בדוק שהמחיר אכן נשמר ב-fullData
+            if (fullData.marketData?.price && fullData.marketData.price > 0) {
+                logger.info(`✅ Price confirmed in fullData: $${fullData.marketData.price}`);
+            } else {
+                logger.warn(`⚠️ No valid price in fullData for ${stock.symbol}`);
+            }
             
             const miraScore = calculateDetailedScore(fullData);
             logger.info(`🧮 Score for ${stock.symbol}: ${miraScore.totalScore} (${miraScore.classification})`);
 
+            // ✅ finalAnalysis יקבל את fullData עם המחיר
             const analysis = await finalAnalysis(fullData, miraScore);
             
             stock.analysis = analysis;
             stock.status = "completed";
+            
+            logger.info(`✅ ${stock.symbol} analysis complete!`);
             
             if (this.onComplete) this.onComplete(stock);
             
@@ -660,12 +1035,15 @@ private async processNextStock(): Promise<void> {
             logger.info(`⏳ Not published yet (Finnhub & AI both negative). Waiting.`);
             stock.status = "checking";
         }
-    } catch (e) {
-        logger.error(`Error ${stock.symbol}`, e);
+    } catch (e: any) {
+        logger.error(`❌ Error processing ${stock.symbol}: ${e.message}`, e);
         stock.status = "error";
+        stock.error = e.message;
     }
     
-    if (this.isRunning) await delay(DELAY_BETWEEN_STOCKS_MS);
+    if (this.isRunning) {
+        await delay(DELAY_BETWEEN_STOCKS_MS);
+    }
 }
 
   initialize(data: MorningIntelligenceResponse) { 

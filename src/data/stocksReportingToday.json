@@ -1,213 +1,71 @@
 {
-  "date": "2025-12-18",
+  "date": "2026-01-08",
   "stocks": [
     {
-      "symbol": "ACN",
-      "companyName": "Accenture plc",
+      "symbol": "WBA",
+      "companyName": "Walgreens Boots Alliance, Inc.",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 167430481158,
-      "volume": 2943431,
+      "marketCap": 10369421068,
+      "volume": 452081061,
       "confidence": 100,
       "sources": [
         "Finnhub",
         "FMP"
       ],
       "quarter": 1,
-      "fiscalYear": 2026
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.4545,
+        "revenueActual": null,
+        "revenueEstimate": 39113684200
+      }
     },
     {
-      "symbol": "CTAS",
-      "companyName": "Cintas Corporation",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 76005772911,
-      "volume": 1111745,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 2,
-      "fiscalYear": 2026
-    },
-    {
-      "symbol": "FDX",
-      "companyName": "FedEx Corporation",
+      "symbol": "ETWO",
+      "companyName": "E2open Parent Holdings, Inc.",
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 67076238676,
-      "volume": 638208,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 2,
-      "fiscalYear": 2026
-    },
-    {
-      "symbol": "HEI",
-      "companyName": "HEICO Corporation",
-      "reportType": "AMC",
-      "windowStart": "16:05",
-      "windowEnd": "20:00",
-      "marketCap": 43169403093,
-      "volume": 99934,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025
-    },
-    {
-      "symbol": "CCL",
-      "companyName": "Carnival Corporation & plc",
-      "reportType": "AMC",
-      "windowStart": "16:05",
-      "windowEnd": "20:00",
-      "marketCap": 37140748315,
-      "volume": 7523577,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025
-    },
-    {
-      "symbol": "DRI",
-      "companyName": "Darden Restaurants, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 22414007713,
-      "volume": 2143642,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 2,
-      "fiscalYear": 2026
-    },
-    {
-      "symbol": "FDS",
-      "companyName": "FactSet Research Systems Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 10409391872,
-      "volume": 777334,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 1,
-      "fiscalYear": 2026
-    },
-    {
-      "symbol": "BIRK",
-      "companyName": "Birkenstock Holding plc",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 7921796964,
-      "volume": 4661549,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025
-    },
-    {
-      "symbol": "KMX",
-      "companyName": "CarMax, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 6148283612,
-      "volume": 5231804,
+      "marketCap": 1032451200,
+      "volume": 26635229,
       "confidence": 100,
       "sources": [
         "Finnhub",
         "FMP"
       ],
       "quarter": 3,
-      "fiscalYear": 2026
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.0459,
+        "revenueActual": null,
+        "revenueEstimate": 155334096
+      }
     },
     {
-      "symbol": "KBH",
-      "companyName": "KB Home",
+      "symbol": "TLRY",
+      "companyName": "Tilray Brands, Inc.",
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 4419967936,
-      "volume": 763033,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025
-    },
-    {
-      "symbol": "NNE",
-      "companyName": "Nano Nuclear Energy Inc",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 1268270307,
-      "volume": 815448,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025
-    },
-    {
-      "symbol": "AVO",
-      "companyName": "Mission Produce, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:05",
-      "windowEnd": "20:00",
-      "marketCap": 932405057,
-      "volume": 161788,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025
-    },
-    {
-      "symbol": "SCHL",
-      "companyName": "Scholastic Corporation",
-      "reportType": "AMC",
-      "windowStart": "16:05",
-      "windowEnd": "20:00",
-      "marketCap": 703064229,
-      "volume": 82702,
+      "marketCap": 1006682328,
+      "volume": 5013246,
       "confidence": 100,
       "sources": [
         "Finnhub",
         "FMP"
       ],
       "quarter": 2,
-      "fiscalYear": 2026
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.204,
+        "revenueActual": null,
+        "revenueEstimate": 215168704
+      }
     }
   ]
 }
