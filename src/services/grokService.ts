@@ -498,11 +498,46 @@ export async function fullExtraction(
     try {
       const finnhubMetrics = await getFinnhubMetrics(symbol);
       if (finnhubMetrics) {
-        // YoY Growth
+        // YoY Growth - EPS
         if (finnhubMetrics.epsGrowthTTM !== null && finnhubMetrics.epsGrowthTTM !== undefined) {
           data.yoyGrowth.epsChange = finnhubMetrics.epsGrowthTTM;
           logger.info(`   ✅ YoY EPS Growth: ${finnhubMetrics.epsGrowthTTM}%`);
+        } else {
+          // ⚠️ Finnhub מחזיר null כשהמניה בהפסד - נחשב בעצמנו!
+          logger.info(`   ⚠️ YoY EPS Growth is null from Finnhub, calculating manually from quarterly data...`);
+          try {
+            const earningsData = await getEarnings(symbol);
+            if (earningsData && earningsData.length >= 4) {
+              // הרבעון הנוכחי (אינדקס 0) vs אותו רבעון אשתקד (בדרך כלל אינדקס 4)
+              const currentQ = earningsData[0];
+              const priorYearQ = earningsData[4]; // 4 רבעונים אחורה = שנה
+
+              if (currentQ?.epsActual !== null && priorYearQ?.epsActual !== null) {
+                const current = currentQ.epsActual;
+                const prior = priorYearQ.epsActual;
+
+                // חישוב YoY - עובד גם על הפסדים!
+                let yoyGrowth: number;
+                if (prior === 0) {
+                  yoyGrowth = current > 0 ? 100 : current < 0 ? -100 : 0;
+                } else {
+                  yoyGrowth = ((current - prior) / Math.abs(prior)) * 100;
+                }
+
+                data.yoyGrowth.epsChange = yoyGrowth;
+                logger.info(`   ✅ YoY EPS Growth (calculated): ${yoyGrowth.toFixed(2)}% (${prior} → ${current})`);
+              } else {
+                logger.warn(`   ⚠️ Missing EPS data for YoY calculation`);
+              }
+            } else {
+              logger.warn(`   ⚠️ Not enough historical earnings data (got ${earningsData?.length || 0} quarters)`);
+            }
+          } catch (err: any) {
+            logger.warn(`   ⚠️ Could not calculate YoY EPS manually: ${err.message}`);
+          }
         }
+
+        // YoY Growth - Revenue
         if (finnhubMetrics.revenueGrowthTTM !== null && finnhubMetrics.revenueGrowthTTM !== undefined) {
           data.yoyGrowth.revenueChange = finnhubMetrics.revenueGrowthTTM;
           logger.info(`   ✅ YoY Revenue Growth: ${finnhubMetrics.revenueGrowthTTM}%`);
