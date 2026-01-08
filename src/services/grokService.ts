@@ -2,7 +2,13 @@ import axios, { AxiosError } from "axios";
 import dotenv from "dotenv";
 import logger from "../utils/logger";
 // ✅ שימוש ב-FMP ו-Finnhub לקבלת נתונים מדויקים במקום AI
-import { getEarnings, getQuote, getFinnhubMetrics } from "./stockService"; 
+import {
+  getEarnings,
+  getQuote,
+  getFinnhubMetrics,
+  getIncomeStatement,
+  getCashFlow
+} from "./stockService"; 
 import {
   GrokResponse,
   GrokMessage,
@@ -501,18 +507,21 @@ export async function fullExtraction(
         // YoY Growth - EPS
         if (finnhubMetrics.epsGrowthTTM !== null && finnhubMetrics.epsGrowthTTM !== undefined) {
           data.yoyGrowth.epsChange = finnhubMetrics.epsGrowthTTM;
-          logger.info(`   ✅ YoY EPS Growth: ${finnhubMetrics.epsGrowthTTM}%`);
+          logger.info(`   ✅ YoY EPS Growth (Finnhub): ${finnhubMetrics.epsGrowthTTM}%`);
         } else {
-          // ⚠️ Finnhub מחזיר null כשהמניה בהפסד - נחשב בעצמנו!
-          logger.info(`   ⚠️ YoY EPS Growth is null from Finnhub, calculating manually from quarterly data...`);
+          // ⚠️ Finnhub מחזיר null בשני מקרים:
+          // 1. המניה בהפסד (EPS שלילי)
+          // 2. נתוני Q2 עדיין לא פורסמו בFinnhub
+          logger.info(`   ⚠️ YoY EPS Growth unavailable from Finnhub - trying manual calculation from quarterly data...`);
           try {
             const earningsData = await getEarnings(symbol);
-            if (earningsData && earningsData.length >= 4) {
-              // הרבעון הנוכחי (אינדקס 0) vs אותו רבעון אשתקד (בדרך כלל אינדקס 4)
+            if (earningsData && earningsData.length >= 5) {
+              // הרבעון הנוכחי (אינדקס 0) vs אותו רבעון אשתקד (אינדקס 4)
               const currentQ = earningsData[0];
               const priorYearQ = earningsData[4]; // 4 רבעונים אחורה = שנה
 
-              if (currentQ?.epsActual !== null && priorYearQ?.epsActual !== null) {
+              if (currentQ?.epsActual !== null && currentQ.epsActual !== undefined &&
+                  priorYearQ?.epsActual !== null && priorYearQ.epsActual !== undefined) {
                 const current = currentQ.epsActual;
                 const prior = priorYearQ.epsActual;
 
@@ -525,15 +534,15 @@ export async function fullExtraction(
                 }
 
                 data.yoyGrowth.epsChange = yoyGrowth;
-                logger.info(`   ✅ YoY EPS Growth (calculated): ${yoyGrowth.toFixed(2)}% (${prior} → ${current})`);
+                logger.info(`   ✅ YoY EPS Growth (manual calc): ${yoyGrowth.toFixed(2)}% ($${prior} → $${current}) [${currentQ.date} vs ${priorYearQ.date}]`);
               } else {
-                logger.warn(`   ⚠️ Missing EPS data for YoY calculation`);
+                logger.warn(`   ⚠️ YoY EPS unavailable - missing Q2 or prior year EPS data (current: ${currentQ?.epsActual}, prior: ${priorYearQ?.epsActual})`);
               }
             } else {
-              logger.warn(`   ⚠️ Not enough historical earnings data (got ${earningsData?.length || 0} quarters)`);
+              logger.warn(`   ⚠️ YoY EPS unavailable - not enough quarterly data (need 5 quarters, got ${earningsData?.length || 0})`);
             }
           } catch (err: any) {
-            logger.warn(`   ⚠️ Could not calculate YoY EPS manually: ${err.message}`);
+            logger.warn(`   ⚠️ YoY EPS unavailable - calculation failed: ${err.message}`);
           }
         }
 
@@ -543,22 +552,22 @@ export async function fullExtraction(
           logger.info(`   ✅ YoY Revenue Growth: ${finnhubMetrics.revenueGrowthTTM}%`);
         }
 
-        // Margins
+        // Margins - FALLBACK to TTM if Q2 unavailable
         if (finnhubMetrics.netMarginTTM !== null && finnhubMetrics.netMarginTTM !== undefined) {
           data.margins.netMargin = finnhubMetrics.netMarginTTM;
-          logger.info(`   ✅ Net Margin: ${finnhubMetrics.netMarginTTM}%`);
+          logger.info(`   📊 Net Margin (TTM fallback): ${finnhubMetrics.netMarginTTM}%`);
         }
         if (finnhubMetrics.operatingMarginTTM !== null && finnhubMetrics.operatingMarginTTM !== undefined) {
           data.margins.operatingMargin = finnhubMetrics.operatingMarginTTM;
-          logger.info(`   ✅ Operating Margin: ${finnhubMetrics.operatingMarginTTM}%`);
+          logger.info(`   📊 Operating Margin (TTM fallback): ${finnhubMetrics.operatingMarginTTM}%`);
         }
 
-        // FCF (חישוב מ-EV/FCF)
+        // FCF - FALLBACK calculation from EV/FCF
         if (finnhubMetrics.evFcfRatio && finnhubMetrics.enterpriseValue) {
           // EV / FCF = ratio → FCF = EV / ratio
           const fcf = (finnhubMetrics.enterpriseValue * 1000000) / finnhubMetrics.evFcfRatio;
           data.cashFlow.freeCashFlow = fcf;
-          logger.info(`   ✅ Free Cash Flow: $${(fcf / 1e6).toFixed(2)}M (calculated from EV/FCF)`);
+          logger.info(`   📊 Free Cash Flow (TTM fallback): $${(fcf / 1e6).toFixed(2)}M`);
         }
 
         // Margin Trend
@@ -573,6 +582,74 @@ export async function fullExtraction(
     } catch (err: any) {
       logger.error(`❌ Failed to fetch Finnhub Metrics for ${symbol}:`, err.message);
     }
+
+    // 🎯 PRIMARY: שליפת נתונים רבעוניים (Q2) מ-FMP - עדיפות על TTM!
+    logger.info(`📊 Fetching Q2 quarterly data for ${symbol}...`);
+
+    // 1️⃣ Margins - מחלץ את הרבעון האחרון מ-Income Statement
+    try {
+      const incomeStatement = await getIncomeStatement(symbol);
+      if (incomeStatement && incomeStatement.length > 0) {
+        const latestQ = incomeStatement[0]; // הרבעון האחרון
+
+        // חישוב Net Margin: (Net Income / Revenue) * 100
+        if (latestQ.netIncome !== null && latestQ.revenue !== null && latestQ.revenue !== 0) {
+          const netMargin = (latestQ.netIncome / latestQ.revenue) * 100;
+          data.margins.netMargin = netMargin;
+          logger.info(`   ✅ Net Margin Q2: ${netMargin.toFixed(2)}% (${latestQ.calendarYear} ${latestQ.period})`);
+        }
+
+        // חישוב Operating Margin: (Operating Income / Revenue) * 100
+        if (latestQ.operatingIncome !== null && latestQ.revenue !== null && latestQ.revenue !== 0) {
+          const operatingMargin = (latestQ.operatingIncome / latestQ.revenue) * 100;
+          data.margins.operatingMargin = operatingMargin;
+          logger.info(`   ✅ Operating Margin Q2: ${operatingMargin.toFixed(2)}%`);
+        }
+      } else {
+        logger.warn(`   ⚠️ No income statement data for Q2 margins`);
+      }
+    } catch (err: any) {
+      logger.warn(`   ⚠️ Could not fetch Q2 margins: ${err.message}`);
+    }
+
+    // 2️⃣ FCF - מחלץ את הרבעון האחרון מ-Cash Flow Statement
+    try {
+      const cashFlow = await getCashFlow(symbol);
+      if (cashFlow && cashFlow.length > 0) {
+        const latestQ = cashFlow[0]; // הרבעון האחרון
+
+        // FCF = Operating Cash Flow - CapEx
+        if (latestQ.operatingCashFlow !== null && latestQ.capitalExpenditure !== null) {
+          const fcf = latestQ.operatingCashFlow + latestQ.capitalExpenditure; // capitalExpenditure הוא שלילי
+          data.cashFlow.freeCashFlow = fcf;
+          logger.info(`   ✅ Free Cash Flow Q2: $${(fcf / 1e6).toFixed(2)}M (${latestQ.calendarYear} ${latestQ.period})`);
+
+          // YoY FCF Change (אם יש נתון של אותו רבעון אשתקד)
+          if (cashFlow.length >= 5) {
+            const priorYearQ = cashFlow[4]; // 4 רבעונים אחורה
+            if (priorYearQ.operatingCashFlow !== null && priorYearQ.capitalExpenditure !== null) {
+              const priorFcf = priorYearQ.operatingCashFlow + priorYearQ.capitalExpenditure;
+              if (priorFcf !== 0) {
+                const yoyChange = ((fcf - priorFcf) / Math.abs(priorFcf)) * 100;
+                data.cashFlow.yoyChange = yoyChange;
+                logger.info(`   ✅ FCF YoY Change: ${yoyChange.toFixed(2)}% ($${(priorFcf / 1e6).toFixed(2)}M → $${(fcf / 1e6).toFixed(2)}M)`);
+              }
+            }
+          }
+        }
+      } else {
+        logger.warn(`   ⚠️ No cash flow data for Q2 FCF`);
+      }
+    } catch (err: any) {
+      logger.warn(`   ⚠️ Could not fetch Q2 FCF: ${err.message}`);
+    }
+
+    // Margin Trend (עדכון לאחר שיש לנו נתוני Q2)
+    if (data.margins.netMargin !== null) {
+      data.margins.trend = data.margins.netMargin > 0 ? "improving" : "declining";
+    }
+
+    logger.info(`✅ Quarterly data extraction complete for ${symbol}`);
 
     // ✅ עכשיו תשתמש ב-AI רק לנתונים חסרים (guidance, sentiment, highlights)
     try {
