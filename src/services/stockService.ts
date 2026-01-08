@@ -151,15 +151,65 @@ export const getEarningsTranscript = async (
   try {
     const url = `${apiBaseUrl}/earning_call_transcript/${symbol}?quarter=${quarter}&year=${year}&apikey=${apiKey}`;
     const response = await axios.get(url);
-    
+
     if (!response.data || response.data.length === 0) {
       logger.warn(`No earnings transcript for ${symbol} Q${quarter} ${year}`);
       return null;
     }
-    
+
     return response.data[0];
   } catch (e) {
     logger.error(`getEarningsTranscript error for ${symbol}:`, e);
+    return null;
+  }
+};
+
+// 🆕 NEW: Finnhub Metrics API - חילוץ YoY Growth, FCF, Margins (הכי אמין!)
+export const getFinnhubMetrics = async (symbol: string) => {
+  const finnhubKey = process.env.FINNHUB_API_KEY;
+  if (!finnhubKey) {
+    logger.warn("FINNHUB_API_KEY not found");
+    return null;
+  }
+
+  try {
+    const url = `https://finnhub.io/api/v1/stock/metric?symbol=${symbol}&metric=all&token=${finnhubKey}`;
+    const response = await axios.get(url);
+
+    if (!response.data || !response.data.metric) {
+      logger.warn(`No Finnhub metrics for ${symbol}`);
+      return null;
+    }
+
+    const metric = response.data.metric;
+
+    // חילוץ הנתונים שאנחנו צריכים
+    return {
+      // YoY Growth
+      epsGrowthTTM: metric.epsGrowthTTMYoy,  // % change (e.g., -2.77)
+      revenueGrowthTTM: metric.revenueGrowthTTMYoy,  // % change
+      epsGrowthQuarterly: metric.epsGrowthQuarterlyYoy,
+      revenueGrowthQuarterly: metric.revenueGrowthQuarterlyYoy,
+
+      // Margins
+      netMarginTTM: metric.netProfitMarginTTM,  // % (e.g., -117.61)
+      operatingMarginTTM: metric.operatingMarginTTM,  // % (e.g., -113.09)
+      grossMarginTTM: metric.grossMarginTTM,
+
+      // Free Cash Flow (מחושב מ-EV/FCF)
+      evFcfRatio: metric["currentEv/freeCashFlowTTM"],
+      marketCap: metric.marketCapitalization,  // in millions
+      enterpriseValue: metric.enterpriseValue,  // in millions
+
+      // נתונים נוספים שימושיים
+      peRatio: metric.peTTM,
+      pbRatio: metric.pbQuarterly,
+      beta: metric.beta,
+      week52High: metric["52WeekHigh"],
+      week52Low: metric["52WeekLow"],
+    };
+  } catch (e) {
+    logger.error(`getFinnhubMetrics error for ${symbol}:`, e);
     return null;
   }
 };

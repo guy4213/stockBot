@@ -1,8 +1,8 @@
 import axios, { AxiosError } from "axios";
 import dotenv from "dotenv";
 import logger from "../utils/logger";
-// ✅ שימוש ב-FMP לקבלת נתונים מדויקים במקום AI
-import { getEarnings, getQuote } from "./stockService"; 
+// ✅ שימוש ב-FMP ו-Finnhub לקבלת נתונים מדויקים במקום AI
+import { getEarnings, getQuote, getFinnhubMetrics } from "./stockService"; 
 import {
   GrokResponse,
   GrokMessage,
@@ -493,6 +493,52 @@ export async function fullExtraction(
       concerns: []
     };
 
+    // ✅ תחילה - נסה לחלץ YoY/FCF/Margins מ-Finnhub Metrics (הכי אמין!)
+    logger.info(`📊 Fetching Finnhub Metrics for ${symbol}...`);
+    try {
+      const finnhubMetrics = await getFinnhubMetrics(symbol);
+      if (finnhubMetrics) {
+        // YoY Growth
+        if (finnhubMetrics.epsGrowthTTM !== null && finnhubMetrics.epsGrowthTTM !== undefined) {
+          data.yoyGrowth.epsChange = finnhubMetrics.epsGrowthTTM;
+          logger.info(`   ✅ YoY EPS Growth: ${finnhubMetrics.epsGrowthTTM}%`);
+        }
+        if (finnhubMetrics.revenueGrowthTTM !== null && finnhubMetrics.revenueGrowthTTM !== undefined) {
+          data.yoyGrowth.revenueChange = finnhubMetrics.revenueGrowthTTM;
+          logger.info(`   ✅ YoY Revenue Growth: ${finnhubMetrics.revenueGrowthTTM}%`);
+        }
+
+        // Margins
+        if (finnhubMetrics.netMarginTTM !== null && finnhubMetrics.netMarginTTM !== undefined) {
+          data.margins.netMargin = finnhubMetrics.netMarginTTM;
+          logger.info(`   ✅ Net Margin: ${finnhubMetrics.netMarginTTM}%`);
+        }
+        if (finnhubMetrics.operatingMarginTTM !== null && finnhubMetrics.operatingMarginTTM !== undefined) {
+          data.margins.operatingMargin = finnhubMetrics.operatingMarginTTM;
+          logger.info(`   ✅ Operating Margin: ${finnhubMetrics.operatingMarginTTM}%`);
+        }
+
+        // FCF (חישוב מ-EV/FCF)
+        if (finnhubMetrics.evFcfRatio && finnhubMetrics.enterpriseValue) {
+          // EV / FCF = ratio → FCF = EV / ratio
+          const fcf = (finnhubMetrics.enterpriseValue * 1000000) / finnhubMetrics.evFcfRatio;
+          data.cashFlow.freeCashFlow = fcf;
+          logger.info(`   ✅ Free Cash Flow: $${(fcf / 1e6).toFixed(2)}M (calculated from EV/FCF)`);
+        }
+
+        // Margin Trend
+        if (data.margins.netMargin !== null) {
+          data.margins.trend = data.margins.netMargin > 0 ? "improving" : "declining";
+        }
+
+        logger.info(`✅ Finnhub Metrics loaded successfully for ${symbol}`);
+      } else {
+        logger.warn(`⚠️ No Finnhub Metrics available for ${symbol}`);
+      }
+    } catch (err: any) {
+      logger.error(`❌ Failed to fetch Finnhub Metrics for ${symbol}:`, err.message);
+    }
+
     // ✅ עכשיו תשתמש ב-AI רק לנתונים חסרים (guidance, sentiment, highlights)
     try {
       const quarter = Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
@@ -553,31 +599,18 @@ EXTRACT THE FOLLOWING DATA:
       - Quote key phrases from management (translated to Hebrew)
       - Example: "מנכ\"ל הדגיש צמיחה של 15% בשוק אירופה והשקת פלטפורמת AI חדשה"
 
-3. **YoY Growth** (Year-over-Year comparisons):
-   - EPS Change: % change from same quarter last year
-   - Revenue Change: % change from same quarter last year
-   - Return as percentages (e.g., 15.5 for 15.5% growth, -5.2 for 5.2% decline)
-   - If not available, return null
-
-4. **Free Cash Flow**:
-   - Current quarter FCF in dollars (e.g., 125000000 for $125M)
-   - Look in cash flow statement or mention in press release
-   - If not available, return null
-
-5. **Profit Margins**:
-   - Net Margin: Net income / Revenue * 100 (as %)
-   - Operating Margin: Operating income / Revenue * 100 (as %)
-   - If not available, return null
-
-6. **Key Highlights** (exactly 2 bullet points):
+3. **Key Highlights** (exactly 2 bullet points):
    - Major achievements from the quarter
    - Record metrics, product launches, market expansions
    - Cost savings, margin improvements
 
-7. **Key Concerns** (exactly 2 bullet points):
+4. **Key Concerns** (exactly 2 bullet points):
    - Risks mentioned by management
    - Challenges, headwinds, competitive pressures
    - Areas that missed expectations
+
+⚠️ NOTE: YoY Growth, Free Cash Flow, and Margins are already extracted from Finnhub Metrics API.
+DO NOT extract these - focus only on Guidance, Sentiment, Highlights, and Concerns.
 
 SEARCH QUERY EXAMPLES TO USE:
 - "site:ir.${symbol.toLowerCase()}.com Q${quarter} ${year} earnings"
@@ -594,19 +627,6 @@ OUTPUT FORMAT - Return ONLY this JSON structure:
   "sentiment": {
     "overall": "positive" | "neutral" | "negative",
     "reasoning": "משפט אחד בעברית למה הסנטימנט כזה" | null
-  },
-  "yoyGrowth": {
-    "epsChange": <number or null>,
-    "revenueChange": <number or null>
-  },
-  "cashFlow": {
-    "freeCashFlow": <number or null>,
-    "yoyChange": <number or null>
-  },
-  "margins": {
-    "netMargin": <number or null>,
-    "operatingMargin": <number or null>,
-    "trend": "improving" | "stable" | "declining" | "unavailable"
   },
   "highlights": [
     "First specific achievement or positive metric",
@@ -699,45 +719,7 @@ VALIDATION RULES:
         logger.warn(`⚠️ No valid sentiment found`);
       }
 
-      // ✅ YoY Growth
-      if (aiData.yoyGrowth) {
-        if (aiData.yoyGrowth.epsChange !== null && aiData.yoyGrowth.epsChange !== undefined) {
-          data.yoyGrowth.epsChange = aiData.yoyGrowth.epsChange;
-          logger.info(`📊 YoY EPS Growth: ${data.yoyGrowth.epsChange}%`);
-        }
-        if (aiData.yoyGrowth.revenueChange !== null && aiData.yoyGrowth.revenueChange !== undefined) {
-          data.yoyGrowth.revenueChange = aiData.yoyGrowth.revenueChange;
-          logger.info(`📊 YoY Revenue Growth: ${data.yoyGrowth.revenueChange}%`);
-        }
-      }
-
-      // ✅ Free Cash Flow
-      if (aiData.cashFlow) {
-        if (aiData.cashFlow.freeCashFlow !== null && aiData.cashFlow.freeCashFlow !== undefined) {
-          data.cashFlow.freeCashFlow = aiData.cashFlow.freeCashFlow;
-          logger.info(`💰 Free Cash Flow: $${(data.cashFlow.freeCashFlow / 1e6).toFixed(2)}M`);
-        }
-        if (aiData.cashFlow.yoyChange !== null && aiData.cashFlow.yoyChange !== undefined) {
-          data.cashFlow.yoyChange = aiData.cashFlow.yoyChange;
-          logger.info(`📊 FCF YoY Change: ${data.cashFlow.yoyChange}%`);
-        }
-      }
-
-      // ✅ Margins
-      if (aiData.margins) {
-        if (aiData.margins.netMargin !== null && aiData.margins.netMargin !== undefined) {
-          data.margins.netMargin = aiData.margins.netMargin;
-          logger.info(`📐 Net Margin: ${data.margins.netMargin}%`);
-        }
-        if (aiData.margins.operatingMargin !== null && aiData.margins.operatingMargin !== undefined) {
-          data.margins.operatingMargin = aiData.margins.operatingMargin;
-          logger.info(`📐 Operating Margin: ${data.margins.operatingMargin}%`);
-        }
-        if (aiData.margins.trend) {
-          data.margins.trend = aiData.margins.trend;
-          logger.info(`📈 Margin Trend: ${data.margins.trend}`);
-        }
-      }
+      // ℹ️ YoY Growth, FCF, Margins already loaded from Finnhub Metrics (see above)
 
       if (aiData.highlights && Array.isArray(aiData.highlights) && aiData.highlights.length >= 2) {
         data.highlights = aiData.highlights.slice(0, 2); // לקחת רק 2 ראשונים
@@ -755,7 +737,7 @@ VALIDATION RULES:
         data.concerns = ["Data not available from IR sources", "Data not available from IR sources"];
       }
 
-      logger.info(`✅ AI supplement complete: Guidance=${data.guidance.status}, Sentiment=${data.sentiment.overall}, YoY=${data.yoyGrowth.epsChange}%/${data.yoyGrowth.revenueChange}%, FCF=$${data.cashFlow.freeCashFlow ? (data.cashFlow.freeCashFlow / 1e6).toFixed(0) + 'M' : 'N/A'}`);
+      logger.info(`✅ AI supplement complete: Guidance=${data.guidance.status}, Sentiment=${data.sentiment.overall}`);
 
     } catch (e: any) {
       logger.error(`❌ AI supplement failed for ${symbol}:`, e.message);
