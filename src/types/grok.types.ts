@@ -138,10 +138,12 @@ export interface Margins {
 
 export interface Guidance {
   status: "raised" | "maintained" | "lowered" | "unavailable";
+  details: string | null;  // פירוט של מה בדיוק שונה בתחזית
 }
 
 export interface Sentiment {
   overall: "positive" | "neutral" | "negative";
+  reasoning: string | null;  // הסבר למה הסנטימנט כזה (1 משפט בעברית)
 }
 
 export interface DataQuality {

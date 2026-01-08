@@ -466,7 +466,8 @@ export async function fullExtraction(
         beatPercent: revBeatPercent
       },
       guidance: {
-        status: "unavailable"
+        status: "unavailable",
+        details: null
       },
       yoyGrowth: {
         epsChange: null,
@@ -482,7 +483,8 @@ export async function fullExtraction(
         trend: "unavailable"
       },
       sentiment: {
-        overall: "neutral"
+        overall: "neutral",
+        reasoning: null
       },
       marketData: {
         price: currentPrice || null
@@ -527,15 +529,29 @@ CRITICAL INSTRUCTIONS:
 
 EXTRACT THE FOLLOWING DATA:
 
-1. **Guidance Status**: Did management raise/lower/maintain guidance for next quarter or full year?
-   - Look for phrases: "raising full-year guidance", "updating outlook", "reaffirming guidance", "increasing forecast"
-   - Return: "raised" | "lowered" | "maintained" | "unavailable"
+1. **Guidance** (2 fields):
+   a) **Status**: Did management raise/lower/maintain guidance for next quarter or full year?
+      - Look for phrases: "raising full-year guidance", "updating outlook", "reaffirming guidance", "increasing forecast"
+      - Return: "raised" | "lowered" | "maintained" | "unavailable"
 
-2. **Management Sentiment**: Overall tone from CEO/CFO in prepared remarks
-   - Positive: Optimistic language, strong growth emphasis, exceeding expectations
-   - Neutral: Stable outlook, meeting expectations, balanced tone
-   - Negative: Challenges emphasized, cautious outlook, disappointing results
-   - Return: "positive" | "neutral" | "negative"
+   b) **Details** (1 sentence in HEBREW explaining WHAT changed):
+      - If raised: מה הועלה? (revenue target, EPS target, margins, etc.)
+      - If lowered: מה הופחת ולמה?
+      - If maintained: מה נשמר על אף מה?
+      - If unavailable: return null
+      - Example: "הנהלה העלתה תחזית הכנסות שנתית ל-$950M-$980M, מעל הקונצנזוס של $920M"
+
+2. **Sentiment** (2 fields):
+   a) **Overall**: Overall tone from CEO/CFO in prepared remarks
+      - Positive: Optimistic language, strong growth emphasis, exceeding expectations
+      - Neutral: Stable outlook, meeting expectations, balanced tone
+      - Negative: Challenges emphasized, cautious outlook, disappointing results
+      - Return: "positive" | "neutral" | "negative"
+
+   b) **Reasoning** (1 sentence in HEBREW explaining WHY):
+      - What specific achievements/challenges led to this sentiment?
+      - Quote key phrases from management (translated to Hebrew)
+      - Example: "מנכ\"ל הדגיש צמיחה של 15% בשוק אירופה והשקת פלטפורמת AI חדשה"
 
 3. **YoY Growth** (Year-over-Year comparisons):
    - EPS Change: % change from same quarter last year
@@ -572,10 +588,12 @@ SEARCH QUERY EXAMPLES TO USE:
 OUTPUT FORMAT - Return ONLY this JSON structure:
 {
   "guidance": {
-    "status": "raised" | "lowered" | "maintained" | "unavailable"
+    "status": "raised" | "lowered" | "maintained" | "unavailable",
+    "details": "משפט אחד בעברית מה שונה בתחזית" | null
   },
   "sentiment": {
-    "overall": "positive" | "neutral" | "negative"
+    "overall": "positive" | "neutral" | "negative",
+    "reasoning": "משפט אחד בעברית למה הסנטימנט כזה" | null
   },
   "yoyGrowth": {
     "epsChange": <number or null>,
@@ -656,15 +674,27 @@ VALIDATION RULES:
 
       // ✅ מיזוג עם הנתונים מ-Finnhub + אימות
       if (aiData.guidance && aiData.guidance.status) {
-        data.guidance = aiData.guidance;
+        data.guidance = {
+          status: aiData.guidance.status,
+          details: aiData.guidance.details || null
+        };
         logger.info(`📈 Guidance: ${data.guidance.status}`);
+        if (data.guidance.details) {
+          logger.info(`   📝 Details: ${data.guidance.details}`);
+        }
       } else {
         logger.warn(`⚠️ No valid guidance found`);
       }
 
       if (aiData.sentiment && aiData.sentiment.overall) {
-        data.sentiment = aiData.sentiment;
+        data.sentiment = {
+          overall: aiData.sentiment.overall,
+          reasoning: aiData.sentiment.reasoning || null
+        };
         logger.info(`💭 Sentiment: ${data.sentiment.overall}`);
+        if (data.sentiment.reasoning) {
+          logger.info(`   📝 Reasoning: ${data.sentiment.reasoning}`);
+        }
       } else {
         logger.warn(`⚠️ No valid sentiment found`);
       }
@@ -938,11 +968,11 @@ const prompt = `
 
 EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
 הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
-תחזית: ${fullData.guidance.status}
+תחזית: ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
 Free Cash Flow: ${fcfStatus}${fcfTrend}
 YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
 שולי רווח: Net ${netMargin}% | Operating ${opMargin}%
-סנטימנט: ${fullData.sentiment.overall}
+סנטימנט: ${fullData.sentiment.overall}${fullData.sentiment.reasoning ? ` - ${fullData.sentiment.reasoning}` : ''}
 
 ניקוד: ${miraScore.totalScore}
 סיווג: ${miraScore.classification}
@@ -979,11 +1009,13 @@ ${tradeParams.direction === "NEUTRAL ⚪" ? `
 📊 פרטי דוח:
 - EPS: $${fullData.eps.actual} מול תחזית $${fullData.eps.estimate} (סטייה ${epsDeviation}%)
 - Revenues: $${(fullData.revenue.actual / 1e6).toFixed(0)}M מול תחזית $${(fullData.revenue.estimate / 1e6).toFixed(0)}M (סטייה ${revenueDeviation}%)
-- Guidance: ${fullData.guidance.status === 'raised' ? 'הועלה' : fullData.guidance.status === 'lowered' ? 'הופחת' : fullData.guidance.status === 'maintained' ? 'נשמר' : 'לא זמין'}
+- Guidance: ${fullData.guidance.status === 'raised' ? 'הועלה' : fullData.guidance.status === 'lowered' ? 'הופחת' : fullData.guidance.status === 'maintained' ? 'נשמר' : 'לא זמין'}${fullData.guidance.details ? `
+  📝 ${fullData.guidance.details}` : ''}
 - Free Cash Flow: ${fcfStatus}${fcfTrend}
 - YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
 - שולי רווח: Net ${netMargin}% | Operating ${opMargin}%
-- סנטימנט הנהלה: ${fullData.sentiment.overall === 'positive' ? 'חיובי' : fullData.sentiment.overall === 'negative' ? 'שלילי' : 'ניטרלי'}
+- סנטימנט הנהלה: ${fullData.sentiment.overall === 'positive' ? 'חיובי' : fullData.sentiment.overall === 'negative' ? 'שלילי' : 'ניטרלי'}${fullData.sentiment.reasoning ? `
+  📝 ${fullData.sentiment.reasoning}` : ''}
 
 ⚖ ניקוד כולל: ${miraScore.totalScore}
 ⚖ סיווג סופי: ${miraScore.classification === 'POSITIVE' ? 'חיובי' : miraScore.classification === 'NEGATIVE' ? 'שלילי' : 'ניטרלי'}
