@@ -586,62 +586,95 @@ export async function fullExtraction(
     // 🎯 PRIMARY: שליפת נתונים רבעוניים (Q2) מ-FMP - עדיפות על TTM!
     logger.info(`📊 Fetching Q2 quarterly data for ${symbol}...`);
 
-    // 1️⃣ Margins - מחלץ את הרבעון האחרון מ-Income Statement
+    // בדיקה: האם נתוני FMP מעודכנים לדוח הזה?
+    let fmpDataIsFresh = false;
+    let needAIExtraction = {
+      netMargin: true,
+      operatingMargin: true,
+      fcf: true
+    };
+
+    // 1️⃣ Margins - נסה לחלץ את הרבעון האחרון מ-Income Statement
     try {
       const incomeStatement = await getIncomeStatement(symbol);
       if (incomeStatement && incomeStatement.length > 0) {
         const latestQ = incomeStatement[0]; // הרבעון האחרון
 
-        // חישוב Net Margin: (Net Income / Revenue) * 100
-        if (latestQ.netIncome !== null && latestQ.revenue !== null && latestQ.revenue !== 0) {
-          const netMargin = (latestQ.netIncome / latestQ.revenue) * 100;
-          data.margins.netMargin = netMargin;
-          logger.info(`   ✅ Net Margin Q2: ${netMargin.toFixed(2)}% (${latestQ.calendarYear} ${latestQ.period})`);
-        }
+        // בדיקת תאריך: האם הנתונים מתאימים לדוח?
+        const latestQDate = new Date(latestQ.date);
+        const reportDateObj = new Date(reportDate);
+        const daysDiff = Math.abs((reportDateObj.getTime() - latestQDate.getTime()) / (1000 * 60 * 60 * 24));
 
-        // חישוב Operating Margin: (Operating Income / Revenue) * 100
-        if (latestQ.operatingIncome !== null && latestQ.revenue !== null && latestQ.revenue !== 0) {
-          const operatingMargin = (latestQ.operatingIncome / latestQ.revenue) * 100;
-          data.margins.operatingMargin = operatingMargin;
-          logger.info(`   ✅ Operating Margin Q2: ${operatingMargin.toFixed(2)}%`);
+        if (daysDiff <= 45) {
+          // FMP מעודכן! (הנתונים בטווח של 45 ימים מהדוח)
+          fmpDataIsFresh = true;
+          logger.info(`   ✅ FMP data is fresh (${latestQ.date}, ${Math.round(daysDiff)} days from report)`);
+
+          // חישוב Net Margin: (Net Income / Revenue) * 100
+          if (latestQ.netIncome !== null && latestQ.revenue !== null && latestQ.revenue !== 0) {
+            const netMargin = (latestQ.netIncome / latestQ.revenue) * 100;
+            data.margins.netMargin = netMargin;
+            needAIExtraction.netMargin = false;
+            logger.info(`   ✅ Net Margin Q2: ${netMargin.toFixed(2)}% (${latestQ.calendarYear} ${latestQ.period})`);
+          }
+
+          // חישוב Operating Margin: (Operating Income / Revenue) * 100
+          if (latestQ.operatingIncome !== null && latestQ.revenue !== null && latestQ.revenue !== 0) {
+            const operatingMargin = (latestQ.operatingIncome / latestQ.revenue) * 100;
+            data.margins.operatingMargin = operatingMargin;
+            needAIExtraction.operatingMargin = false;
+            logger.info(`   ✅ Operating Margin Q2: ${operatingMargin.toFixed(2)}%`);
+          }
+        } else {
+          logger.warn(`   ⚠️ FMP data is stale (${latestQ.date}, ${Math.round(daysDiff)} days old) - will request AI extraction`);
         }
       } else {
-        logger.warn(`   ⚠️ No income statement data for Q2 margins`);
+        logger.warn(`   ⚠️ No income statement data available`);
       }
     } catch (err: any) {
-      logger.warn(`   ⚠️ Could not fetch Q2 margins: ${err.message}`);
+      logger.warn(`   ⚠️ Could not fetch Q2 margins from FMP: ${err.message}`);
     }
 
-    // 2️⃣ FCF - מחלץ את הרבעון האחרון מ-Cash Flow Statement
+    // 2️⃣ FCF - נסה לחלץ את הרבעון האחרון מ-Cash Flow Statement
     try {
       const cashFlow = await getCashFlow(symbol);
       if (cashFlow && cashFlow.length > 0) {
         const latestQ = cashFlow[0]; // הרבעון האחרון
 
-        // FCF = Operating Cash Flow - CapEx
-        if (latestQ.operatingCashFlow !== null && latestQ.capitalExpenditure !== null) {
-          const fcf = latestQ.operatingCashFlow + latestQ.capitalExpenditure; // capitalExpenditure הוא שלילי
-          data.cashFlow.freeCashFlow = fcf;
-          logger.info(`   ✅ Free Cash Flow Q2: $${(fcf / 1e6).toFixed(2)}M (${latestQ.calendarYear} ${latestQ.period})`);
+        // בדיקת תאריך: האם הנתונים מתאימים לדוח?
+        const latestQDate = new Date(latestQ.date);
+        const reportDateObj = new Date(reportDate);
+        const daysDiff = Math.abs((reportDateObj.getTime() - latestQDate.getTime()) / (1000 * 60 * 60 * 24));
 
-          // YoY FCF Change (אם יש נתון של אותו רבעון אשתקד)
-          if (cashFlow.length >= 5) {
-            const priorYearQ = cashFlow[4]; // 4 רבעונים אחורה
-            if (priorYearQ.operatingCashFlow !== null && priorYearQ.capitalExpenditure !== null) {
-              const priorFcf = priorYearQ.operatingCashFlow + priorYearQ.capitalExpenditure;
-              if (priorFcf !== 0) {
-                const yoyChange = ((fcf - priorFcf) / Math.abs(priorFcf)) * 100;
-                data.cashFlow.yoyChange = yoyChange;
-                logger.info(`   ✅ FCF YoY Change: ${yoyChange.toFixed(2)}% ($${(priorFcf / 1e6).toFixed(2)}M → $${(fcf / 1e6).toFixed(2)}M)`);
+        if (daysDiff <= 45 && fmpDataIsFresh) {
+          // FCF = Operating Cash Flow - CapEx
+          if (latestQ.operatingCashFlow !== null && latestQ.capitalExpenditure !== null) {
+            const fcf = latestQ.operatingCashFlow + latestQ.capitalExpenditure; // capitalExpenditure הוא שלילי
+            data.cashFlow.freeCashFlow = fcf;
+            needAIExtraction.fcf = false;
+            logger.info(`   ✅ Free Cash Flow Q2: $${(fcf / 1e6).toFixed(2)}M (${latestQ.calendarYear} ${latestQ.period})`);
+
+            // YoY FCF Change (אם יש נתון של אותו רבעון אשתקד)
+            if (cashFlow.length >= 5) {
+              const priorYearQ = cashFlow[4]; // 4 רבעונים אחורה
+              if (priorYearQ.operatingCashFlow !== null && priorYearQ.capitalExpenditure !== null) {
+                const priorFcf = priorYearQ.operatingCashFlow + priorYearQ.capitalExpenditure;
+                if (priorFcf !== 0) {
+                  const yoyChange = ((fcf - priorFcf) / Math.abs(priorFcf)) * 100;
+                  data.cashFlow.yoyChange = yoyChange;
+                  logger.info(`   ✅ FCF YoY Change: ${yoyChange.toFixed(2)}% ($${(priorFcf / 1e6).toFixed(2)}M → $${(fcf / 1e6).toFixed(2)}M)`);
+                }
               }
             }
           }
+        } else {
+          logger.warn(`   ⚠️ Cash flow data is stale (${latestQ.date}, ${Math.round(daysDiff)} days old) - will request AI extraction`);
         }
       } else {
-        logger.warn(`   ⚠️ No cash flow data for Q2 FCF`);
+        logger.warn(`   ⚠️ No cash flow data available`);
       }
     } catch (err: any) {
-      logger.warn(`   ⚠️ Could not fetch Q2 FCF: ${err.message}`);
+      logger.warn(`   ⚠️ Could not fetch Q2 FCF from FMP: ${err.message}`);
     }
 
     // Margin Trend (עדכון לאחר שיש לנו נתוני Q2)
@@ -721,8 +754,32 @@ EXTRACT THE FOLLOWING DATA:
    - Challenges, headwinds, competitive pressures
    - Areas that missed expectations
 
-⚠️ NOTE: YoY Growth, Free Cash Flow, and Margins are already extracted from Finnhub Metrics API.
-DO NOT extract these - focus only on Guidance, Sentiment, Highlights, and Concerns.
+${needAIExtraction.netMargin || needAIExtraction.operatingMargin || needAIExtraction.fcf ? `
+⚠️ ADDITIONAL REQUIRED EXTRACTIONS (APIs unavailable for this fresh Q${quarter} report):
+${needAIExtraction.netMargin ? `
+5. **Net Margin Q${quarter}** (single number):
+   - Find the Q${quarter} ${year} Net Margin percentage from the earnings slides/press release
+   - Look in quarterly financial tables (NOT TTM/full year)
+   - Return as number (e.g., -7.1 for -7.1%)
+   - If unavailable, return null
+` : ''}${needAIExtraction.operatingMargin ? `
+${needAIExtraction.netMargin ? '6' : '5'}. **Adjusted Operating Margin Q${quarter}** (single number):
+   - Find the Q${quarter} ${year} ADJUSTED (non-GAAP) Operating Margin
+   - This is usually in "Non-GAAP reconciliation" tables
+   - Return as number (e.g., 21.7 for 21.7%)
+   - If unavailable, return null
+` : ''}${needAIExtraction.fcf ? `
+${needAIExtraction.netMargin && needAIExtraction.operatingMargin ? '7' : needAIExtraction.netMargin || needAIExtraction.operatingMargin ? '6' : '5'}. **Free Cash Flow Q${quarter}** (single number):
+   - Find the Q${quarter} ${year} Free Cash Flow from cash flow statement
+   - Usually stated as "Free Cash Flow was $X million"
+   - Return as number in MILLIONS (e.g., 7.8 for $7.8M)
+   - If unavailable, return null
+` : ''}
+IMPORTANT: Extract these ONLY from Q${quarter} ${year} quarterly data, NOT from TTM/annual data!
+` : `
+⚠️ NOTE: YoY Growth, Free Cash Flow, and Margins are already extracted from APIs.
+Focus ONLY on Guidance, Sentiment, Highlights, and Concerns.
+`}
 
 SEARCH QUERY EXAMPLES TO USE:
 - "site:ir.${symbol.toLowerCase()}.com Q${quarter} ${year} earnings"
@@ -747,7 +804,12 @@ OUTPUT FORMAT - Return ONLY this JSON structure:
   "concerns": [
     "First specific risk or challenge mentioned",
     "Second specific risk or challenge mentioned"
-  ]
+  ]${needAIExtraction.netMargin || needAIExtraction.operatingMargin || needAIExtraction.fcf ? `,
+  "quarterlyMetrics": {${needAIExtraction.netMargin ? `
+    "netMarginQ2": -7.1 | null,` : ''}${needAIExtraction.operatingMargin ? `
+    "adjOperatingMarginQ2": 21.7 | null,` : ''}${needAIExtraction.fcf ? `
+    "fcfQ2": 7.8 | null` : ''}
+  }` : ''}
 }
 
 VALIDATION RULES:
@@ -847,6 +909,22 @@ VALIDATION RULES:
       } else {
         logger.warn(`⚠️ No valid concerns found (got ${aiData.concerns?.length || 0})`);
         data.concerns = ["Data not available from IR sources", "Data not available from IR sources"];
+      }
+
+      // ✅ Quarterly Metrics from AI (if FMP was stale)
+      if (aiData.quarterlyMetrics) {
+        if (needAIExtraction.netMargin && aiData.quarterlyMetrics.netMarginQ2 !== null && aiData.quarterlyMetrics.netMarginQ2 !== undefined) {
+          data.margins.netMargin = aiData.quarterlyMetrics.netMarginQ2;
+          logger.info(`📊 Net Margin Q${quarter} (from AI): ${aiData.quarterlyMetrics.netMarginQ2}%`);
+        }
+        if (needAIExtraction.operatingMargin && aiData.quarterlyMetrics.adjOperatingMarginQ2 !== null && aiData.quarterlyMetrics.adjOperatingMarginQ2 !== undefined) {
+          data.margins.operatingMargin = aiData.quarterlyMetrics.adjOperatingMarginQ2;
+          logger.info(`📊 Adj Operating Margin Q${quarter} (from AI): ${aiData.quarterlyMetrics.adjOperatingMarginQ2}%`);
+        }
+        if (needAIExtraction.fcf && aiData.quarterlyMetrics.fcfQ2 !== null && aiData.quarterlyMetrics.fcfQ2 !== undefined) {
+          data.cashFlow.freeCashFlow = aiData.quarterlyMetrics.fcfQ2 * 1e6; // Convert from $M to $
+          logger.info(`📊 Free Cash Flow Q${quarter} (from AI): $${aiData.quarterlyMetrics.fcfQ2}M`);
+        }
       }
 
       logger.info(`✅ AI supplement complete: Guidance=${data.guidance.status}, Sentiment=${data.sentiment.overall}`);
@@ -1041,14 +1119,26 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
     : "N/A";
 
   // ✅ FIX: Safe access with defaults
-  const yoyEpsGrowth = fullData.yoyGrowth?.epsChange?.toFixed(2) || fullData.yoyGrowth?.epsGrowth || "לא זמין";
-  const yoyRevGrowth = fullData.yoyGrowth?.revenueChange?.toFixed(2) || fullData.yoyGrowth?.revenueGrowth || "לא זמין";
-  const netMargin = fullData.margins?.netMargin?.toFixed(2) || "לא זמין";
-  const opMargin = fullData.margins?.operatingMargin?.toFixed(2) || "לא זמין";
-  const fcfStatus = fullData.cashFlow?.freeCashFlow 
-    ? (fullData.cashFlow.freeCashFlow > 0 ? 'חיובי' : 'שלילי')
+  const yoyEpsGrowth = fullData.yoyGrowth?.epsChange !== null && fullData.yoyGrowth?.epsChange !== undefined
+    ? `${fullData.yoyGrowth.epsChange.toFixed(2)}%`
+    : "לא זמין";
+  const yoyRevGrowth = fullData.yoyGrowth?.revenueChange !== null && fullData.yoyGrowth?.revenueChange !== undefined
+    ? `${fullData.yoyGrowth.revenueChange.toFixed(2)}%`
+    : "לא זמין";
+  const netMargin = fullData.margins?.netMargin !== null && fullData.margins?.netMargin !== undefined
+    ? `${fullData.margins.netMargin.toFixed(2)}%`
+    : "לא זמין";
+  const opMargin = fullData.margins?.operatingMargin !== null && fullData.margins?.operatingMargin !== undefined
+    ? `${fullData.margins.operatingMargin.toFixed(2)}%`
+    : "לא זמין";
+
+  // FCF - show dollar amount instead of "חיובי"/"שלילי"
+  const fcfStatus = fullData.cashFlow?.freeCashFlow !== null && fullData.cashFlow?.freeCashFlow !== undefined
+    ? `$${(fullData.cashFlow.freeCashFlow / 1e6).toFixed(2)}M`
     : 'לא זמין';
-  const fcfTrend = fullData.cashFlow?.trendDescription ? ` (${fullData.cashFlow.trendDescription})` : '';
+  const fcfTrend = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
+    ? ` (${fullData.cashFlow.yoyChange > 0 ? '+' : ''}${fullData.cashFlow.yoyChange.toFixed(1)}% YoY)`
+    : '';
 
 const prompt = `
 אתה Mira, אנליסט פיננסי AI מומחה.
@@ -1064,8 +1154,8 @@ EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${e
 הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
 תחזית: ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
 Free Cash Flow: ${fcfStatus}${fcfTrend}
-YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
-שולי רווח: Net ${netMargin}% | Operating ${opMargin}%
+YoY Growth: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth}
+שולי רווח: Net ${netMargin} | Operating ${opMargin}
 סנטימנט: ${fullData.sentiment.overall}${fullData.sentiment.reasoning ? ` - ${fullData.sentiment.reasoning}` : ''}
 
 ניקוד: ${miraScore.totalScore}
