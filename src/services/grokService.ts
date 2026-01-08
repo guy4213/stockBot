@@ -525,24 +525,40 @@ CRITICAL INSTRUCTIONS:
    - "${companyName} Announces ${quarter}Q Earnings"
    - "${companyName} Reports Quarterly Financial Results"
 
-EXTRACT ONLY THESE 4 ITEMS:
+EXTRACT THE FOLLOWING DATA:
 
 1. **Guidance Status**: Did management raise/lower/maintain guidance for next quarter or full year?
    - Look for phrases: "raising full-year guidance", "updating outlook", "reaffirming guidance", "increasing forecast"
    - Return: "raised" | "lowered" | "maintained" | "unavailable"
-   
+
 2. **Management Sentiment**: Overall tone from CEO/CFO in prepared remarks
    - Positive: Optimistic language, strong growth emphasis, exceeding expectations
    - Neutral: Stable outlook, meeting expectations, balanced tone
    - Negative: Challenges emphasized, cautious outlook, disappointing results
    - Return: "positive" | "neutral" | "negative"
 
-3. **Key Highlights** (exactly 2 bullet points):
+3. **YoY Growth** (Year-over-Year comparisons):
+   - EPS Change: % change from same quarter last year
+   - Revenue Change: % change from same quarter last year
+   - Return as percentages (e.g., 15.5 for 15.5% growth, -5.2 for 5.2% decline)
+   - If not available, return null
+
+4. **Free Cash Flow**:
+   - Current quarter FCF in dollars (e.g., 125000000 for $125M)
+   - Look in cash flow statement or mention in press release
+   - If not available, return null
+
+5. **Profit Margins**:
+   - Net Margin: Net income / Revenue * 100 (as %)
+   - Operating Margin: Operating income / Revenue * 100 (as %)
+   - If not available, return null
+
+6. **Key Highlights** (exactly 2 bullet points):
    - Major achievements from the quarter
    - Record metrics, product launches, market expansions
    - Cost savings, margin improvements
-   
-4. **Key Concerns** (exactly 2 bullet points):
+
+7. **Key Concerns** (exactly 2 bullet points):
    - Risks mentioned by management
    - Challenges, headwinds, competitive pressures
    - Areas that missed expectations
@@ -555,11 +571,24 @@ SEARCH QUERY EXAMPLES TO USE:
 
 OUTPUT FORMAT - Return ONLY this JSON structure:
 {
-  "guidance": { 
+  "guidance": {
     "status": "raised" | "lowered" | "maintained" | "unavailable"
   },
-  "sentiment": { 
+  "sentiment": {
     "overall": "positive" | "neutral" | "negative"
+  },
+  "yoyGrowth": {
+    "epsChange": <number or null>,
+    "revenueChange": <number or null>
+  },
+  "cashFlow": {
+    "freeCashFlow": <number or null>,
+    "yoyChange": <number or null>
+  },
+  "margins": {
+    "netMargin": <number or null>,
+    "operatingMargin": <number or null>,
+    "trend": "improving" | "stable" | "declining" | "unavailable"
   },
   "highlights": [
     "First specific achievement or positive metric",
@@ -608,7 +637,7 @@ VALIDATION RULES:
       cleanedRes = cleanedRes.trim();
 
       const aiData = JSON.parse(cleanedRes);
-      
+
       // ✅ מיזוג עם הנתונים מ-Finnhub + אימות
       if (aiData.guidance && aiData.guidance.status) {
         data.guidance = aiData.guidance;
@@ -616,14 +645,54 @@ VALIDATION RULES:
       } else {
         logger.warn(`⚠️ No valid guidance found`);
       }
-      
+
       if (aiData.sentiment && aiData.sentiment.overall) {
         data.sentiment = aiData.sentiment;
         logger.info(`💭 Sentiment: ${data.sentiment.overall}`);
       } else {
         logger.warn(`⚠️ No valid sentiment found`);
       }
-      
+
+      // ✅ YoY Growth
+      if (aiData.yoyGrowth) {
+        if (aiData.yoyGrowth.epsChange !== null && aiData.yoyGrowth.epsChange !== undefined) {
+          data.yoyGrowth.epsChange = aiData.yoyGrowth.epsChange;
+          logger.info(`📊 YoY EPS Growth: ${data.yoyGrowth.epsChange}%`);
+        }
+        if (aiData.yoyGrowth.revenueChange !== null && aiData.yoyGrowth.revenueChange !== undefined) {
+          data.yoyGrowth.revenueChange = aiData.yoyGrowth.revenueChange;
+          logger.info(`📊 YoY Revenue Growth: ${data.yoyGrowth.revenueChange}%`);
+        }
+      }
+
+      // ✅ Free Cash Flow
+      if (aiData.cashFlow) {
+        if (aiData.cashFlow.freeCashFlow !== null && aiData.cashFlow.freeCashFlow !== undefined) {
+          data.cashFlow.freeCashFlow = aiData.cashFlow.freeCashFlow;
+          logger.info(`💰 Free Cash Flow: $${(data.cashFlow.freeCashFlow / 1e6).toFixed(2)}M`);
+        }
+        if (aiData.cashFlow.yoyChange !== null && aiData.cashFlow.yoyChange !== undefined) {
+          data.cashFlow.yoyChange = aiData.cashFlow.yoyChange;
+          logger.info(`📊 FCF YoY Change: ${data.cashFlow.yoyChange}%`);
+        }
+      }
+
+      // ✅ Margins
+      if (aiData.margins) {
+        if (aiData.margins.netMargin !== null && aiData.margins.netMargin !== undefined) {
+          data.margins.netMargin = aiData.margins.netMargin;
+          logger.info(`📐 Net Margin: ${data.margins.netMargin}%`);
+        }
+        if (aiData.margins.operatingMargin !== null && aiData.margins.operatingMargin !== undefined) {
+          data.margins.operatingMargin = aiData.margins.operatingMargin;
+          logger.info(`📐 Operating Margin: ${data.margins.operatingMargin}%`);
+        }
+        if (aiData.margins.trend) {
+          data.margins.trend = aiData.margins.trend;
+          logger.info(`📈 Margin Trend: ${data.margins.trend}`);
+        }
+      }
+
       if (aiData.highlights && Array.isArray(aiData.highlights) && aiData.highlights.length >= 2) {
         data.highlights = aiData.highlights.slice(0, 2); // לקחת רק 2 ראשונים
         logger.info(`✨ Highlights: ${data.highlights.join(' | ')}`);
@@ -631,7 +700,7 @@ VALIDATION RULES:
         logger.warn(`⚠️ No valid highlights found (got ${aiData.highlights?.length || 0})`);
         data.highlights = ["Data not available from IR sources", "Data not available from IR sources"];
       }
-      
+
       if (aiData.concerns && Array.isArray(aiData.concerns) && aiData.concerns.length >= 2) {
         data.concerns = aiData.concerns.slice(0, 2); // לקחת רק 2 ראשונים
         logger.info(`⚠️ Concerns: ${data.concerns.join(' | ')}`);
@@ -640,7 +709,7 @@ VALIDATION RULES:
         data.concerns = ["Data not available from IR sources", "Data not available from IR sources"];
       }
 
-      logger.info(`✅ AI supplement complete: Guidance=${data.guidance.status}, Sentiment=${data.sentiment.overall}`);
+      logger.info(`✅ AI supplement complete: Guidance=${data.guidance.status}, Sentiment=${data.sentiment.overall}, YoY=${data.yoyGrowth.epsChange}%/${data.yoyGrowth.revenueChange}%, FCF=$${data.cashFlow.freeCashFlow ? (data.cashFlow.freeCashFlow / 1e6).toFixed(0) + 'M' : 'N/A'}`);
 
     } catch (e: any) {
       logger.error(`❌ AI supplement failed for ${symbol}:`, e.message);

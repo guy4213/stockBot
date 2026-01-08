@@ -123,40 +123,25 @@ export interface Revenue {
 export interface YoYGrowth {
   epsChange: number | null;
   revenueChange: number | null;
-  source: string;
 }
 
 export interface CashFlow {
-  currentFCF: number | null;
-  priorYearFCF: number | null;
+  freeCashFlow: number | null;
   yoyChange: number | null;
-  source: string;
 }
 
 export interface Margins {
-  grossMargin: number | null;
-  operatingMargin: number | null;
   netMargin: number | null;
-  changeFromPrior: number | null;
-  trend: "improving" | "stable" | "declining" | null;
-  source: string;
+  operatingMargin: number | null;
+  trend: "improving" | "stable" | "declining" | "unavailable";
 }
 
 export interface Guidance {
   status: "raised" | "maintained" | "lowered" | "unavailable";
-  details: string | null;
-  analystExpectation: string | null;
-  beat: boolean | null;
-  source: string;
 }
 
 export interface Sentiment {
   overall: "positive" | "neutral" | "negative";
-  score: number; // -1.0 to +1.0
-  socialMediaMentions: number;
-  analystReactions: string[];
-  priceChange: number | null;
-  sources: string[];
 }
 
 export interface DataQuality {
