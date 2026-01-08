@@ -2,25 +2,25 @@
   "date": "2026-01-08",
   "stocks": [
     {
-      "symbol": "WBA",
-      "companyName": "Walgreens Boots Alliance, Inc.",
+      "symbol": "NEOG",
+      "companyName": "Neogen Corporation",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 10369421068,
-      "volume": 452081061,
+      "marketCap": 2106710179,
+      "volume": 21696443,
       "confidence": 100,
       "sources": [
         "Finnhub",
         "FMP"
       ],
-      "quarter": 1,
+      "quarter": 2,
       "fiscalYear": 2026,
       "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": 0.4545,
-        "revenueActual": null,
-        "revenueEstimate": 39113684200
+        "epsActual": 0.1,
+        "epsEstimate": 0.0561,
+        "revenueActual": 224690000,
+        "revenueEstimate": 212002920
       }
     },
     {
@@ -51,8 +51,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 1006682328,
-      "volume": 5013246,
+      "marketCap": 1025718590,
+      "volume": 5995070,
       "confidence": 100,
       "sources": [
         "Finnhub",

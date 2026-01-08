@@ -2,7 +2,7 @@ import axios, { AxiosError } from "axios";
 import dotenv from "dotenv";
 import logger from "../utils/logger";
 // ✅ שימוש ב-FMP לקבלת נתונים מדויקים במקום AI
-import { getQuote } from "./stockService"; 
+import { getEarnings, getQuote } from "./stockService"; 
 import {
   GrokResponse,
   GrokMessage,
@@ -124,11 +124,6 @@ async function checkFinnhubUpdates(symbol: string, date: string): Promise<boolea
     }
 }
 
-async function verifyEarningsDate(symbol: string, date: string): Promise<boolean> {
-    // השארנו את זה ככה למקרה שנרצה להחזיר
-    return true; 
-}
-
 export async function morningIntelligence(date: string): Promise<MorningIntelligenceResponse> {
   logger.info(`🌅 Running Morning Intelligence (Hybrid) for ${date}...`);
 
@@ -155,22 +150,34 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
     if (processedSymbols.has(symbol)) continue;
     processedSymbols.add(symbol);
 
-    if (symbol.includes(".") || symbol.length > 5 || !entry.hour) continue;
+ 
 
     try {
+      // ✅ שלב 1: בדיקת שווי שוק ונפח (FMP Quote)
       const quote = await getQuote(symbol);
       
       if (!quote || !quote.marketCap || quote.marketCap < MIN_MARKET_CAP) {
+          logger.info(`⚠️ ${symbol} - Market cap too low ($${quote?.marketCap ? (quote.marketCap / 1e6).toFixed(1) + 'M' : 'N/A'}). Skipping.`);
           continue;
       }
-   if (!quote || !quote.volume || quote.volume  < MIN_VOLUME) {
+      
+      if (!quote || !quote.volume || quote.volume < MIN_VOLUME) {
+          logger.info(`⚠️ ${symbol} - Volume too low (${quote?.volume ? (quote.volume / 1e6).toFixed(1) + 'M' : 'N/A'}). Skipping.`);
           continue;
       }
+
+      // ✅ שלב 2: אימות תאריך דיווח (רק אחרי שעבר שווי+נפח!)
+      const isDateValid = await verifyEarningsDate(symbol, date);
+      if (!isDateValid) {
+          logger.warn(`⚠️ ${symbol} - Earnings date mismatch with FMP. Skipping.`);
+          continue;
+      }
+      
       let reportType: "BMO" | "AMC" = entry.hour.toLowerCase() === 'bmo' ? "BMO" : "AMC";
       let windowStart = reportType === "BMO" ? "07:00" : "16:05";
       let windowEnd = reportType === "BMO" ? "09:30" : "20:00";
       
-      logger.info(` 💎 Found: ${symbol} (${quote.name}) | Q${entry.quarter} ${entry.year} | Cap: $${(quote.marketCap / 1e9).toFixed(2)}B|Volume:$${(quote.volume / 1e9).toFixed(2)}B`);
+      logger.info(`💎 Found: ${symbol} (${quote.name}) | Q${entry.quarter} ${entry.year} | Cap: $${(quote.marketCap / 1e9).toFixed(2)}B | Volume: ${(quote.volume / 1e6).toFixed(1)}M`);
 
       validatedStocks.push({
           symbol: symbol,
@@ -203,6 +210,52 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
   validatedStocks.sort((a, b) => b.marketCap - a.marketCap);
   logger.info(`✅ Final List: ${validatedStocks.length} stocks.`);
   return { date, stocks: validatedStocks };
+}
+
+// ============================================
+// Helper: Verify Earnings Date with FMP
+// ============================================
+async function verifyEarningsDate(symbol: string, expectedDate: string): Promise<boolean> {
+    try {
+        logger.info(`🔍 Verifying earnings date for ${symbol} (expected: ${expectedDate})`);
+        
+        const earnings = await getEarnings(symbol);
+        
+        if (!earnings || earnings.length === 0) {
+            logger.warn(`⚠️ No earnings data from FMP for ${symbol}`);
+            return false; // אין נתונים - לא מאומת
+        }
+
+        // ✅ מיון לפי lastUpdated (הכי חדש ראשון)
+        const sortedEarnings = earnings.sort((a, b) => 
+            new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime()
+        );
+
+        // ✅ קח את 3 הרשומות העדכניות ביותר
+        const recentEarnings = sortedEarnings.slice(0, 3);
+        
+        logger.info(`📊 Latest 3 earnings for ${symbol}:`);
+        recentEarnings.forEach((e, i) => {
+            logger.info(`  ${i + 1}. Date: ${e.date} | Last Updated: ${e.lastUpdated}`);
+        });
+
+        // ✅ בדוק אם אחד מהם תואם לתאריך הצפוי
+        const matchingEarning = recentEarnings.find(e => e.date === expectedDate);
+
+        if (matchingEarning) {
+            logger.info(`✅ MATCH FOUND: ${symbol} has earnings on ${expectedDate} (updated: ${matchingEarning.lastUpdated})`);
+            return true;
+        }
+
+        // ✅ אם לא מצאנו התאמה - הדפס את התאריך הקרוב ביותר
+        const closestDate = recentEarnings[0].date;
+        logger.warn(`❌ NO MATCH: ${symbol} next earnings is ${closestDate}, not ${expectedDate}`);
+        return false;
+
+    } catch (error: any) {
+        logger.error(`❌ Error verifying earnings date for ${symbol}:`, error.message);
+        return false; // במקרה של שגיאה - לא מאומת
+    }
 }
 
 // ============================================
