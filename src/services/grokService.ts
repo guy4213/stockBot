@@ -609,22 +609,28 @@ VALIDATION RULES:
 
       logger.info(`🤖 Calling AI to supplement with guidance & sentiment...`);
       logger.info(`🔍 AI will search: ir.${symbol.toLowerCase()}.com and ${companyName} Investor Relations`);
-      
+
       const aiRes = await callGrokAPI(
         [
-          { 
-            role: "system", 
-            content: "You are a financial data extraction API specialized in parsing official company investor relations documents. You MUST prioritize IR websites over news articles. Return ONLY valid JSON with no markdown formatting or explanations." 
+          {
+            role: "system",
+            content: "You are a financial data extraction API specialized in parsing official company investor relations documents. You MUST prioritize IR websites over news articles. Return ONLY valid JSON with no markdown formatting or explanations."
           },
-          { 
-            role: "user", 
-            content: supplementPrompt 
+          {
+            role: "user",
+            content: supplementPrompt
           }
         ],
         0.1,  // ✅ טמפרטורה נמוכה מאוד - פחות "יצירתיות"
         2500,
         true  // ✅ Enable web search
       );
+
+      // 🛑 DEBUG: Print full AI response
+      logger.info(`📥 ===== FULL AI RESPONSE (RAW) =====`);
+      logger.info(`Length: ${aiRes.length} characters`);
+      logger.info(aiRes);
+      logger.info(`📥 ===== END OF RAW RESPONSE =====`);
 
       let cleanedRes = aiRes.trim();
       // ✅ נקה markdown בכל הצורות האפשריות
@@ -636,7 +642,17 @@ VALIDATION RULES:
       }
       cleanedRes = cleanedRes.trim();
 
+      // 🛑 DEBUG: Print cleaned response
+      logger.info(`📥 ===== CLEANED RESPONSE =====`);
+      logger.info(cleanedRes);
+      logger.info(`📥 ===== END OF CLEANED RESPONSE =====`);
+
       const aiData = JSON.parse(cleanedRes);
+
+      // 🛑 DEBUG: Print parsed JSON
+      logger.info(`📥 ===== PARSED JSON OBJECT =====`);
+      logger.info(JSON.stringify(aiData, null, 2));
+      logger.info(`📥 ===== END OF PARSED JSON =====`);
 
       // ✅ מיזוג עם הנתונים מ-Finnhub + אימות
       if (aiData.guidance && aiData.guidance.status) {
@@ -803,20 +819,26 @@ CRITICAL RULES:
   try {
     const res = await callGrokAPI(
       [
-        { 
-          role: "system", 
-          content: "You are a data extraction API specialized in official investor relations documents. Return ONLY valid JSON. No markdown. No explanations. Prioritize IR websites." 
-        }, 
-        { 
-          role: "user", 
-          content: extractionPrompt 
+        {
+          role: "system",
+          content: "You are a data extraction API specialized in official investor relations documents. Return ONLY valid JSON. No markdown. No explanations. Prioritize IR websites."
+        },
+        {
+          role: "user",
+          content: extractionPrompt
         }
-      ], 
+      ],
       0.1,
-      4000, 
+      4000,
       true
     );
-    
+
+    // 🛑 DEBUG: Print full AI response (FALLBACK MODE)
+    logger.info(`📥 ===== FALLBACK MODE: FULL AI RESPONSE (RAW) =====`);
+    logger.info(`Length: ${res.length} characters`);
+    logger.info(res);
+    logger.info(`📥 ===== END OF RAW RESPONSE =====`);
+
     // ✅ נקה markdown אם יש
     let cleanedRes = res.trim();
     if (cleanedRes.startsWith('```json')) {
@@ -826,8 +848,18 @@ CRITICAL RULES:
       cleanedRes = cleanedRes.replace(/^```\n?/g, '').replace(/```\n?$/g, '');
     }
     cleanedRes = cleanedRes.trim();
-    
+
+    // 🛑 DEBUG: Print cleaned response
+    logger.info(`📥 ===== FALLBACK MODE: CLEANED RESPONSE =====`);
+    logger.info(cleanedRes);
+    logger.info(`📥 ===== END OF CLEANED RESPONSE =====`);
+
     const data = JSON.parse(cleanedRes);
+
+    // 🛑 DEBUG: Print parsed JSON
+    logger.info(`📥 ===== FALLBACK MODE: PARSED JSON OBJECT =====`);
+    logger.info(JSON.stringify(data, null, 2));
+    logger.info(`📥 ===== END OF PARSED JSON =====`);
     
     // 🛑 FORCE SYMBOL INJECTION (למקרה שה-AI שכח)
     data.symbol = symbol;
