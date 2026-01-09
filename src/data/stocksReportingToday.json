@@ -61,9 +61,9 @@
       "quarter": 2,
       "fiscalYear": 2026,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": -0.41,
         "epsEstimate": -0.204,
-        "revenueActual": null,
+        "revenueActual": 217510000,
         "revenueEstimate": 215168704
       }
     }

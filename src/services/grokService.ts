@@ -416,6 +416,14 @@ function calculateTradeParams(price: number, classification: string) {
 // ============================================
 // 4. FULL EXTRACTION (FORCE SYMBOL) 🛑
 // ============================================
+//TO DO:
+//1 avoid sending report more than once
+// 2  json format fixing :
+//   "quarterlyMetrics": {
+  //   "netMarginQ2": -7.1,
+  //   "adjOperatingMarginQ2": 21.7,
+  //   "fcfQ2": null
+  // }
 export async function fullExtraction(
   symbol: string, 
   companyName: string, 
