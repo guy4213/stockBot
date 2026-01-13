@@ -278,7 +278,7 @@
 // export default app;
 import express from "express";
 import dotenv from "dotenv";
-import mainRoutes from "./routes/mainRoutes";
+// import mainRoutes from "./routes/mainRoutes";
 import healthCheckRoutes from "./routes/healthCheckRoutes";
 import { errorHandler, requestLogger } from "./middleware/errorHandler"; // הוספתי requestLogger כי הוא היה בקוד שלך
 import logger from "./utils/logger";
@@ -297,7 +297,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
 
 // Routes
-app.use("/api/main", mainRoutes);
+// app.use("/api/main", mainRoutes);
 app.use("/api/healthCheck", healthCheckRoutes);
 
 // Error Handling
