@@ -2,6 +2,28 @@
   "date": "2026-01-13",
   "stocks": [
     {
+      "symbol": "BK",
+      "companyName": "The Bank of New York Mellon Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 84142263187,
+      "volume": 3015952,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 2.0432,
+        "revenueActual": null,
+        "revenueEstimate": 5293168115
+      }
+    },
+    {
       "symbol": "DAL",
       "companyName": "Delta Air Lines, Inc.",
       "reportType": "BMO",
@@ -18,9 +40,31 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 1.5935,
+        "epsEstimate": 1.5422,
         "revenueActual": null,
-        "revenueEstimate": 14906583758
+        "revenueEstimate": 14839394346
+      }
+    },
+    {
+      "symbol": "CNXC",
+      "companyName": "Concentrix Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 2573464995,
+      "volume": 1667630,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 2.9682,
+        "revenueActual": null,
+        "revenueEstimate": 2590068660
       }
     }
   ]

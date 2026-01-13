@@ -148,7 +148,7 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
 
   const validatedStocks: ExtendedStock[] = [];
   const MIN_MARKET_CAP = 300_000_000; 
-  const MIN_VOLUME = 5_000_000; 
+  const MIN_VOLUME = 1_000_000; 
   const processedSymbols = new Set<string>();
 
   for (const entry of rawList) {
