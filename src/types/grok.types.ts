@@ -69,8 +69,8 @@ export interface Stock {
   fiscalYear?: number;
   // ✅ הוסף את זה
   finnhubData?: {
-    epsActual: number | null;
-    epsEstimate: number | null;
+    epsActual: number | null|undefined;
+    epsEstimate: number | null|undefined;
     revenueActual: number | null;
     revenueEstimate: number | null;
   };
@@ -98,7 +98,7 @@ export interface MiniCheckResponse {
 // ============================================
 
 export interface MarketData {
-  price: number ;
+  price: number|null ;
   marketCap: number | null;
   volume: number | null;
   source: string;

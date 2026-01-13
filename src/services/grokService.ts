@@ -91,12 +91,14 @@ function extractJSON(text: string): string {
 // ============================================
 // 1. MORNING INTELLIGENCE
 // ============================================
-interface FinnhubEarningsEntry { 
+interface FinnhubEarningsEntry {
+    revenueEstimate: null;
+    epsEstimate: number | null | undefined; 
     symbol: string; 
     hour: string; 
     quarter: number; 
     year: number;
-    epsActual?: number | null;
+    epsActual?: number | null|undefined;
     revenueActual?: number | null;
 }
 
@@ -199,10 +201,10 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
           fiscalYear: entry.year,
           // ✅ שמור את הנתונים מ-Finnhub!
           finnhubData: {
-              epsActual: entry.epsActual,
-              epsEstimate: entry.epsEstimate,
-              revenueActual: entry.revenueActual,
-              revenueEstimate: entry.revenueEstimate
+              epsActual: entry.epsActual ?? null,
+              epsEstimate: entry.epsEstimate ?? null,
+              revenueActual: entry.revenueActual ?? null,
+              revenueEstimate: entry.revenueEstimate ?? null
           }
       });
       
@@ -431,7 +433,7 @@ export async function fullExtraction(
   currentPrice?: number,
   finnhubData?: {
     epsActual: number | null;
-    epsEstimate: number | null;
+    epsEstimate: number | null|undefined;
     revenueActual: number | null;
     revenueEstimate: number | null;
   }
@@ -469,12 +471,16 @@ export async function fullExtraction(
       eps: {
         actual: epsActual,
         estimate: epsEstimate,
-        beatPercent: epsBeatPercent
+        beatPercent: epsBeatPercent,
+        beat: null,
+        source: ""
       },
       revenue: {
         actual: revenueActual,
         estimate: revenueEstimate,
-        beatPercent: revBeatPercent
+        beatPercent: revBeatPercent,
+        beat: null,
+        source: ""
       },
       guidance: {
         status: "unavailable",
@@ -498,10 +504,17 @@ export async function fullExtraction(
         reasoning: null
       },
       marketData: {
-        price: currentPrice || null
+        price: currentPrice || null,
+        marketCap: null,
+        volume: null,
+        source: ""
       },
       highlights: [],
-      concerns: []
+      concerns: [],
+      reportTime: "",
+      managementCommentary: null,
+      dataQuality: "high" as any,
+      aiRecommendation: "buy" as any
     };
 
     // ✅ תחילה - נסה לחלץ YoY/FCF/Margins מ-Finnhub Metrics (הכי אמין!)
@@ -1116,7 +1129,7 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   const tradeParams = calculateTradeParams(currentPrice, miraScore.classification);
 
   // ✅ FIX: Handle undefined/null values with fallback
-  const epsDeviation = fullData.eps.estimate
+  const epsDeviation = fullData.eps.estimate && fullData.eps.actual !== null
     ? (((fullData.eps.actual - fullData.eps.estimate) / Math.abs(fullData.eps.estimate)) * 100).toFixed(2)
     : "N/A";
   const revenueDeviation = fullData.revenue.estimate
