@@ -207,10 +207,8 @@ let activeProcessor: StockProcessor | null = null;
 
 export const runDailyCheck = async (req?: Request, res?: Response) => {
   try {
-    const d = new Date();
-d.setDate(d.getDate() - 1);
-    // const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-const today = d.toISOString().split("T")[0]; // YYYY-MM-DD אתמול
+
+    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
 
 
     logger.info(`🚀 Starting Daily Check Process for ${today}`);

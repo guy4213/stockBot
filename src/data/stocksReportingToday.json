@@ -1,70 +1,26 @@
 {
-  "date": "2026-01-08",
+  "date": "2026-01-13",
   "stocks": [
     {
-      "symbol": "NEOG",
-      "companyName": "Neogen Corporation",
+      "symbol": "DAL",
+      "companyName": "Delta Air Lines, Inc.",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 2109969658,
-      "volume": 22681254,
+      "marketCap": 46379945411,
+      "volume": 9197198,
       "confidence": 100,
       "sources": [
         "Finnhub",
         "FMP"
       ],
-      "quarter": 2,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": 0.1,
-        "epsEstimate": 0.0561,
-        "revenueActual": 224690000,
-        "revenueEstimate": 212002920
-      }
-    },
-    {
-      "symbol": "ETWO",
-      "companyName": "E2open Parent Holdings, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:05",
-      "windowEnd": "20:00",
-      "marketCap": 1032451200,
-      "volume": 26635229,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 3,
-      "fiscalYear": 2026,
+      "quarter": 4,
+      "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 0.0459,
+        "epsEstimate": 1.5935,
         "revenueActual": null,
-        "revenueEstimate": 155334096
-      }
-    },
-    {
-      "symbol": "TLRY",
-      "companyName": "Tilray Brands, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:05",
-      "windowEnd": "20:00",
-      "marketCap": 1022359250,
-      "volume": 7294642,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 2,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": -0.41,
-        "epsEstimate": -0.204,
-        "revenueActual": 217510000,
-        "revenueEstimate": 215168704
+        "revenueEstimate": 14906583758
       }
     }
   ]
