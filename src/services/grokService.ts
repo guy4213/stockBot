@@ -532,6 +532,15 @@ function validateAIResponse(aiData: any, symbol: string): { isValid: boolean; re
     !aiData.highlights[0].toLowerCase().includes("not available") &&
     !aiData.highlights[0].toLowerCase().includes("data not available");
 
+  // 🔍 DEBUG: Log validation checks
+  logger.info(`🔍 VALIDATION for ${symbol}:`);
+  logger.info(`   - hasMetrics: ${hasMetrics}`);
+  logger.info(`   - hasPdfUrl: ${hasPdfUrl}`);
+  logger.info(`   - hasRealHighlights: ${hasRealHighlights}`);
+  if (aiData.pdfMetrics) {
+    logger.info(`   - pdfMetrics values: rev=${aiData.pdfMetrics.revenueYoY}, net=${aiData.pdfMetrics.netMargin}, op=${aiData.pdfMetrics.efficiencyRatioOrOperatingMargin}, cash=${aiData.pdfMetrics.cashFromOperations}`);
+  }
+
   if (!hasMetrics && !hasPdfUrl) {
     return {
       isValid: false,
@@ -1322,7 +1331,14 @@ Return ONLY valid JSON with no markdown formatting or explanations.`
       }
 
       // ✅ PDF Metrics - VALIDATION & OVERRIDE of API data
+      logger.info(`🔍 Checking PDF Metrics in AI response...`);
+      logger.info(`   pdfMetrics object: ${aiData.pdfMetrics ? 'EXISTS' : 'NULL/UNDEFINED'}`);
       if (aiData.pdfMetrics) {
+        logger.info(`   - revenueYoY: ${aiData.pdfMetrics.revenueYoY}`);
+        logger.info(`   - netMargin: ${aiData.pdfMetrics.netMargin}`);
+        logger.info(`   - efficiencyRatioOrOperatingMargin: ${aiData.pdfMetrics.efficiencyRatioOrOperatingMargin}`);
+        logger.info(`   - cashFromOperations: ${aiData.pdfMetrics.cashFromOperations}`);
+
         logger.info(`📄 ===== PDF METRICS (for validation) =====`);
 
         // 1. Revenue YoY Growth - Compare with API calculation
