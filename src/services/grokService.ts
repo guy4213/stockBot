@@ -986,56 +986,72 @@ EXTRACT THE FOLLOWING DATA:
    - Challenges, headwinds, competitive pressures
    - Areas that missed expectations
 
-${needAIExtraction.netMargin || needAIExtraction.operatingMargin || needAIExtraction.fcf ? `
-⚠️ ADDITIONAL REQUIRED EXTRACTIONS (APIs unavailable for this fresh Q${q} report):
-${needAIExtraction.netMargin ? `
-5. **Net Margin Q${q}** (single number):
-   - Find the Q${q} ${yr} Net Margin percentage from the earnings slides/press release
-   - Look in quarterly financial tables (NOT TTM/full year)
-   - Return as number (e.g., -7.1 for -7.1%)
-   - If unavailable, return null
-` : ''}${needAIExtraction.operatingMargin ? `
-${needAIExtraction.netMargin ? '6' : '5'}. **Adjusted Operating Margin Q${q}** (single number):
-   - Find the Q${q} ${yr} ADJUSTED (non-GAAP) Operating Margin
-   - This is usually in "Non-GAAP reconciliation" tables
-   - Return as number (e.g., 21.7 for 21.7%)
-   - If unavailable, return null
-` : ''}${needAIExtraction.fcf ? `
-${needAIExtraction.netMargin && needAIExtraction.operatingMargin ? '7' : needAIExtraction.netMargin || needAIExtraction.operatingMargin ? '6' : '5'}. **Free Cash Flow Q${q}** (single number):
+⚠️ **MANDATORY PDF EXTRACTION** (for validation and override of API data):
 
-   חפש Free Cash Flow Q${q} בדיוק באחת מהצורות האלה:
+**STEP 1: Find the Quarterly Comparison Table in the PDF**
+This is CRITICAL! Look for a table showing:
+- Column 1: "Q${q} ${yr}" or "4Q25" or "Quarter Ended [date]"
+- Column 2: "Q${q} ${yr - 1}" or "4Q24" (prior year same quarter)
+This table is usually on pages 5-15 of the earnings presentation or press release.
 
-   a) **ישיר (הכי נפוץ)**:
-      - "Free Cash Flow was $X million"
-      - "FCF: $X.XM"
-      - "Generated $X.X million in free cash flow"
+**STEP 2: Extract ALL of the following metrics (MANDATORY, not optional!):**
 
-   b) **חישוב מטבלה**:
-      - Cash Flow Statement → "Operating Cash Flow" MINUS "Capital Expenditures"
-      - Example: OCF $15.2M - CapEx $7.4M = FCF $7.8M
+5. **Revenue YoY Growth** (MANDATORY):
+   a) Find "Total Revenue" or "Net Interest Income" (for banks) or "Total Income":
+      - Q${q} ${yr}: $X.X billion
+      - Q${q} ${yr - 1}: $Y.Y billion
+   b) Calculate: ((current - prior) / prior) * 100
+   c) Or the PDF states "up X%" or "increased X%" - use that!
+   d) Return as number (e.g., 7.0 for +7%, -2.5 for -2.5%)
 
-   c) **מ-PDF Slides** (חפש בעמודים 10-15):
-      - "Q${q} ${yr} Financial Highlights"
-      - "Cash Flow Summary"
-      - Look for table row "Free Cash Flow"
+   ⚠️ CRITICAL: Must be QUARTERLY comparison, NOT "Full Year" or "TTM"!
+   ⚠️ If table shows "Total revenue up 7%" → return 7.0
 
-   d) **מ-Press Release**:
-      - Section: "Cash Flow" or "Liquidity"
-      - Usually in second half of document
+6. **Net Margin Q${q}** (MANDATORY - calculate it):
+   a) From the quarterly table, find:
+      - Net Income Q${q} ${yr}: $A.A billion
+      - Revenue Q${q} ${yr}: $B.B billion
+   b) Calculate: (Net Income / Revenue) * 100
+   c) Return as number (e.g., 17.5 for 17.5%)
+   d) For banks, this is usually 15-20%
 
-   ⚠️ **חשוב מאוד**:
-   - ✅ CORRECT: "Q${q} FCF: $7.8M" (quarterly)
-   - ❌ WRONG: "FY ${yr} FCF: $30M" (annual) ← התעלם מזה!
-   - ❌ WRONG: "TTM FCF" ← התעלם מזה!
+   ⚠️ Must use Q${q} ${yr} quarterly numbers, NOT TTM!
 
-   - Return as number in MILLIONS (e.g., 7.8 for $7.8M)
-   - If unavailable after checking ALL sources above, return null
-` : ''}
-IMPORTANT: Extract these ONLY from Q${q} ${yr} quarterly data, NOT from TTM/annual data!
-` : `
-⚠️ NOTE: YoY Growth, Free Cash Flow, and Margins are already extracted from APIs.
-Focus ONLY on Guidance, Sentiment, Highlights, and Concerns.
-`}
+7. **Operating Margin OR Efficiency Ratio** (MANDATORY):
+   - **For BANKS**: Look for "Efficiency Ratio" (usually 55-70%)
+     * This is: (Noninterest Expense / Total Revenue) * 100
+     * The PDF usually shows this explicitly
+   - **For other companies**: Look for "Operating Margin" or "EBIT Margin"
+   - Return as number (e.g., 62.5 for 62.5% efficiency ratio)
+
+   ⚠️ For banks, return efficiency ratio, NOT operating margin!
+
+8. **Cash from Operations Q${q}** (MANDATORY):
+   a) Look for "Cash Flow Statement" or "Cash Flow Summary" in the PDF
+   b) Find "Cash from Operating Activities" or "Operating Cash Flow"
+      - Q${q} ${yr}: $X.X billion
+   c) Return as number in MILLIONS (e.g., 3500 for $3.5B)
+
+   OR if available:
+
+   **Free Cash Flow Q${q}**:
+   - "Free Cash Flow": $X.X billion (quarterly)
+   - OR calculate: Operating Cash Flow - Capital Expenditures
+   - Return as number in MILLIONS
+
+   ⚠️ CRITICAL:
+   - ✅ CORRECT: "Q${q} Operating cash flow: $3.5B" → return 3500
+   - ❌ WRONG: "Full Year ${yr} cash flow" ← התעלם מזה!
+   - ❌ WRONG: "TTM" ← התעלם מזה!
+   - If FCF not available, return Operating Cash Flow instead
+
+**SUMMARY - You MUST extract ALL 4 metrics above (5-8):**
+1. Revenue YoY Growth (quarterly comparison)
+2. Net Margin (calculate from Net Income / Revenue)
+3. Operating Margin or Efficiency Ratio (for banks: Efficiency Ratio)
+4. Cash from Operations or FCF (quarterly)
+
+These are MANDATORY extractions from the PDF to validate/override API data!
 
 SEARCH QUERY EXAMPLES TO USE (use COMPANY NAME, not ticker):
 1. First, find the IR page:
@@ -1066,12 +1082,13 @@ OUTPUT FORMAT - Return ONLY this JSON structure:
   "concerns": [
     "First specific risk or challenge mentioned",
     "Second specific risk or challenge mentioned"
-  ]${needAIExtraction.netMargin || needAIExtraction.operatingMargin || needAIExtraction.fcf ? `,
-  "quarterlyMetrics": {${needAIExtraction.netMargin ? `
-    "netMarginQ2": -7.1 | null,` : ''}${needAIExtraction.operatingMargin ? `
-    "adjOperatingMarginQ2": 21.7 | null,` : ''}${needAIExtraction.fcf ? `
-    "fcfQ2": 7.8 | null` : ''}
-  }` : ''},
+  ],
+  "pdfMetrics": {
+    "revenueYoY": 7.0 | null,
+    "netMargin": 17.5 | null,
+    "efficiencyRatioOrOperatingMargin": 62.5 | null,
+    "cashFromOperations": 3500 | null
+  },
   "dataSources": {
     "pdfUrl": "https://full-url-to-pdf-presentation.pdf" | null,
     "pressReleaseUrl": "https://full-url-to-press-release" | null,
@@ -1188,20 +1205,66 @@ VALIDATION RULES:
         data.concerns = ["Data not available from IR sources", "Data not available from IR sources"];
       }
 
-      // ✅ Quarterly Metrics from AI (if FMP was stale)
-      if (aiData.quarterlyMetrics) {
-        if (needAIExtraction.netMargin && aiData.quarterlyMetrics.netMarginQ2 !== null && aiData.quarterlyMetrics.netMarginQ2 !== undefined) {
-          data.margins.netMargin = aiData.quarterlyMetrics.netMarginQ2;
-          logger.info(`📊 Net Margin Q${q} (from AI): ${aiData.quarterlyMetrics.netMarginQ2}%`);
+      // ✅ PDF Metrics - VALIDATION & OVERRIDE of API data
+      if (aiData.pdfMetrics) {
+        logger.info(`📄 ===== PDF METRICS (for validation) =====`);
+
+        // 1. Revenue YoY Growth - Compare with API calculation
+        if (aiData.pdfMetrics.revenueYoY !== null && aiData.pdfMetrics.revenueYoY !== undefined) {
+          const pdfRevYoY = aiData.pdfMetrics.revenueYoY;
+          const apiRevYoY = data.yoyGrowth.revenueChange;
+
+          logger.info(`📊 Revenue YoY: PDF=${pdfRevYoY.toFixed(2)}%, API=${apiRevYoY !== null ? apiRevYoY.toFixed(2) : 'N/A'}%`);
+
+          // If API is TTM or significantly different, use PDF
+          if (data.yoyGrowth.revenueChangeType === "TTM" || apiRevYoY === null || Math.abs(pdfRevYoY - apiRevYoY) > 10) {
+            logger.warn(`   🔄 OVERRIDING API Revenue YoY with PDF data (${pdfRevYoY.toFixed(2)}%)`);
+            data.yoyGrowth.revenueChange = pdfRevYoY;
+            data.yoyGrowth.revenueChangeType = "quarterly";
+          }
         }
-        if (needAIExtraction.operatingMargin && aiData.quarterlyMetrics.adjOperatingMarginQ2 !== null && aiData.quarterlyMetrics.adjOperatingMarginQ2 !== undefined) {
-          data.margins.operatingMargin = aiData.quarterlyMetrics.adjOperatingMarginQ2;
-          logger.info(`📊 Adj Operating Margin Q${q} (from AI): ${aiData.quarterlyMetrics.adjOperatingMarginQ2}%`);
+
+        // 2. Net Margin - Override if different or unavailable
+        if (aiData.pdfMetrics.netMargin !== null && aiData.pdfMetrics.netMargin !== undefined) {
+          const pdfNetMargin = aiData.pdfMetrics.netMargin;
+          const apiNetMargin = data.margins.netMargin;
+
+          logger.info(`📊 Net Margin: PDF=${pdfNetMargin.toFixed(2)}%, API=${apiNetMargin !== null ? apiNetMargin.toFixed(2) : 'N/A'}%`);
+
+          if (apiNetMargin === null || Math.abs(pdfNetMargin - apiNetMargin) > 5) {
+            logger.warn(`   🔄 OVERRIDING API Net Margin with PDF data (${pdfNetMargin.toFixed(2)}%)`);
+            data.margins.netMargin = pdfNetMargin;
+          }
         }
-        if (needAIExtraction.fcf && aiData.quarterlyMetrics.fcfQ2 !== null && aiData.quarterlyMetrics.fcfQ2 !== undefined) {
-          data.cashFlow.freeCashFlow = aiData.quarterlyMetrics.fcfQ2 * 1e6; // Convert from $M to $
-          logger.info(`📊 Free Cash Flow Q${q} (from AI): $${aiData.quarterlyMetrics.fcfQ2}M`);
+
+        // 3. Operating Margin / Efficiency Ratio - Override if available
+        if (aiData.pdfMetrics.efficiencyRatioOrOperatingMargin !== null && aiData.pdfMetrics.efficiencyRatioOrOperatingMargin !== undefined) {
+          const pdfOpMargin = aiData.pdfMetrics.efficiencyRatioOrOperatingMargin;
+          const apiOpMargin = data.margins.operatingMargin;
+
+          logger.info(`📊 Operating/Efficiency: PDF=${pdfOpMargin.toFixed(2)}%, API=${apiOpMargin !== null ? apiOpMargin.toFixed(2) : 'N/A'}%`);
+
+          if (apiOpMargin === null || Math.abs(pdfOpMargin - apiOpMargin) > 5) {
+            logger.warn(`   🔄 OVERRIDING API Operating Margin with PDF data (${pdfOpMargin.toFixed(2)}%)`);
+            data.margins.operatingMargin = pdfOpMargin;
+          }
         }
+
+        // 4. Cash from Operations / FCF - Use if FCF unavailable
+        if (aiData.pdfMetrics.cashFromOperations !== null && aiData.pdfMetrics.cashFromOperations !== undefined) {
+          const pdfCashFlow = aiData.pdfMetrics.cashFromOperations * 1e6; // Convert millions to dollars
+
+          logger.info(`📊 Cash from Operations: PDF=$${(pdfCashFlow / 1e9).toFixed(2)}B`);
+
+          if (data.cashFlow.freeCashFlow === null) {
+            logger.warn(`   🔄 Using PDF Cash from Operations (FCF unavailable): $${(pdfCashFlow / 1e6).toFixed(2)}M`);
+            data.cashFlow.freeCashFlow = pdfCashFlow;
+          }
+        }
+
+        logger.info(`📄 ===== END PDF METRICS =====`);
+      } else {
+        logger.warn(`⚠️ No pdfMetrics found in AI response - cannot validate API data`);
       }
 
       // ✅ Data Sources (PDF URLs for verification)
