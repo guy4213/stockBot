@@ -563,16 +563,16 @@ export async function fullExtraction(
     }
 
     // Calculate beat percentages
-    const epsBeatPercent = epsEstimate && epsEstimate !== 0
+    const epsBeatPercent = epsEstimate && epsEstimate !== 0 && epsActual !== null
       ? ((epsActual - epsEstimate) / Math.abs(epsEstimate)) * 100
       : 0;
 
-    const revBeatPercent = revenueEstimate && revenueEstimate !== 0
+    const revBeatPercent = revenueEstimate && revenueEstimate !== 0 && revenueActual !== null && revenueEstimate !== null
       ? ((revenueActual - revenueEstimate) / revenueEstimate) * 100
       : 0;
 
     // 🛡️ VALIDATION: Warn if beat% is suspicious
-    if (Math.abs(epsBeatPercent) > 50 && epsActual !== epsEstimate) {
+    if (Math.abs(epsBeatPercent) > 50 && epsActual !== null && epsActual !== epsEstimate) {
       logger.warn(`   ⚠️ EPS beat ${epsBeatPercent.toFixed(2)}% is very large - verify estimate accuracy`);
     }
     if (Math.abs(revBeatPercent) > 20) {
@@ -580,7 +580,7 @@ export async function fullExtraction(
     }
 
     logger.info(`📊 ${symbol} - EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)`);
-    logger.info(`📊 ${symbol} - Revenue: $${(revenueActual / 1e9).toFixed(2)}B vs $${(revenueEstimate / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)`);
+    logger.info(`📊 ${symbol} - Revenue: $${revenueActual !== null ? (revenueActual / 1e9).toFixed(2) : 'N/A'}B vs $${revenueEstimate !== null ? (revenueEstimate / 1e9).toFixed(2) : 'N/A'}B (${revBeatPercent.toFixed(2)}%)`);
 
     // ✅ בנה את האובייקט עם נתונים אמיתיים
     const data: FullExtractionResponse = {
@@ -588,15 +588,15 @@ export async function fullExtraction(
       companyName,
       reportDate,
       eps: {
-        actual: epsActual,
-        estimate: epsEstimate,
+        actual: epsActual!,
+        estimate: epsEstimate!,
         beatPercent: epsBeatPercent,
         beat: null,
         source: ""
       },
       revenue: {
-        actual: revenueActual,
-        estimate: revenueEstimate,
+        actual: revenueActual!,
+        estimate: revenueEstimate!,
         beatPercent: revBeatPercent,
         beat: null,
         source: ""
@@ -902,7 +902,7 @@ QUARTER: Q${q} ${yr}
 
 KNOWN DATA (Already extracted from Finnhub - DO NOT EXTRACT AGAIN):
 - EPS: ${epsActual} vs estimate ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
-- Revenue: $${(revenueActual / 1e9).toFixed(2)}B vs estimate $${(revenueEstimate / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
+- Revenue: $${revenueActual !== null ? (revenueActual / 1e9).toFixed(2) : 'N/A'}B vs estimate $${revenueEstimate !== null ? (revenueEstimate / 1e9).toFixed(2) : 'N/A'}B (${revBeatPercent.toFixed(2)}%)
 
 CRITICAL INSTRUCTIONS:
 1. **SEARCH STRATEGY** - Search by COMPANY NAME, not ticker symbol:
