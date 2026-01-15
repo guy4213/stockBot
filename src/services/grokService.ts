@@ -446,19 +446,41 @@ export async function fullExtraction(
       finnhubData.revenueActual !== null) {
     
     logger.info(`🎯 Using Finnhub data directly for ${symbol}!`);
-    
-    const epsActual = finnhubData.epsActual;
-    const epsEstimate = finnhubData.epsEstimate || epsActual;
-    const revenueActual = finnhubData.revenueActual;
-    const revenueEstimate = finnhubData.revenueEstimate || revenueActual;
-    
-    const epsBeatPercent = epsEstimate !== 0 
-      ? ((epsActual - epsEstimate) / Math.abs(epsEstimate)) * 100 
+
+    // Round actual values to 2 decimal places for consistency
+    const epsActual = finnhubData.epsActual !== null ? Math.round(finnhubData.epsActual * 100) / 100 : null;
+    const revenueActual = finnhubData.revenueActual !== null ? Math.round(finnhubData.revenueActual) : null;
+
+    // Use estimate if available, otherwise warn and use actual
+    let epsEstimate = finnhubData.epsEstimate ? Math.round(finnhubData.epsEstimate * 100) / 100 : null;
+    let revenueEstimate = finnhubData.revenueEstimate ? Math.round(finnhubData.revenueEstimate) : null;
+
+    // 🛡️ VALIDATION: Check if estimates are missing
+    if (!epsEstimate && epsActual !== null) {
+      logger.warn(`   ⚠️ EPS estimate missing from Finnhub - using actual ${epsActual} (beat will be 0%)`);
+      epsEstimate = epsActual;
+    }
+    if (!revenueEstimate && revenueActual !== null) {
+      logger.warn(`   ⚠️ Revenue estimate missing from Finnhub - using actual $${(revenueActual / 1e9).toFixed(2)}B (beat will be 0%)`);
+      revenueEstimate = revenueActual;
+    }
+
+    // Calculate beat percentages
+    const epsBeatPercent = epsEstimate && epsEstimate !== 0
+      ? ((epsActual - epsEstimate) / Math.abs(epsEstimate)) * 100
       : 0;
-    
-    const revBeatPercent = revenueEstimate !== 0
+
+    const revBeatPercent = revenueEstimate && revenueEstimate !== 0
       ? ((revenueActual - revenueEstimate) / revenueEstimate) * 100
       : 0;
+
+    // 🛡️ VALIDATION: Warn if beat% is suspicious
+    if (Math.abs(epsBeatPercent) > 50 && epsActual !== epsEstimate) {
+      logger.warn(`   ⚠️ EPS beat ${epsBeatPercent.toFixed(2)}% is very large - verify estimate accuracy`);
+    }
+    if (Math.abs(revBeatPercent) > 20) {
+      logger.warn(`   ⚠️ Revenue beat ${revBeatPercent.toFixed(2)}% is very large - verify estimate accuracy`);
+    }
 
     logger.info(`📊 ${symbol} - EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)`);
     logger.info(`📊 ${symbol} - Revenue: $${(revenueActual / 1e9).toFixed(2)}B vs $${(revenueEstimate / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)`);
@@ -564,14 +586,45 @@ export async function fullExtraction(
           }
         }
 
-        // YoY Growth - Revenue
-        if (finnhubMetrics.revenueGrowthTTM !== null && finnhubMetrics.revenueGrowthTTM !== undefined) {
+        // YoY Growth - Revenue (QUARTERLY comparison, not TTM!)
+        // Try manual calculation from FMP quarterly data first
+        logger.info(`   🔍 Calculating YoY Revenue Growth from quarterly data...`);
+        try {
+          const incomeStatement = await getIncomeStatement(symbol);
+          if (incomeStatement && incomeStatement.length >= 5) {
+            const currentQ = incomeStatement[0]; // Latest quarter
+            const priorYearQ = incomeStatement[4]; // 4 quarters back = 1 year
+
+            if (currentQ?.revenue !== null && priorYearQ?.revenue !== null && priorYearQ.revenue !== 0) {
+              const current = currentQ.revenue;
+              const prior = priorYearQ.revenue;
+              const yoyRevGrowth = ((current - prior) / prior) * 100;
+
+              // 🛡️ VALIDATION: Revenue YoY shouldn't exceed 150%
+              if (Math.abs(yoyRevGrowth) > 150) {
+                logger.warn(`   ⚠️ Revenue YoY Growth ${yoyRevGrowth.toFixed(2)}% is unrealistic - possibly wrong comparison`);
+              } else {
+                data.yoyGrowth.revenueChange = yoyRevGrowth;
+                logger.info(`   ✅ YoY Revenue Growth (quarterly): ${yoyRevGrowth.toFixed(2)}% ($${(prior / 1e9).toFixed(2)}B → $${(current / 1e9).toFixed(2)}B) [${priorYearQ.date} vs ${currentQ.date}]`);
+              }
+            } else {
+              logger.warn(`   ⚠️ Missing revenue data for YoY calculation (current: ${currentQ?.revenue}, prior: ${priorYearQ?.revenue})`);
+            }
+          } else {
+            logger.warn(`   ⚠️ Not enough quarterly data for YoY Revenue (got ${incomeStatement?.length || 0} quarters)`);
+          }
+        } catch (err: any) {
+          logger.warn(`   ⚠️ Could not calculate YoY Revenue manually: ${err.message}`);
+        }
+
+        // Fallback to Finnhub TTM if manual calculation failed
+        if (data.yoyGrowth.revenueChange === null && finnhubMetrics.revenueGrowthTTM !== null && finnhubMetrics.revenueGrowthTTM !== undefined) {
           // 🛡️ VALIDATION: Revenue YoY shouldn't exceed 150% (unrealistic for most companies)
           if (Math.abs(finnhubMetrics.revenueGrowthTTM) > 150) {
-            logger.warn(`   ⚠️ Revenue YoY Growth ${finnhubMetrics.revenueGrowthTTM}% is unrealistic - possibly comparing wrong periods or bad data`);
+            logger.warn(`   ⚠️ Revenue YoY Growth ${finnhubMetrics.revenueGrowthTTM}% (TTM) is unrealistic - rejecting`);
           } else {
             data.yoyGrowth.revenueChange = finnhubMetrics.revenueGrowthTTM;
-            logger.info(`   ✅ YoY Revenue Growth: ${finnhubMetrics.revenueGrowthTTM}%`);
+            logger.info(`   📊 YoY Revenue Growth (TTM fallback): ${finnhubMetrics.revenueGrowthTTM}%`);
           }
         }
 
@@ -831,10 +884,34 @@ ${needAIExtraction.netMargin ? '6' : '5'}. **Adjusted Operating Margin Q${quarte
    - If unavailable, return null
 ` : ''}${needAIExtraction.fcf ? `
 ${needAIExtraction.netMargin && needAIExtraction.operatingMargin ? '7' : needAIExtraction.netMargin || needAIExtraction.operatingMargin ? '6' : '5'}. **Free Cash Flow Q${quarter}** (single number):
-   - Find the Q${quarter} ${year} Free Cash Flow from cash flow statement
-   - Usually stated as "Free Cash Flow was $X million"
+
+   חפש Free Cash Flow Q${quarter} בדיוק באחת מהצורות האלה:
+
+   a) **ישיר (הכי נפוץ)**:
+      - "Free Cash Flow was $X million"
+      - "FCF: $X.XM"
+      - "Generated $X.X million in free cash flow"
+
+   b) **חישוב מטבלה**:
+      - Cash Flow Statement → "Operating Cash Flow" MINUS "Capital Expenditures"
+      - Example: OCF $15.2M - CapEx $7.4M = FCF $7.8M
+
+   c) **מ-PDF Slides** (חפש בעמודים 10-15):
+      - "Q${quarter} ${year} Financial Highlights"
+      - "Cash Flow Summary"
+      - Look for table row "Free Cash Flow"
+
+   d) **מ-Press Release**:
+      - Section: "Cash Flow" or "Liquidity"
+      - Usually in second half of document
+
+   ⚠️ **חשוב מאוד**:
+   - ✅ CORRECT: "Q${quarter} FCF: $7.8M" (quarterly)
+   - ❌ WRONG: "FY ${year} FCF: $30M" (annual) ← התעלם מזה!
+   - ❌ WRONG: "TTM FCF" ← התעלם מזה!
+
    - Return as number in MILLIONS (e.g., 7.8 for $7.8M)
-   - If unavailable, return null
+   - If unavailable after checking ALL sources above, return null
 ` : ''}
 IMPORTANT: Extract these ONLY from Q${quarter} ${year} quarterly data, NOT from TTM/annual data!
 ` : `
