@@ -513,14 +513,60 @@ function calculateTradeParams(price: number, classification: string) {
 // ============================================
 // 4. FULL EXTRACTION (FORCE SYMBOL) 🛑
 // ============================================
-//TO DO:
-//1 avoid sending report more than once
-// 2  json format fixing :
-//   "quarterlyMetrics": {
-  //   "netMarginQ2": -7.1,
-  //   "adjOperatingMarginQ2": 21.7,
-  //   "fcfQ2": null
-  // }
+// HELPER: Validate AI Response
+// ============================================
+function validateAIResponse(aiData: any, symbol: string): { isValid: boolean; reason: string } {
+  // Check if pdfMetrics has at least some data
+  const hasMetrics = aiData.pdfMetrics &&
+    (aiData.pdfMetrics.revenueYoY !== null ||
+     aiData.pdfMetrics.netMargin !== null ||
+     aiData.pdfMetrics.efficiencyRatioOrOperatingMargin !== null ||
+     aiData.pdfMetrics.cashFromOperations !== null);
+
+  // Check if we have PDF URL
+  const hasPdfUrl = aiData.dataSources?.pdfUrl !== null && aiData.dataSources?.pdfUrl !== undefined;
+
+  // Check if highlights/concerns are meaningful (not generic "No data" messages)
+  const hasRealHighlights = aiData.highlights && aiData.highlights.length > 0 &&
+    !aiData.highlights[0].toLowerCase().includes("no specific") &&
+    !aiData.highlights[0].toLowerCase().includes("not available") &&
+    !aiData.highlights[0].toLowerCase().includes("data not available");
+
+  if (!hasMetrics && !hasPdfUrl) {
+    return {
+      isValid: false,
+      reason: `No PDF found and no quarterly metrics extracted`
+    };
+  }
+
+  if (!hasPdfUrl) {
+    return {
+      isValid: false,
+      reason: `PDF URL missing - cannot verify data source`
+    };
+  }
+
+  if (!hasMetrics) {
+    return {
+      isValid: false,
+      reason: `PDF found but failed to extract quarterly metrics`
+    };
+  }
+
+  if (!hasRealHighlights) {
+    return {
+      isValid: false,
+      reason: `PDF found but AI returned generic 'no data' responses`
+    };
+  }
+
+  // Success - we have PDF, metrics, and real content
+  return { isValid: true, reason: "Valid response with PDF and metrics" };
+}
+
+// ============================================
+// 4. FULL EXTRACTION & ANALYSIS
+// ============================================
 export async function fullExtraction(
   symbol: string,
   companyName: string,
@@ -1097,31 +1143,65 @@ OUTPUT FORMAT - Return ONLY this JSON structure:
   }
 }
 
-⚠️ **CRITICAL - Data Sources** (User will verify these URLs manually!):
-- You MUST include the ACTUAL URL to the PDF/document you extracted data from
-- ✅ CORRECT: "https://www.wellsfargo.com/assets/pdf/about/investor-relations/earnings/fourth-quarter-2025-earnings.pdf"
-- ❌ WRONG: Made-up URLs like "https://ir.wfc.com/static-files/abc123.pdf"
-- ❌ WRONG: Generic URLs like "https://example.com/earnings.pdf"
-- If you cannot find a real PDF URL → return null (don't guess!)
-- If you extracted from multiple sources, return the PRIMARY source (where you got FCF/margins/guidance)
-- The user will click this URL to verify - it MUST work!
+⚠️ **CRITICAL - MANDATORY PDF REQUIREMENT**:
+This is NOT optional! The response will be REJECTED if these requirements are not met:
 
-VALIDATION RULES:
-- If you cannot find the official IR page or press release → status: "unavailable"
-- If you find only news articles → try harder to find IR sources first
-- Highlights and concerns must be specific (not generic statements)
-- Return ONLY the JSON - NO markdown, NO explanations, NO extra text
+1. **YOU MUST FIND THE OFFICIAL PDF**:
+   - Search "${companyName} investor relations" → Find their IR website
+   - Look for "Q${q} ${yr} earnings" materials on that site
+   - The PDF is usually named like: "Q${q}-${yr}-earnings.pdf" or "fourth-quarter-${yr}-earnings.pdf"
+
+2. **YOU MUST EXTRACT QUARTERLY METRICS FROM THE PDF**:
+   - Find the quarterly comparison table (Q${q} ${yr} vs Q${q} ${yr - 1})
+   - Extract ALL 4 required metrics: revenueYoY, netMargin, efficiency/operating, cashFromOps
+   - If you cannot extract these → THE RESPONSE WILL BE REJECTED AND RETRIED
+
+3. **REAL URLs ONLY** (User will verify these manually!):
+   - ✅ CORRECT: "https://www.wellsfargo.com/assets/pdf/about/investor-relations/earnings/fourth-quarter-2025-earnings.pdf"
+   - ❌ WRONG: Made-up URLs like "https://ir.wfc.com/static-files/abc123.pdf"
+   - ❌ WRONG: Generic placeholders or null values
+   - The user will click this URL - it MUST work!
+
+4. **IF YOU CANNOT FIND THE PDF**:
+   - Do NOT return generic "no data available" responses
+   - Do NOT make up URLs or metrics
+   - The system will automatically retry with a different search strategy
+   - Try searching: "${companyName} ${reportDate} earnings", "${symbol} Q${q} ${yr} investor presentation"
+
+⚠️ **THIS RESPONSE WILL BE VALIDATED**:
+- Missing PDF URL → REJECTED & RETRY
+- All metrics null → REJECTED & RETRY
+- Generic "no data" responses → REJECTED & RETRY
+- Made-up/non-working URLs → REJECTED & RETRY
+
+Return ONLY valid JSON - NO markdown, NO explanations, NO extra text
 `;
 
-      logger.info(`🤖 Calling AI to supplement with guidance & sentiment...`);
-      logger.info(`🔍 AI will search: ir.${symbol.toLowerCase()}.com and ${companyName} Investor Relations`);
+      // ✅ Retry Loop: Try up to 3 times to get valid AI response with PDF
+      const MAX_RETRIES = 3;
+      let aiData: any = null;
+      let lastError: string = "";
 
-      const aiRes = await callGrokAPI(
-        [
-          {
-            role: "system",
-            content: "You are a financial data extraction API specialized in parsing official company investor relations documents. You MUST prioritize IR websites over news articles. Return ONLY valid JSON with no markdown formatting or explanations."
-          },
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          logger.info(`🤖 Calling AI to supplement with guidance & sentiment (Attempt ${attempt}/${MAX_RETRIES})...`);
+          logger.info(`🔍 AI will search: ir.${symbol.toLowerCase()}.com and ${companyName} Investor Relations`);
+
+          const aiRes = await callGrokAPI(
+            [
+              {
+                role: "system",
+                content: `You are a financial data extraction API. YOUR RESPONSE WILL BE VALIDATED AND REJECTED IF INCOMPLETE.
+
+MANDATORY REQUIREMENTS:
+1. Find the official earnings PDF from ${companyName} investor relations
+2. Extract quarterly metrics from the PDF (not TTM, not annual)
+3. Return the REAL PDF URL (user will verify it works)
+4. Return specific highlights/concerns (not generic "no data" responses)
+
+If you cannot find the PDF or extract data → your response will be REJECTED and retried.
+Return ONLY valid JSON with no markdown formatting or explanations.`
+              },
           {
             role: "user",
             content: supplementPrompt
@@ -1153,12 +1233,48 @@ VALIDATION RULES:
       logger.info(cleanedRes);
       logger.info(`📥 ===== END OF CLEANED RESPONSE =====`);
 
-      const aiData = JSON.parse(cleanedRes);
+          const tempAiData = JSON.parse(cleanedRes);
 
-      // 🛑 DEBUG: Print parsed JSON
-      logger.info(`📥 ===== PARSED JSON OBJECT =====`);
-      logger.info(JSON.stringify(aiData, null, 2));
-      logger.info(`📥 ===== END OF PARSED JSON =====`);
+          // 🛑 DEBUG: Print parsed JSON
+          logger.info(`📥 ===== PARSED JSON OBJECT =====`);
+          logger.info(JSON.stringify(tempAiData, null, 2));
+          logger.info(`📥 ===== END OF PARSED JSON =====`);
+
+          // ✅ VALIDATE: Check if AI found PDF and extracted data
+          const validation = validateAIResponse(tempAiData, symbol);
+          if (!validation.isValid) {
+            lastError = validation.reason;
+            logger.warn(`⚠️ Attempt ${attempt}/${MAX_RETRIES} failed: ${validation.reason}`);
+            if (attempt < MAX_RETRIES) {
+              logger.info(`🔄 Retrying in 5 seconds...`);
+              await new Promise(resolve => setTimeout(resolve, 5000));
+              continue;  // Try again
+            } else {
+              throw new Error(`Failed after ${MAX_RETRIES} attempts: ${lastError}`);
+            }
+          }
+
+          // ✅ Valid response - save it and break the retry loop
+          aiData = tempAiData;
+          logger.info(`✅ Valid AI response received on attempt ${attempt}/${MAX_RETRIES}`);
+          break;
+
+        } catch (parseError: any) {
+          lastError = parseError.message;
+          logger.error(`❌ Attempt ${attempt}/${MAX_RETRIES} error: ${parseError.message}`);
+          if (attempt < MAX_RETRIES) {
+            logger.info(`🔄 Retrying in 5 seconds...`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          } else {
+            throw new Error(`Failed to get valid AI response after ${MAX_RETRIES} attempts: ${lastError}`);
+          }
+        }
+      }
+
+      // ✅ Check if we got valid aiData after all retries
+      if (!aiData) {
+        throw new Error(`Failed to extract earnings data after ${MAX_RETRIES} attempts: ${lastError}`);
+      }
 
       // ✅ מיזוג עם הנתונים מ-Finnhub + אימות
       if (aiData.guidance && aiData.guidance.status) {
