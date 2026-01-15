@@ -209,17 +209,45 @@ export const runDailyCheck = async (req?: Request, res?: Response) => {
   try {
 
     const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-
+    const filePath = path.join(__dirname, "../data/stocksReportingToday.json");
 
     logger.info(`🚀 Starting Daily Check Process for ${today}`);
 
     // 1. שלב ראשון: הבאת נתונים מפינהאב + FMP
-    // אם הקובץ כבר קיים ומעודכן להיום, אפשר לטעון ממנו (אופציונלי), אבל לביטחון נביא מחדש
     const intelligenceData = await morningIntelligence(today);
 
-    // שמירה לקובץ לדיבוג
-    const filePath = path.join(__dirname, "../data/stocksReportingToday.json");
+    // ✅ Try to load existing state (to restore sentToTelegram flags)
+    let existingData: any = null;
+    if (fs.existsSync(filePath)) {
+      try {
+        const fileContent = fs.readFileSync(filePath, "utf-8");
+        existingData = JSON.parse(fileContent);
+
+        // Check if it's from today
+        if (existingData.date === today) {
+          logger.info(`📂 Found existing state file from ${today} - restoring sentToTelegram flags`);
+
+          // Merge sentToTelegram flags from existing data
+          intelligenceData.stocks = intelligenceData.stocks.map(stock => {
+            const existingStock = existingData.stocks?.find((s: any) => s.symbol === stock.symbol);
+            return {
+              ...stock,
+              sentToTelegram: existingStock?.sentToTelegram || false
+            };
+          });
+
+          logger.info(`✅ Restored state for ${intelligenceData.stocks.filter((s: any) => s.sentToTelegram).length} stocks already sent`);
+        } else {
+          logger.info(`📂 Found old state file (${existingData.date}) - starting fresh`);
+        }
+      } catch (e: any) {
+        logger.warn(`⚠️ Failed to load existing state: ${e.message}`);
+      }
+    }
+
+    // שמירה לקובץ (initial save)
     fs.writeFileSync(filePath, JSON.stringify(intelligenceData, null, 2));
+    logger.info(`💾 Saved initial state to ${filePath}`);
 
     if (intelligenceData.stocks.length === 0) {
       logger.info("😴 No stocks to check today.");
@@ -251,6 +279,25 @@ export const runDailyCheck = async (req?: Request, res?: Response) => {
                 // ✅ Mark as sent after successful delivery
                 completedStock.sentToTelegram = true;
                 logger.info(`✅ ${completedStock.symbol} marked as sent to Telegram`);
+
+                // ✅ SAVE STATE: Update JSON file with new sentToTelegram status
+                try {
+                  // Read current state
+                  const currentState = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+
+                  // Update the stock in the state
+                  const stockIndex = currentState.stocks.findIndex((s: any) => s.symbol === completedStock.symbol);
+                  if (stockIndex !== -1) {
+                    currentState.stocks[stockIndex].sentToTelegram = true;
+                  }
+
+                  // Save updated state
+                  fs.writeFileSync(filePath, JSON.stringify(currentState, null, 2));
+                  logger.info(`💾 Updated state file: ${completedStock.symbol} marked as sent`);
+                } catch (saveError: any) {
+                  logger.error(`❌ Failed to save state for ${completedStock.symbol}: ${saveError.message}`);
+                }
+
             } catch (err) {
                 logger.error(`❌ Failed to send Telegram for ${completedStock.symbol}`, err);
                 // ⚠️ Don't mark as sent if delivery failed

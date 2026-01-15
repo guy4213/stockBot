@@ -67,6 +67,7 @@ export interface Stock {
   sources: string[];
   quarter?: number;
   fiscalYear?: number;
+  sentToTelegram?: boolean;  // ✅ Track if sent (persisted in JSON)
   // ✅ הוסף את זה
   finnhubData?: {
     epsActual: number | null|undefined;
