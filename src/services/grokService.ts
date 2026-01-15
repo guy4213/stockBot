@@ -1920,7 +1920,7 @@ private async processNextStock(): Promise<void> {
           error: null,
           fullData: null,
           analysis: null,
-          sentToTelegram: false,  // ✅ Not sent yet
+          sentToTelegram: s.sentToTelegram || false,  // ✅ Preserve existing flag or default to false
           // @ts-ignore
           quarter: s.quarter,
           // @ts-ignore
