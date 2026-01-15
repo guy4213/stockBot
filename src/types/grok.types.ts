@@ -123,6 +123,7 @@ export interface Revenue {
 export interface YoYGrowth {
   epsChange: number | null;
   revenueChange: number | null;
+  revenueChangeType?: "quarterly" | "TTM";  // Type of revenue comparison
 }
 
 export interface CashFlow {

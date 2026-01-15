@@ -702,6 +702,7 @@ export async function fullExtraction(
                 logger.warn(`   ⚠️ Revenue YoY Growth ${yoyRevGrowth.toFixed(2)}% is unrealistic - possibly wrong comparison`);
               } else {
                 data.yoyGrowth.revenueChange = yoyRevGrowth;
+                data.yoyGrowth.revenueChangeType = "quarterly";
                 logger.info(`   ✅ YoY Revenue Growth (quarterly): ${yoyRevGrowth.toFixed(2)}% ($${(prior / 1e9).toFixed(2)}B → $${(current / 1e9).toFixed(2)}B) [${priorYearQ.date} vs ${currentQ.date}]`);
               }
             } else {
@@ -721,7 +722,8 @@ export async function fullExtraction(
             logger.warn(`   ⚠️ Revenue YoY Growth ${finnhubMetrics.revenueGrowthTTM}% (TTM) is unrealistic - rejecting`);
           } else {
             data.yoyGrowth.revenueChange = finnhubMetrics.revenueGrowthTTM;
-            logger.info(`   📊 YoY Revenue Growth (TTM fallback): ${finnhubMetrics.revenueGrowthTTM}%`);
+            data.yoyGrowth.revenueChangeType = "TTM";
+            logger.warn(`   ⚠️ YoY Revenue Growth (TTM fallback): ${finnhubMetrics.revenueGrowthTTM}% - Not quarterly comparison!`);
           }
         }
 
@@ -903,32 +905,48 @@ KNOWN DATA (Already extracted from Finnhub - DO NOT EXTRACT AGAIN):
 - Revenue: $${(revenueActual / 1e9).toFixed(2)}B vs estimate $${(revenueEstimate / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
 
 CRITICAL INSTRUCTIONS:
-1. Search ONLY in these sources (in order of priority):
+1. **SEARCH STRATEGY** - Search by COMPANY NAME, not ticker symbol:
+
+   STEP 1: Find the company's investor relations page
+   - Search: "${companyName} investor relations"
+   - Common patterns:
+     * {companyname}.com/investors
+     * {companyname}.com/investor-relations
+     * investors.{companyname}.com
+     * ir.{companyname}.com
+   - For major banks: often {company}.com/about/investor-relations
+
+   STEP 2: Once on IR site, look for Q${q} ${yr} materials (in order of priority):
+
    a) **PDF Earnings Presentation/Slides**:
-      - "${symbol} Q${q} ${yr} earnings presentation PDF"
-      - "${symbol} investor presentation Q${q} ${yr} PDF"
-      - "${companyName} quarterly results slides ${reportDate} PDF"
-      - Look in: ir.${symbol.toLowerCase()}.com/presentations OR /events
+      - Usually in: /earnings, /presentations, /quarterly-results, /events
+      - Look for: "Q${q} ${yr} Earnings Presentation" or "Quarter Ended [date] Investor Presentation"
 
-   b) **Earnings Press Release PDF/HTML**:
-      - "${symbol} Q${q} ${yr} earnings press release"
-      - "${companyName} reports Q${q} results"
-      - Look in: ir.${symbol.toLowerCase()}.com/press-releases OR /news
+   b) **Earnings Press Release (PDF/HTML)**:
+      - Usually in: /press-releases, /news-releases, /financial-results
+      - Look for: "Reports Q${q} ${yr} Results" or "Q${q} Earnings"
 
-   c) **8-K SEC Filing** (if IR materials unavailable):
-      - "SEC 8-K ${symbol} ${reportDate}"
-      - sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${symbol}
+   c) **8-K SEC Filing** (last resort):
+      - sec.gov/cgi-bin/browse-edgar → search for ${symbol} → recent 8-K filings
 
    d) **Conference Call Transcript**:
-      - "${symbol} Q${q} ${yr} earnings call transcript"
+      - Usually in: /events, /webcasts
+      - Seeking Alpha also publishes transcripts
 
-2. **PDF Search Priority**: PDFs contain the most accurate quarterly data!
+2. **PDF URLs - CRITICAL RULES**:
+   - ✅ ONLY return URLs you ACTUALLY FOUND and VISITED
+   - ❌ DO NOT invent/guess URLs (like "ir.wfc.com/static-files/xyz123.pdf")
+   - ❌ DO NOT use placeholder URLs
+   - If you cannot find the PDF URL, return null (it's better than a fake URL!)
+   - The URL MUST be the direct link to the PDF or HTML page you extracted data from
+
+3. **Search Priority**: PDFs contain the most accurate quarterly data!
    - Financial tables are usually on pages 10-15
    - Look for "Q${q} ${yr}" or "Quarter Ended" headers
    - Ignore "Full Year" or "FY ${yr}" sections
 
-3. DO NOT use news articles, analyst reports, or third-party summaries
-4. DO NOT confuse quarterly vs annual/TTM data:
+4. DO NOT use news articles, analyst reports, or third-party summaries (unless you can't find IR materials)
+5. DO NOT confuse quarterly vs annual/TTM data:
    ❌ WRONG: "FY 2025 FCF: $4.6B" (annual)
    ✅ CORRECT: "Q4 FCF: $1.2B" (quarterly)
 
@@ -1019,11 +1037,17 @@ IMPORTANT: Extract these ONLY from Q${q} ${yr} quarterly data, NOT from TTM/annu
 Focus ONLY on Guidance, Sentiment, Highlights, and Concerns.
 `}
 
-SEARCH QUERY EXAMPLES TO USE:
-- "site:ir.${symbol.toLowerCase()}.com Q${q} ${yr} earnings"
-- "${symbol} investor relations quarterly results ${reportDate}"
-- "${companyName} Q${q} ${yr} earnings press release"
-- "${symbol} earnings call transcript ${reportDate}"
+SEARCH QUERY EXAMPLES TO USE (use COMPANY NAME, not ticker):
+1. First, find the IR page:
+   - "${companyName} investor relations"
+   - "${companyName} earnings"
+   - "${companyName} quarterly results"
+
+2. Then, search for specific quarter materials:
+   - "${companyName} Q${q} ${yr} earnings presentation PDF"
+   - "${companyName} Q${q} ${yr} press release"
+   - "${companyName} Q${q} ${yr} investor presentation"
+   - site:{domain-you-found} Q${q} ${yr}
 
 OUTPUT FORMAT - Return ONLY this JSON structure:
 {
@@ -1056,11 +1080,14 @@ OUTPUT FORMAT - Return ONLY this JSON structure:
   }
 }
 
-⚠️ **CRITICAL - Data Sources**:
-- You MUST include the full URL to the PDF/document you extracted from
-- This is for verification purposes - the user wants to check the source
-- If you found data in a PDF, return the exact PDF URL
-- If you used multiple sources, return the primary one used for guidance/FCF/margins
+⚠️ **CRITICAL - Data Sources** (User will verify these URLs manually!):
+- You MUST include the ACTUAL URL to the PDF/document you extracted data from
+- ✅ CORRECT: "https://www.wellsfargo.com/assets/pdf/about/investor-relations/earnings/fourth-quarter-2025-earnings.pdf"
+- ❌ WRONG: Made-up URLs like "https://ir.wfc.com/static-files/abc123.pdf"
+- ❌ WRONG: Generic URLs like "https://example.com/earnings.pdf"
+- If you cannot find a real PDF URL → return null (don't guess!)
+- If you extracted from multiple sources, return the PRIMARY source (where you got FCF/margins/guidance)
+- The user will click this URL to verify - it MUST work!
 
 VALIDATION RULES:
 - If you cannot find the official IR page or press release → status: "unavailable"
@@ -1234,11 +1261,15 @@ DATE: ${reportDate}
 QUARTER: Q${q} ${yr}
 
 CRITICAL INSTRUCTIONS:
-1. Search for the official earnings press release from ${companyName} Investor Relations
-2. Prioritize IR websites: ir.${symbol.toLowerCase()}.com or investors.${companyName.toLowerCase().replace(/\s+/g, '')}.com
-3. Extract ONLY the following data from official sources
-4. If a field is unavailable, use null (NOT 0, NOT empty string)
-5. Return ONLY valid JSON - NO explanations, NO markdown, NO extra text
+1. **SEARCH STRATEGY** - Search by COMPANY NAME "${companyName}", not ticker:
+   - First search: "${companyName} investor relations"
+   - Find their IR website (usually: {company}.com/investors OR {company}.com/investor-relations)
+   - For major banks: often {company}.com/about/investor-relations
+   - Then search: "${companyName} Q${q} ${yr} earnings" on that site
+
+2. Extract ONLY the following data from official sources (NOT news articles!)
+3. If a field is unavailable, use null (NOT 0, NOT empty string)
+4. Return ONLY valid JSON - NO explanations, NO markdown, NO extra text
 
 REQUIRED JSON STRUCTURE:
 {
@@ -1394,7 +1425,7 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
     ? `${fullData.yoyGrowth.epsChange.toFixed(2)}%`
     : "לא זמין";
   const yoyRevGrowth = fullData.yoyGrowth?.revenueChange !== null && fullData.yoyGrowth?.revenueChange !== undefined
-    ? `${fullData.yoyGrowth.revenueChange.toFixed(2)}%`
+    ? `${fullData.yoyGrowth.revenueChange.toFixed(2)}%${fullData.yoyGrowth.revenueChangeType === "TTM" ? " (TTM)" : ""}`
     : "לא זמין";
   const netMargin = fullData.margins?.netMargin !== null && fullData.margins?.netMargin !== undefined
     ? `${fullData.margins.netMargin.toFixed(2)}%`
