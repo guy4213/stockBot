@@ -249,4 +249,5 @@ export interface StockProcessingState {
   error: string | null;
   fullData: FullExtractionResponse | null;
   analysis: FinalAnalysis | null;
+  sentToTelegram: boolean;  // ✅ Track if already sent to Telegram
 }

@@ -1682,11 +1682,14 @@ private async processNextStock(): Promise<void> {
     const stock = this.stocks.find((s) => {
         if (s.status !== "pending" && s.status !== "checking") return false;
         if (!this.isMarketWindowOpen(s.windowStart)) return false;
+        if (s.sentToTelegram) return false;  // ✅ Skip if already sent
         return true;
     });
 
     if (!stock) {
-        const remaining = this.stocks.filter(s => s.status === "pending" || s.status === "checking").length;
+        const remaining = this.stocks.filter(s =>
+            (s.status === "pending" || s.status === "checking") && !s.sentToTelegram
+        ).length;
         if (remaining > 0) {
             logger.info(`⏳ No stocks ready for CURRENT window (NY Time). Waiting... (${remaining} left)`);
             return;
@@ -1698,6 +1701,12 @@ private async processNextStock(): Promise<void> {
     }
 
     try {
+        // ✅ Double-check: Skip if already sent to Telegram
+        if (stock.sentToTelegram) {
+            logger.info(`⏭️ Skipping ${stock.symbol} - already sent to Telegram`);
+            return;
+        }
+
         logger.info(`📦 Processing ${stock.symbol} (Window: ${stock.windowStart})...`);
         stock.status = "checking";
         stock.checkCount++;
@@ -1786,20 +1795,21 @@ private async processNextStock(): Promise<void> {
     }
 }
 
-  initialize(data: MorningIntelligenceResponse) { 
+  initialize(data: MorningIntelligenceResponse) {
       this.stocks = data.stocks.map(s => ({
-          ...s, 
-          status: 'pending', 
-          checkCount: 0, 
-          lastCheck: null, 
-          error: null, 
-          fullData: null, 
+          ...s,
+          status: 'pending',
+          checkCount: 0,
+          lastCheck: null,
+          error: null,
+          fullData: null,
           analysis: null,
+          sentToTelegram: false,  // ✅ Not sent yet
           // @ts-ignore
-          quarter: s.quarter, 
+          quarter: s.quarter,
           // @ts-ignore
           fiscalYear: s.fiscalYear
-      } as any)); 
+      } as any));
   }
   start() { this.isRunning = true; this.processNextStock(); this.checkInterval = setInterval(() => this.processNextStock(), CHECK_INTERVAL_MS); }
   stop() { this.isRunning = false; if (this.checkInterval) clearInterval(this.checkInterval); }

@@ -239,11 +239,21 @@ export const runDailyCheck = async (req?: Request, res?: Response) => {
     activeProcessor = new StockProcessor(async (completedStock) => {
         // Callback: יופעל רק כשהמניה סיימה בהצלחה ויש לה אנליזה
         if (completedStock.analysis) {
+            // ✅ Check if already sent (prevent duplicates)
+            if (completedStock.sentToTelegram) {
+                logger.info(`⏭️ ${completedStock.symbol} already sent to Telegram - skipping`);
+                return;
+            }
+
             logger.info(`📤 Sending Telegram report for ${completedStock.symbol}...`);
             try {
                 await sendTelegramMessage(completedStock.analysis);
+                // ✅ Mark as sent after successful delivery
+                completedStock.sentToTelegram = true;
+                logger.info(`✅ ${completedStock.symbol} marked as sent to Telegram`);
             } catch (err) {
                 logger.error(`❌ Failed to send Telegram for ${completedStock.symbol}`, err);
+                // ⚠️ Don't mark as sent if delivery failed
             }
         }
     });
