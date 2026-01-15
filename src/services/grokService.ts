@@ -522,8 +522,8 @@ function calculateTradeParams(price: number, classification: string) {
   //   "fcfQ2": null
   // }
 export async function fullExtraction(
-  symbol: string, 
-  companyName: string, 
+  symbol: string,
+  companyName: string,
   reportDate: string,
   currentPrice?: number,
   finnhubData?: {
@@ -531,7 +531,9 @@ export async function fullExtraction(
     epsEstimate: number | null|undefined;
     revenueActual: number | null;
     revenueEstimate: number | null;
-  }
+  },
+  quarter?: number,
+  fiscalYear?: number
 ): Promise<FullExtractionResponse> {
   logger.info(`📊 Extracting ${symbol}...`);
   
@@ -883,15 +885,18 @@ export async function fullExtraction(
 
     // ✅ עכשיו תשתמש ב-AI רק לנתונים חסרים (guidance, sentiment, highlights)
     try {
-      const quarter = Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
-      const year = new Date(reportDate).getFullYear();
+      // Use quarter/fiscalYear from parameters (from stockReportingToday JSON)
+      // If not provided, fallback to calculation from reportDate
+      const q = quarter || Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
+      const yr = fiscalYear || new Date(reportDate).getFullYear();
+      logger.info(`📅 Report date ${reportDate} → Q${q} ${yr} earnings${quarter ? ' (from calendar)' : ' (calculated)'}`);
       
       const supplementPrompt = `
 You are a financial data analyst extracting information from official earnings reports.
 
 TARGET COMPANY: ${symbol} (${companyName})
 REPORT DATE: ${reportDate}
-QUARTER: Q${quarter} ${year}
+QUARTER: Q${q} ${yr}
 
 KNOWN DATA (Already extracted from Finnhub - DO NOT EXTRACT AGAIN):
 - EPS: ${epsActual} vs estimate ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
@@ -900,14 +905,14 @@ KNOWN DATA (Already extracted from Finnhub - DO NOT EXTRACT AGAIN):
 CRITICAL INSTRUCTIONS:
 1. Search ONLY in these sources (in order of priority):
    a) **PDF Earnings Presentation/Slides**:
-      - "${symbol} Q${quarter} ${year} earnings presentation PDF"
-      - "${symbol} investor presentation Q${quarter} ${year} PDF"
+      - "${symbol} Q${q} ${yr} earnings presentation PDF"
+      - "${symbol} investor presentation Q${q} ${yr} PDF"
       - "${companyName} quarterly results slides ${reportDate} PDF"
       - Look in: ir.${symbol.toLowerCase()}.com/presentations OR /events
 
    b) **Earnings Press Release PDF/HTML**:
-      - "${symbol} Q${quarter} ${year} earnings press release"
-      - "${companyName} reports Q${quarter} results"
+      - "${symbol} Q${q} ${yr} earnings press release"
+      - "${companyName} reports Q${q} results"
       - Look in: ir.${symbol.toLowerCase()}.com/press-releases OR /news
 
    c) **8-K SEC Filing** (if IR materials unavailable):
@@ -915,12 +920,12 @@ CRITICAL INSTRUCTIONS:
       - sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${symbol}
 
    d) **Conference Call Transcript**:
-      - "${symbol} Q${quarter} ${year} earnings call transcript"
+      - "${symbol} Q${q} ${yr} earnings call transcript"
 
 2. **PDF Search Priority**: PDFs contain the most accurate quarterly data!
    - Financial tables are usually on pages 10-15
-   - Look for "Q${quarter} ${year}" or "Quarter Ended" headers
-   - Ignore "Full Year" or "FY ${year}" sections
+   - Look for "Q${q} ${yr}" or "Quarter Ended" headers
+   - Ignore "Full Year" or "FY ${yr}" sections
 
 3. DO NOT use news articles, analyst reports, or third-party summaries
 4. DO NOT confuse quarterly vs annual/TTM data:
@@ -964,23 +969,23 @@ EXTRACT THE FOLLOWING DATA:
    - Areas that missed expectations
 
 ${needAIExtraction.netMargin || needAIExtraction.operatingMargin || needAIExtraction.fcf ? `
-⚠️ ADDITIONAL REQUIRED EXTRACTIONS (APIs unavailable for this fresh Q${quarter} report):
+⚠️ ADDITIONAL REQUIRED EXTRACTIONS (APIs unavailable for this fresh Q${q} report):
 ${needAIExtraction.netMargin ? `
-5. **Net Margin Q${quarter}** (single number):
-   - Find the Q${quarter} ${year} Net Margin percentage from the earnings slides/press release
+5. **Net Margin Q${q}** (single number):
+   - Find the Q${q} ${yr} Net Margin percentage from the earnings slides/press release
    - Look in quarterly financial tables (NOT TTM/full year)
    - Return as number (e.g., -7.1 for -7.1%)
    - If unavailable, return null
 ` : ''}${needAIExtraction.operatingMargin ? `
-${needAIExtraction.netMargin ? '6' : '5'}. **Adjusted Operating Margin Q${quarter}** (single number):
-   - Find the Q${quarter} ${year} ADJUSTED (non-GAAP) Operating Margin
+${needAIExtraction.netMargin ? '6' : '5'}. **Adjusted Operating Margin Q${q}** (single number):
+   - Find the Q${q} ${yr} ADJUSTED (non-GAAP) Operating Margin
    - This is usually in "Non-GAAP reconciliation" tables
    - Return as number (e.g., 21.7 for 21.7%)
    - If unavailable, return null
 ` : ''}${needAIExtraction.fcf ? `
-${needAIExtraction.netMargin && needAIExtraction.operatingMargin ? '7' : needAIExtraction.netMargin || needAIExtraction.operatingMargin ? '6' : '5'}. **Free Cash Flow Q${quarter}** (single number):
+${needAIExtraction.netMargin && needAIExtraction.operatingMargin ? '7' : needAIExtraction.netMargin || needAIExtraction.operatingMargin ? '6' : '5'}. **Free Cash Flow Q${q}** (single number):
 
-   חפש Free Cash Flow Q${quarter} בדיוק באחת מהצורות האלה:
+   חפש Free Cash Flow Q${q} בדיוק באחת מהצורות האלה:
 
    a) **ישיר (הכי נפוץ)**:
       - "Free Cash Flow was $X million"
@@ -992,7 +997,7 @@ ${needAIExtraction.netMargin && needAIExtraction.operatingMargin ? '7' : needAIE
       - Example: OCF $15.2M - CapEx $7.4M = FCF $7.8M
 
    c) **מ-PDF Slides** (חפש בעמודים 10-15):
-      - "Q${quarter} ${year} Financial Highlights"
+      - "Q${q} ${yr} Financial Highlights"
       - "Cash Flow Summary"
       - Look for table row "Free Cash Flow"
 
@@ -1001,23 +1006,23 @@ ${needAIExtraction.netMargin && needAIExtraction.operatingMargin ? '7' : needAIE
       - Usually in second half of document
 
    ⚠️ **חשוב מאוד**:
-   - ✅ CORRECT: "Q${quarter} FCF: $7.8M" (quarterly)
-   - ❌ WRONG: "FY ${year} FCF: $30M" (annual) ← התעלם מזה!
+   - ✅ CORRECT: "Q${q} FCF: $7.8M" (quarterly)
+   - ❌ WRONG: "FY ${yr} FCF: $30M" (annual) ← התעלם מזה!
    - ❌ WRONG: "TTM FCF" ← התעלם מזה!
 
    - Return as number in MILLIONS (e.g., 7.8 for $7.8M)
    - If unavailable after checking ALL sources above, return null
 ` : ''}
-IMPORTANT: Extract these ONLY from Q${quarter} ${year} quarterly data, NOT from TTM/annual data!
+IMPORTANT: Extract these ONLY from Q${q} ${yr} quarterly data, NOT from TTM/annual data!
 ` : `
 ⚠️ NOTE: YoY Growth, Free Cash Flow, and Margins are already extracted from APIs.
 Focus ONLY on Guidance, Sentiment, Highlights, and Concerns.
 `}
 
 SEARCH QUERY EXAMPLES TO USE:
-- "site:ir.${symbol.toLowerCase()}.com Q${quarter} ${year} earnings"
+- "site:ir.${symbol.toLowerCase()}.com Q${q} ${yr} earnings"
 - "${symbol} investor relations quarterly results ${reportDate}"
-- "${companyName} Q${quarter} ${year} earnings press release"
+- "${companyName} Q${q} ${yr} earnings press release"
 - "${symbol} earnings call transcript ${reportDate}"
 
 OUTPUT FORMAT - Return ONLY this JSON structure:
@@ -1160,15 +1165,15 @@ VALIDATION RULES:
       if (aiData.quarterlyMetrics) {
         if (needAIExtraction.netMargin && aiData.quarterlyMetrics.netMarginQ2 !== null && aiData.quarterlyMetrics.netMarginQ2 !== undefined) {
           data.margins.netMargin = aiData.quarterlyMetrics.netMarginQ2;
-          logger.info(`📊 Net Margin Q${quarter} (from AI): ${aiData.quarterlyMetrics.netMarginQ2}%`);
+          logger.info(`📊 Net Margin Q${q} (from AI): ${aiData.quarterlyMetrics.netMarginQ2}%`);
         }
         if (needAIExtraction.operatingMargin && aiData.quarterlyMetrics.adjOperatingMarginQ2 !== null && aiData.quarterlyMetrics.adjOperatingMarginQ2 !== undefined) {
           data.margins.operatingMargin = aiData.quarterlyMetrics.adjOperatingMarginQ2;
-          logger.info(`📊 Adj Operating Margin Q${quarter} (from AI): ${aiData.quarterlyMetrics.adjOperatingMarginQ2}%`);
+          logger.info(`📊 Adj Operating Margin Q${q} (from AI): ${aiData.quarterlyMetrics.adjOperatingMarginQ2}%`);
         }
         if (needAIExtraction.fcf && aiData.quarterlyMetrics.fcfQ2 !== null && aiData.quarterlyMetrics.fcfQ2 !== undefined) {
           data.cashFlow.freeCashFlow = aiData.quarterlyMetrics.fcfQ2 * 1e6; // Convert from $M to $
-          logger.info(`📊 Free Cash Flow Q${quarter} (from AI): $${aiData.quarterlyMetrics.fcfQ2}M`);
+          logger.info(`📊 Free Cash Flow Q${q} (from AI): $${aiData.quarterlyMetrics.fcfQ2}M`);
         }
       }
 
@@ -1214,17 +1219,19 @@ VALIDATION RULES:
   // ✅ FALLBACK: אם אין נתוני Finnhub - נסה AI מלא
   // ============================================
   logger.warn(`⚠️ No Finnhub data for ${symbol}, falling back to full AI extraction`);
-  
-  const quarter = Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
-  const year = new Date(reportDate).getFullYear();
-  
+
+  // Use quarter/fiscalYear from parameters (from stockReportingToday JSON)
+  // If not provided, fallback to calculation from reportDate
+  const q = quarter || Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
+  const yr = fiscalYear || new Date(reportDate).getFullYear();
+
   const extractionPrompt = `
 You are a financial data extraction bot. Your ONLY job is to return valid JSON.
 
 SYMBOL: ${symbol}
 COMPANY: ${companyName}
 DATE: ${reportDate}
-QUARTER: Q${quarter} ${year}
+QUARTER: Q${q} ${yr}
 
 CRITICAL INSTRUCTIONS:
 1. Search for the official earnings press release from ${companyName} Investor Relations
@@ -1639,12 +1646,14 @@ private async processNextStock(): Promise<void> {
             
             // ✅ העבר את המחיר ונתוני Finnhub ל-fullExtraction
             const fullData = await fullExtraction(
-                stock.symbol, 
-                stock.companyName, 
+                stock.symbol,
+                stock.companyName,
                 new Date().toISOString().split("T")[0],
                 currentPrice,  // ✅ המחיר מועבר כאן
                 // @ts-ignore - העבר את הנתונים מ-Finnhub אם קיימים
-                stock.finnhubData
+                stock.finnhubData,
+                stock.quarter,      // ✅ הרבעון מ-JSON
+                stock.fiscalYear    // ✅ שנת הכספים מ-JSON
             );
             stock.fullData = fullData;
             
