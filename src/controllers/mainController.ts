@@ -216,18 +216,23 @@ export const runDailyCheck = async (req?: Request, res?: Response) => {
     // 1. שלב ראשון: הבאת נתונים מפינהאב + FMP
     const intelligenceData = await morningIntelligence(today);
 
-    // ✅ Try to load existing state (to restore sentToTelegram flags)
-    let existingData: any = null;
+    // ✅ Initialize all stocks with sentToTelegram: false
+    intelligenceData.stocks = intelligenceData.stocks.map(stock => ({
+      ...stock,
+      sentToTelegram: false
+    }));
+
+    // ✅ Try to load existing state (to restore sentToTelegram flags for already-sent stocks)
     if (fs.existsSync(filePath)) {
       try {
         const fileContent = fs.readFileSync(filePath, "utf-8");
-        existingData = JSON.parse(fileContent);
+        const existingData = JSON.parse(fileContent);
 
         // Check if it's from today
         if (existingData.date === today) {
           logger.info(`📂 Found existing state file from ${today} - restoring sentToTelegram flags`);
 
-          // Merge sentToTelegram flags from existing data
+          // Restore sentToTelegram=true for stocks that were already sent
           intelligenceData.stocks = intelligenceData.stocks.map(stock => {
             const existingStock = existingData.stocks?.find((s: any) => s.symbol === stock.symbol);
             return {
