@@ -566,8 +566,13 @@ export async function fullExtraction(
 
         // YoY Growth - Revenue
         if (finnhubMetrics.revenueGrowthTTM !== null && finnhubMetrics.revenueGrowthTTM !== undefined) {
-          data.yoyGrowth.revenueChange = finnhubMetrics.revenueGrowthTTM;
-          logger.info(`   ✅ YoY Revenue Growth: ${finnhubMetrics.revenueGrowthTTM}%`);
+          // 🛡️ VALIDATION: Revenue YoY shouldn't exceed 150% (unrealistic for most companies)
+          if (Math.abs(finnhubMetrics.revenueGrowthTTM) > 150) {
+            logger.warn(`   ⚠️ Revenue YoY Growth ${finnhubMetrics.revenueGrowthTTM}% is unrealistic - possibly comparing wrong periods or bad data`);
+          } else {
+            data.yoyGrowth.revenueChange = finnhubMetrics.revenueGrowthTTM;
+            logger.info(`   ✅ YoY Revenue Growth: ${finnhubMetrics.revenueGrowthTTM}%`);
+          }
         }
 
         // Margins - FALLBACK to TTM if Q2 unavailable
@@ -668,19 +673,32 @@ export async function fullExtraction(
           // FCF = Operating Cash Flow - CapEx
           if (latestQ.operatingCashFlow !== null && latestQ.capitalExpenditure !== null) {
             const fcf = latestQ.operatingCashFlow + latestQ.capitalExpenditure; // capitalExpenditure הוא שלילי
-            data.cashFlow.freeCashFlow = fcf;
-            needAIExtraction.fcf = false;
-            logger.info(`   ✅ Free Cash Flow Q2: $${(fcf / 1e6).toFixed(2)}M (${latestQ.calendarYear} ${latestQ.period})`);
 
-            // YoY FCF Change (אם יש נתון של אותו רבעון אשתקד)
-            if (cashFlow.length >= 5) {
-              const priorYearQ = cashFlow[4]; // 4 רבעונים אחורה
-              if (priorYearQ.operatingCashFlow !== null && priorYearQ.capitalExpenditure !== null) {
-                const priorFcf = priorYearQ.operatingCashFlow + priorYearQ.capitalExpenditure;
-                if (priorFcf !== 0) {
-                  const yoyChange = ((fcf - priorFcf) / Math.abs(priorFcf)) * 100;
-                  data.cashFlow.yoyChange = yoyChange;
-                  logger.info(`   ✅ FCF YoY Change: ${yoyChange.toFixed(2)}% ($${(priorFcf / 1e6).toFixed(2)}M → $${(fcf / 1e6).toFixed(2)}M)`);
+            // 🛡️ VALIDATION: FCF shouldn't exceed $5B quarterly for most stocks
+            if (Math.abs(fcf) > 5e9) {
+              logger.warn(`   ⚠️ FCF too large ($${(fcf / 1e9).toFixed(2)}B) - possibly annual data, not quarterly! Rejecting.`);
+              needAIExtraction.fcf = true; // Request AI to find correct quarterly FCF
+            } else {
+              data.cashFlow.freeCashFlow = fcf;
+              needAIExtraction.fcf = false;
+              logger.info(`   ✅ Free Cash Flow Q${Math.ceil((new Date(latestQ.date).getMonth() + 1) / 3)}: $${(fcf / 1e6).toFixed(2)}M (${latestQ.calendarYear} ${latestQ.period})`);
+
+              // YoY FCF Change (אם יש נתון של אותו רבעון אשתקד)
+              if (cashFlow.length >= 5) {
+                const priorYearQ = cashFlow[4]; // 4 רבעונים אחורה
+                if (priorYearQ.operatingCashFlow !== null && priorYearQ.capitalExpenditure !== null) {
+                  const priorFcf = priorYearQ.operatingCashFlow + priorYearQ.capitalExpenditure;
+                  if (priorFcf !== 0) {
+                    const yoyChange = ((fcf - priorFcf) / Math.abs(priorFcf)) * 100;
+
+                    // 🛡️ VALIDATION: YoY shouldn't exceed 200% (unrealistic)
+                    if (Math.abs(yoyChange) > 200) {
+                      logger.warn(`   ⚠️ FCF YoY change too extreme (${yoyChange.toFixed(2)}%) - possibly comparing wrong periods`);
+                    } else {
+                      data.cashFlow.yoyChange = yoyChange;
+                      logger.info(`   ✅ FCF YoY Change: ${yoyChange.toFixed(2)}% ($${(priorFcf / 1e6).toFixed(2)}M → $${(fcf / 1e6).toFixed(2)}M)`);
+                    }
+                  }
                 }
               }
             }
@@ -702,6 +720,19 @@ export async function fullExtraction(
 
     logger.info(`✅ Quarterly data extraction complete for ${symbol}`);
 
+    // 🔍 Track missing data for AI extraction
+    const missingDataSummary = [];
+    if (needAIExtraction.netMargin) missingDataSummary.push('Net Margin');
+    if (needAIExtraction.operatingMargin) missingDataSummary.push('Operating Margin');
+    if (needAIExtraction.fcf) missingDataSummary.push('Free Cash Flow');
+    if (data.yoyGrowth.epsChange === null) missingDataSummary.push('YoY EPS Growth');
+
+    if (missingDataSummary.length > 0) {
+      logger.info(`🔍 Missing quarterly data: ${missingDataSummary.join(', ')} - will request AI extraction`);
+    } else {
+      logger.info(`✅ All quarterly metrics available from APIs`);
+    }
+
     // ✅ עכשיו תשתמש ב-AI רק לנתונים חסרים (guidance, sentiment, highlights)
     try {
       const quarter = Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
@@ -720,21 +751,33 @@ KNOWN DATA (Already extracted from Finnhub - DO NOT EXTRACT AGAIN):
 
 CRITICAL INSTRUCTIONS:
 1. Search ONLY in these sources (in order of priority):
-   a) ${companyName} Investor Relations website:
-      - ir.${symbol.toLowerCase()}.com
-      - investors.${companyName.toLowerCase().replace(/\s+/g, '').replace(/[^a-z0-9]/g, '')}.com
-      - ${companyName.toLowerCase().replace(/\s+/g, '')}.com/investors
-   
-   b) Official earnings press release for Q${quarter} ${year}
-   
-   c) Conference call transcript from the earnings call
+   a) **PDF Earnings Presentation/Slides**:
+      - "${symbol} Q${quarter} ${year} earnings presentation PDF"
+      - "${symbol} investor presentation Q${quarter} ${year} PDF"
+      - "${companyName} quarterly results slides ${reportDate} PDF"
+      - Look in: ir.${symbol.toLowerCase()}.com/presentations OR /events
 
-2. DO NOT use news articles, analyst reports, or third-party summaries
-3. DO NOT use sites like SeekingAlpha, Yahoo Finance, Bloomberg (only for last resort)
-4. Look for the OFFICIAL press release with title like:
-   - "${symbol} Reports Q${quarter} ${year} Results"
-   - "${companyName} Announces ${quarter}Q Earnings"
-   - "${companyName} Reports Quarterly Financial Results"
+   b) **Earnings Press Release PDF/HTML**:
+      - "${symbol} Q${quarter} ${year} earnings press release"
+      - "${companyName} reports Q${quarter} results"
+      - Look in: ir.${symbol.toLowerCase()}.com/press-releases OR /news
+
+   c) **8-K SEC Filing** (if IR materials unavailable):
+      - "SEC 8-K ${symbol} ${reportDate}"
+      - sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${symbol}
+
+   d) **Conference Call Transcript**:
+      - "${symbol} Q${quarter} ${year} earnings call transcript"
+
+2. **PDF Search Priority**: PDFs contain the most accurate quarterly data!
+   - Financial tables are usually on pages 10-15
+   - Look for "Q${quarter} ${year}" or "Quarter Ended" headers
+   - Ignore "Full Year" or "FY ${year}" sections
+
+3. DO NOT use news articles, analyst reports, or third-party summaries
+4. DO NOT confuse quarterly vs annual/TTM data:
+   ❌ WRONG: "FY 2025 FCF: $4.6B" (annual)
+   ✅ CORRECT: "Q4 FCF: $1.2B" (quarterly)
 
 EXTRACT THE FOLLOWING DATA:
 
