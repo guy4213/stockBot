@@ -516,12 +516,16 @@ function calculateTradeParams(price: number, classification: string) {
 // HELPER: Validate AI Response
 // ============================================
 function validateAIResponse(aiData: any, symbol: string): { isValid: boolean; reason: string } {
-  // Check if pdfMetrics has at least some data
-  const hasMetrics = aiData.pdfMetrics &&
-    (aiData.pdfMetrics.revenueYoY !== null ||
-     aiData.pdfMetrics.netMargin !== null ||
-     aiData.pdfMetrics.efficiencyRatioOrOperatingMargin !== null ||
-     aiData.pdfMetrics.cashFromOperations !== null);
+  // Count how many metrics we got (require at least 2 out of 4)
+  let metricsCount = 0;
+  if (aiData.pdfMetrics) {
+    if (aiData.pdfMetrics.revenueYoY !== null && aiData.pdfMetrics.revenueYoY !== undefined) metricsCount++;
+    if (aiData.pdfMetrics.netMargin !== null && aiData.pdfMetrics.netMargin !== undefined) metricsCount++;
+    if (aiData.pdfMetrics.efficiencyRatioOrOperatingMargin !== null && aiData.pdfMetrics.efficiencyRatioOrOperatingMargin !== undefined) metricsCount++;
+    if (aiData.pdfMetrics.cashFromOperations !== null && aiData.pdfMetrics.cashFromOperations !== undefined) metricsCount++;
+  }
+
+  const hasEnoughMetrics = metricsCount >= 2;  // ✅ Relaxed: 2 out of 4 is enough
 
   // Check if we have PDF URL
   const hasPdfUrl = aiData.dataSources?.pdfUrl !== null && aiData.dataSources?.pdfUrl !== undefined;
@@ -534,17 +538,20 @@ function validateAIResponse(aiData: any, symbol: string): { isValid: boolean; re
 
   // 🔍 DEBUG: Log validation checks
   logger.info(`🔍 VALIDATION for ${symbol}:`);
-  logger.info(`   - hasMetrics: ${hasMetrics}`);
-  logger.info(`   - hasPdfUrl: ${hasPdfUrl}`);
+  logger.info(`   - metricsCount: ${metricsCount}/4 (need 2+)`);
+  logger.info(`   - hasEnoughMetrics: ${hasEnoughMetrics}`);
+  logger.info(`   - hasPdfUrl: ${hasPdfUrl} (${aiData.dataSources?.pdfUrl || 'N/A'})`);
   logger.info(`   - hasRealHighlights: ${hasRealHighlights}`);
   if (aiData.pdfMetrics) {
     logger.info(`   - pdfMetrics values: rev=${aiData.pdfMetrics.revenueYoY}, net=${aiData.pdfMetrics.netMargin}, op=${aiData.pdfMetrics.efficiencyRatioOrOperatingMargin}, cash=${aiData.pdfMetrics.cashFromOperations}`);
+  } else {
+    logger.warn(`   - ⚠️ pdfMetrics is NULL/UNDEFINED`);
   }
 
-  if (!hasMetrics && !hasPdfUrl) {
+  if (!hasEnoughMetrics && !hasPdfUrl) {
     return {
       isValid: false,
-      reason: `No PDF found and no quarterly metrics extracted`
+      reason: `No PDF found and insufficient quarterly metrics (got ${metricsCount}/4, need 2+)`
     };
   }
 
@@ -555,10 +562,10 @@ function validateAIResponse(aiData: any, symbol: string): { isValid: boolean; re
     };
   }
 
-  if (!hasMetrics) {
+  if (!hasEnoughMetrics) {
     return {
       isValid: false,
-      reason: `PDF found but failed to extract quarterly metrics`
+      reason: `PDF found but insufficient quarterly metrics extracted (got ${metricsCount}/4, need 2+)`
     };
   }
 
@@ -569,7 +576,8 @@ function validateAIResponse(aiData: any, symbol: string): { isValid: boolean; re
     };
   }
 
-  // Success - we have PDF, metrics, and real content
+  // Success - we have PDF, enough metrics, and real content
+  logger.info(`✅ Validation passed: ${metricsCount}/4 metrics extracted`);
   return { isValid: true, reason: "Valid response with PDF and metrics" };
 }
 
@@ -1043,13 +1051,28 @@ EXTRACT THE FOLLOWING DATA:
 
 ⚠️ **MANDATORY PDF EXTRACTION** (for validation and override of API data):
 
-**STEP 1: Find the Quarterly Comparison Table in the PDF**
-This is CRITICAL! Look for a table showing:
-- Column 1: "Q${q} ${yr}" or "4Q25" or "Quarter Ended [date]"
-- Column 2: "Q${q} ${yr - 1}" or "4Q24" (prior year same quarter)
-This table is usually on pages 5-15 of the earnings presentation or press release.
+**CRITICAL INSTRUCTIONS FOR PDF TABLE EXTRACTION:**
 
-**STEP 2: Extract ALL of the following metrics (MANDATORY, not optional!):**
+You MUST open and read the PDF file. Look for financial tables that show quarterly data.
+
+**STEP 1: Find the Quarterly Comparison Table in the PDF**
+This is CRITICAL! Look for a table showing quarterly comparison data.
+The table typically looks like this:
+
+EXAMPLE TABLE FORMAT (what you're looking for):
+┌─────────────────────────┬───────────┬───────────┐
+│                         │ Q${q} ${yr}   │ Q${q} ${yr - 1}   │
+├─────────────────────────┼───────────┼───────────┤
+│ Total Revenue           │ $21.3B    │ $20.5B    │
+│ Net Income              │ $3.7B     │ $3.1B     │
+│ Operating Expenses      │ $13.2B    │ $12.8B    │
+│ Efficiency Ratio        │ 62.0%     │ 64.5%     │
+└─────────────────────────┴───────────┴───────────┘
+
+This table is usually on pages 5-15 of the earnings presentation or press release.
+Look for headers like "Financial Highlights", "Quarterly Results", "Consolidated Results".
+
+**STEP 2: Extract the following metrics from the table (need at least 2 out of 4):**
 
 5. **Revenue YoY Growth** (MANDATORY):
    a) Find "Total Revenue" or "Net Interest Income" (for banks) or "Total Income":
@@ -1100,13 +1123,14 @@ This table is usually on pages 5-15 of the earnings presentation or press releas
    - ❌ WRONG: "TTM" ← התעלם מזה!
    - If FCF not available, return Operating Cash Flow instead
 
-**SUMMARY - You MUST extract ALL 4 metrics above (5-8):**
-1. Revenue YoY Growth (quarterly comparison)
-2. Net Margin (calculate from Net Income / Revenue)
+**SUMMARY - You MUST extract AT LEAST 2 OUT OF 4 metrics (5-8):**
+1. Revenue YoY Growth (quarterly comparison) - HIGH PRIORITY
+2. Net Margin (calculate from Net Income / Revenue) - HIGH PRIORITY
 3. Operating Margin or Efficiency Ratio (for banks: Efficiency Ratio)
 4. Cash from Operations or FCF (quarterly)
 
-These are MANDATORY extractions from the PDF to validate/override API data!
+⚠️ VALIDATION REQUIREMENT: Extract at least 2 metrics to pass validation!
+Focus on Revenue YoY Growth and Net Margin first - they are the most important.
 
 SEARCH QUERY EXAMPLES TO USE (use COMPANY NAME, not ticker):
 1. First, find the IR page:
