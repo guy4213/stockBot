@@ -101,13 +101,18 @@ interface FinnhubEarningsEntry {
     epsActual?: number | null|undefined;
     revenueActual?: number | null;
 }
-
+    const now = new Date();
+    const threeDaysAgo = new Date(now);
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    const dateString = threeDaysAgo.toISOString().split("T")[0];
 async function checkFinnhubUpdates(symbol: string, date: string): Promise<boolean> {
     const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
     if (!FINNHUB_API_KEY) return false;
 
+
     const yesterday = new Date(date);
     yesterday.setDate(yesterday.getDate() - 1);
+    
     const yesterdayStr = yesterday.toISOString().split('T')[0];
 
     try {
@@ -175,12 +180,11 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
       }
 
       // ✅ שלב 2: אימות תאריך דיווח (רק אחרי שעבר שווי+נפח!)
-      const isDateValid = await verifyEarningsDate(symbol, date);
-      if (!isDateValid) {
-          logger.warn(`⚠️ ${symbol} - Earnings date mismatch with FMP. Skipping.`);
-          continue;
-      }
-      
+  const isDateValid = await verifyEarningsDate(symbol, date);
+  if (!isDateValid) {
+      logger.warn(`⚠️ ${symbol} - FMP date mismatch (not blocking - Finnhub is more current)`);
+      // ⚠️ DON'T skip - Finnhub is the source of truth for TODAY
+  }
       let reportType: "BMO" | "AMC" = entry.hour.toLowerCase() === 'bmo' ? "BMO" : "AMC";
       let windowStart = reportType === "BMO" ? "07:00" : "16:05";
       let windowEnd = reportType === "BMO" ? "09:30" : "20:00";
@@ -230,16 +234,14 @@ async function verifyEarningsDate(symbol: string, expectedDate: string): Promise
         const earnings = await getEarnings(symbol);
         
         if (!earnings || earnings.length === 0) {
-            logger.warn(`⚠️ No earnings data from FMP for ${symbol}`);
-            return false; // אין נתונים - לא מאומת
+            logger.warn(`⚠️ No FMP data for ${symbol} - trusting Finnhub date`);
+            return true;  // ✅ אם אין נתוני FMP - סמוך על Finnhub!
         }
 
-        // ✅ מיון לפי lastUpdated (הכי חדש ראשון)
         const sortedEarnings = earnings.sort((a, b) => 
             new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime()
         );
 
-        // ✅ קח את 3 הרשומות העדכניות ביותר
         const recentEarnings = sortedEarnings.slice(0, 3);
         
         logger.info(`📊 Latest 3 earnings for ${symbol}:`);
@@ -247,22 +249,31 @@ async function verifyEarningsDate(symbol: string, expectedDate: string): Promise
             logger.info(`  ${i + 1}. Date: ${e.date} | Last Updated: ${e.lastUpdated}`);
         });
 
-        // ✅ בדוק אם אחד מהם תואם לתאריך הצפוי
         const matchingEarning = recentEarnings.find(e => e.date === expectedDate);
 
         if (matchingEarning) {
-            logger.info(`✅ MATCH FOUND: ${symbol} has earnings on ${expectedDate} (updated: ${matchingEarning.lastUpdated})`);
+            logger.info(`✅ MATCH FOUND: ${symbol} has earnings on ${expectedDate}`);
             return true;
         }
 
-        // ✅ אם לא מצאנו התאמה - הדפס את התאריך הקרוב ביותר
+        // ✅ חדש: בדוק אם ה-FMP data ישן מדי (>7 ימים)
+        const mostRecent = recentEarnings[0];
+        const daysSinceUpdate = Math.floor(
+            (new Date().getTime() - new Date(mostRecent.lastUpdated).getTime()) / (1000 * 60 * 60 * 24)
+        );
+
+        if (daysSinceUpdate > 7) {
+            logger.warn(`⚠️ FMP data is stale (${daysSinceUpdate} days old) - trusting Finnhub`);
+            return true;  // ✅ FMP לא מעודכן - סמוך על Finnhub
+        }
+
         const closestDate = recentEarnings[0].date;
-        logger.warn(`❌ NO MATCH: ${symbol} next earnings is ${closestDate}, not ${expectedDate}`);
-        return false;
+        logger.warn(`❌ NO MATCH: ${symbol} FMP says ${closestDate}, Finnhub says ${expectedDate}`);
+        return false;  // ⚠️ רק אם FMP עדכני ולא תואם
 
     } catch (error: any) {
         logger.error(`❌ Error verifying earnings date for ${symbol}:`, error.message);
-        return false; // במקרה של שגיאה - לא מאומת
+        return true;  // ✅ במקרה של שגיאה - סמוך על Finnhub
     }
 }
 
@@ -919,17 +930,16 @@ export async function fullExtraction(
     logger.info(`✅ Quarterly data extraction complete for ${symbol}`);
 
     // 🔍 Track missing data for AI extraction
-    const missingDataSummary = [];
-    if (needAIExtraction.netMargin) missingDataSummary.push('Net Margin');
-    if (needAIExtraction.operatingMargin) missingDataSummary.push('Operating Margin');
-    if (needAIExtraction.fcf) missingDataSummary.push('Free Cash Flow');
-    if (data.yoyGrowth.epsChange === null) missingDataSummary.push('YoY EPS Growth');
-
-    if (missingDataSummary.length > 0) {
-      logger.info(`🔍 Missing quarterly data: ${missingDataSummary.join(', ')} - will request AI extraction`);
-    } else {
-      logger.info(`✅ All quarterly metrics available from APIs`);
-    }
+   logger.info(`🤖 AI will extract ALL quarterly metrics from PDF (FMP/Finnhub are fallback only)`);
+  logger.info(`📊 API data available for comparison/validation: ${
+  [
+    data.margins.netMargin !== null ? 'Net Margin' : null,
+    data.margins.operatingMargin !== null ? 'Operating Margin' : null,
+    data.cashFlow.freeCashFlow !== null ? 'FCF' : null,
+    data.yoyGrowth.epsChange !== null ? 'YoY EPS' : null,
+    data.yoyGrowth.revenueChange !== null ? 'YoY Revenue' : null
+  ].filter(Boolean).join(', ') || 'None'
+}`);
 
     // ✅ עכשיו תשתמש ב-AI רק לנתונים חסרים (guidance, sentiment, highlights)
     try {
@@ -939,7 +949,7 @@ export async function fullExtraction(
       const yr = fiscalYear || new Date(reportDate).getFullYear();
       logger.info(`📅 Report date ${reportDate} → Q${q} ${yr} earnings${quarter ? ' (from calendar)' : ' (calculated)'}`);
       
-      const supplementPrompt = `
+const supplementPrompt = `
 You are a financial data analyst extracting information from official earnings reports.
 
 TARGET COMPANY: ${symbol} (${companyName})
@@ -1032,7 +1042,13 @@ EXTRACT THE FOLLOWING DATA:
    - Challenges, headwinds, competitive pressures
    - Areas that missed expectations
 
-⚠️ **MANDATORY PDF EXTRACTION** (for validation and override of API data):
+⚠️ **MANDATORY PDF EXTRACTION** (PRIMARY SOURCE - NOT VALIDATION!):
+
+🚨 CRITICAL: The PDF is your PRIMARY and ONLY source for quarterly metrics!
+- API data (Finnhub/FMP) is FALLBACK ONLY if PDF extraction fails
+- DO NOT assume API data is correct - it often contains annual/TTM data
+- YOU MUST extract quarterly data from the PDF for ALL 4 metrics below
+- If you cannot find quarterly data in PDF, return null (don't use API data)
 
 **STEP 1: Find the Quarterly Comparison Table in the PDF**
 This is CRITICAL! Look for a table showing:
@@ -1042,7 +1058,7 @@ This table is usually on pages 5-15 of the earnings presentation or press releas
 
 **STEP 2: Extract ALL of the following metrics (MANDATORY, not optional!):**
 
-5. **Revenue YoY Growth** (MANDATORY):
+5. **Revenue YoY Growth** (MANDATORY - QUARTERLY ONLY!):
    a) Find "Total Revenue" or "Net Interest Income" (for banks) or "Total Income":
       - Q${q} ${yr}: $X.X billion
       - Q${q} ${yr - 1}: $Y.Y billion
@@ -1052,8 +1068,10 @@ This table is usually on pages 5-15 of the earnings presentation or press releas
 
    ⚠️ CRITICAL: Must be QUARTERLY comparison, NOT "Full Year" or "TTM"!
    ⚠️ If table shows "Total revenue up 7%" → return 7.0
+   ❌ WRONG: "FY 2025 revenue growth: 12%" ← Ignore this! Only quarterly!
+   ✅ CORRECT: "Q4 2025 revenue vs Q4 2024: up 7%" → return 7.0
 
-6. **Net Margin Q${q}** (MANDATORY - calculate it):
+6. **Net Margin Q${q}** (MANDATORY - QUARTERLY ONLY, calculate it):
    a) From the quarterly table, find:
       - Net Income Q${q} ${yr}: $A.A billion
       - Revenue Q${q} ${yr}: $B.B billion
@@ -1062,42 +1080,140 @@ This table is usually on pages 5-15 of the earnings presentation or press releas
    d) For banks, this is usually 15-20%
 
    ⚠️ Must use Q${q} ${yr} quarterly numbers, NOT TTM!
+   ❌ WRONG: "Annual net margin: 25%" ← Ignore this!
+   ✅ CORRECT: "Q4 Net Income $2.0B / Revenue $6.1B = 32.8%" → return 32.8
 
-7. **Operating Margin OR Efficiency Ratio** (MANDATORY):
-   - **For BANKS**: Look for "Efficiency Ratio" (usually 55-70%)
-     * This is: (Noninterest Expense / Total Revenue) * 100
-     * The PDF usually shows this explicitly
-   - **For other companies**: Look for "Operating Margin" or "EBIT Margin"
-   - Return as number (e.g., 62.5 for 62.5% efficiency ratio)
+7. **Operating Margin OR Efficiency Ratio** (MANDATORY - QUARTERLY ONLY):
+    
+   🚨 CRITICAL ANTI-HALLUCINATION RULES:
+   1. You MUST find this number EXPLICITLY stated in the PDF
+   2. It MUST be labeled "Efficiency Ratio" or "Operating Margin"
+   3. It MUST be for Q${q} ${yr} (not prior quarter, not annual)
+   4. If you CANNOT find it → return null
+   5. DO NOT calculate it yourself
+   6. DO NOT estimate it
+   7. DO NOT use similar-sounding metrics (like "expense ratio" or "cost-to-income")
+   8. DO NOT copy values from other stocks you've seen
+   
+   🏦 **STEP 1: Identify Company Type**
+   - Is this a BANK? (keywords: "bank", "bancorp", "financial", "trust")
+   
+   🏦 **STEP 2a: FOR BANKS ONLY** → Extract "Efficiency Ratio"
+   - EXACT search terms to look for:
+     * "Efficiency ratio"
+     * "Adjusted efficiency ratio" 
+     * "GAAP efficiency ratio"
+   - WHERE to look (in order):
+     1. "Quarterly Financial Highlights" table
+     2. "Key Metrics" or "Performance Metrics" section
+     3. "Consolidated Statement of Income" footnotes
+   - WHAT it looks like:
+     * "Efficiency ratio: 62.3%" ✅
+     * "Adjusted efficiency ratio was 58.7%" ✅
+     * "Fourth quarter efficiency ratio of 65.1%" ✅
+   
+   📋 EXTRACTION CHECKLIST (ALL must be YES):
+   ☐ Did you find the exact phrase "efficiency ratio" in the PDF?
+   ☐ Is the number next to that phrase for Q${q} ${yr}?
+   ☐ Can you cite the page number where you found it?
+   ☐ Is it clearly a percentage (with % symbol or stated as such)?
+   
+   If ANY checkbox is NO → RETURN NULL
+   
+   🏭 **STEP 2b: FOR NON-BANKS** → Extract "Operating Margin"
+   - Same rules as above, but search for:
+     * "Operating margin"
+     * "EBIT margin"
+     * "Operating income margin"
+   
+   ⚠️ WHAT TO AVOID (these are NOT what we want):
+   ❌ "Expense ratio" - different metric!
+   ❌ "Cost-to-income ratio" - different metric!
+   ❌ "Non-interest expense to revenue" - this is the FORMULA, not the final %
+   ❌ Any number you calculated yourself
+   
+   📤 RETURN FORMAT:
+   - If FOUND: {"type": "efficiency_ratio", "value": 62.3, "source": "Page 12, Q4 Financial Highlights"}
+   - If NOT FOUND: null
+   
+   🛡️ SELF-CHECK BEFORE RETURNING:
+   Ask yourself: "Can I point to the EXACT sentence in the PDF where this number appears?"
+   - YES → Return the value
+   - NO → Return null
 
-   ⚠️ For banks, return efficiency ratio, NOT operating margin!
+8. **Cash from Operations Q${q}** (MANDATORY - QUARTERLY ONLY!):
+   
+   🚨 CRITICAL QUARTERLY VALIDATION:
+   - You MUST find the quarterly comparison table in the PDF
+   - Look for column headers: "Q${q} ${yr}" vs "Q${q} ${yr - 1}"
+   - DO NOT use "Full Year", "FY ${yr}", "Annual", or "TTM" rows
+   - Quarterly FCF for large banks is typically $500M - $2B
+   - Quarterly FCF for tech/industrial is typically $100M - $1B
+   - If you find a number > $3B, it's probably ANNUAL - reject it!
+   
+   a) Look for "Cash Flow Statement" or "Condensed Cash Flow" section
+   b) Find the QUARTERLY table (not annual summary)
+   c) Look for these rows IN ORDER OF PRIORITY:
+      
+      **Option 1 - Direct FCF** (best):
+      - "Free Cash Flow" (Q${q} ${yr} column)
+      - "Adjusted Free Cash Flow"
+      
+      **Option 2 - Calculate FCF**:
+      - "Cash from Operating Activities" (Q${q} ${yr}): $X.X billion
+      - "Capital Expenditures" (Q${q} ${yr}): $(Y.Y) billion
+      - FCF = Operating Cash Flow - |CapEx|
+      
+      **Option 3 - Operating Cash only** (if CapEx unavailable):
+      - "Cash from Operations" or "Operating Cash Flow"
+   
+   d) VALIDATION BEFORE RETURNING:
+      ✅ If quarterly FCF is $200M - $2B → probably correct
+      ⚠️ If quarterly FCF is $2B - $3B → double-check it's quarterly!
+      ❌ If quarterly FCF is > $3B → REJECT, it's annual/TTM!
+   
+   e) Return as number in MILLIONS (e.g., 1200 for $1.2B quarterly FCF)
+   
+   📋 EXAMPLES:
+   ✅ CORRECT: "Q4 2025: Operating cash flow $1.8B, CapEx $0.3B → FCF = $1.5B" → return 1500
+   ✅ CORRECT: "Quarter ended Dec 31: Free cash flow $950M" → return 950
+   ✅ CORRECT: "Fourth quarter: Cash from operations $2.1B, Capital expenditures $(0.6B) → FCF $1.5B" → return 1500
+   ❌ WRONG: "Full Year 2025: FCF $5.4B" → DO NOT USE THIS! Return null instead
+   ❌ WRONG: "TTM Free Cash Flow: $4.2B" → DO NOT USE THIS! Return null instead
+   ❌ WRONG: "Annual cash from operations: $8.2B" → DO NOT USE THIS! Return null instead
+   
+   🔍 HOW TO SPOT QUARTERLY vs ANNUAL:
+   - Quarterly tables usually show 5 columns: Q${q} ${yr}, Q${q-1} ${yr}, Q${q} ${yr-1}, YTD ${yr}, YTD ${yr-1}
+   - Look for labels: "Three months ended", "Quarter ended", "Q4", "Fourth quarter"
+   - Avoid labels: "Year ended", "Twelve months", "Annual", "FY", "TTM"
+   
+   ⚠️ FINAL CHECK: If the number seems too large (>$3B for one quarter), ask yourself:
+   - Does this company generate $12B+ FCF annually? (Only mega-caps like Apple/Microsoft)
+   - If not, you probably grabbed the annual number by mistake!
+      ⚠️ **CRITICAL - FCF vs Net Income:**
+- FCF is CASH (from Cash Flow Statement)
+- Net Income is PROFIT (from Income Statement)
+- DO NOT confuse them!
 
-8. **Cash from Operations Q${q}** (MANDATORY):
-   a) Look for "Cash Flow Statement" or "Cash Flow Summary" in the PDF
-   b) Find "Cash from Operating Activities" or "Operating Cash Flow"
-      - Q${q} ${yr}: $X.X billion
-   c) Return as number in MILLIONS (e.g., 3500 for $3.5B)
+📋 SANITY CHECK before returning:
+1. Is FCF you found from "Cash Flow Statement" section? (NOT Income Statement)
+2. Is the number labeled "Operating Cash Flow" or "Free Cash Flow"? (NOT Net Income)
+3. For banks: Q4 FCF typically $2-3B, NOT $1.5B (too close to Net Income!)
+4. If FCF ≈ Net Income → YOU PROBABLY GRABBED THE WRONG NUMBER!
 
-   OR if available:
-
-   **Free Cash Flow Q${q}**:
-   - "Free Cash Flow": $X.X billion (quarterly)
-   - OR calculate: Operating Cash Flow - Capital Expenditures
-   - Return as number in MILLIONS
-
-   ⚠️ CRITICAL:
-   - ✅ CORRECT: "Q${q} Operating cash flow: $3.5B" → return 3500
-   - ❌ WRONG: "Full Year ${yr} cash flow" ← התעלם מזה!
-   - ❌ WRONG: "TTM" ← התעלם מזה!
-   - If FCF not available, return Operating Cash Flow instead
+Example for PNC Q4:
+- Net Income: $2.02B ← from Income Statement (NOT this!)
+- Operating CF: $2.8B ← from Cash Flow Statement (use this!)
+- CapEx: $0.3B
+- FCF = $2.8B - $0.3B = $2.5B ✅ (NOT $2.02B!)
 
 **SUMMARY - You MUST extract ALL 4 metrics above (5-8):**
-1. Revenue YoY Growth (quarterly comparison)
-2. Net Margin (calculate from Net Income / Revenue)
-3. Operating Margin or Efficiency Ratio (for banks: Efficiency Ratio)
-4. Cash from Operations or FCF (quarterly)
+1. Revenue YoY Growth (quarterly Q${q} ${yr} vs Q${q} ${yr-1} comparison)
+2. Net Margin (calculate from Q${q} ${yr} Net Income / Revenue)
+3. Operating Margin or Efficiency Ratio (Q${q} ${yr} only, for banks: Efficiency Ratio)
+4. Cash from Operations or FCF (Q${q} ${yr} only, NOT annual, NOT TTM)
 
-These are MANDATORY extractions from the PDF to validate/override API data!
+These are MANDATORY extractions from the PDF - this is your PRIMARY job!
 
 SEARCH QUERY EXAMPLES TO USE (use COMPANY NAME, not ticker):
 1. First, find the IR page:
@@ -1129,12 +1245,17 @@ OUTPUT FORMAT - Return ONLY this JSON structure:
     "First specific risk or challenge mentioned",
     "Second specific risk or challenge mentioned"
   ],
-  "pdfMetrics": {
-    "revenueYoY": 7.0 | null,
-    "netMargin": 17.5 | null,
-    "efficiencyRatioOrOperatingMargin": 62.5 | null,
-    "cashFromOperations": 3500 | null
-  },
+"pdfMetrics": {
+  "revenueYoY": 7.0 | null,
+  "netMargin": 17.5 | null,
+"marginMetric": {
+  "type": "efficiency_ratio" | "operating_margin",
+  "value": 62.5,
+  "source": "Page 12, Quarterly Highlights table",  // ✅ חדש!
+  "verified": true | false  // ✅ חדש!
+} | null,
+  "cashFromOperations": 3500 | null
+}
   "dataSources": {
     "pdfUrl": "https://full-url-to-pdf-presentation.pdf" | null,
     "pressReleaseUrl": "https://full-url-to-press-release" | null,
@@ -1154,6 +1275,7 @@ This is NOT optional! The response will be REJECTED if these requirements are no
 2. **YOU MUST EXTRACT QUARTERLY METRICS FROM THE PDF**:
    - Find the quarterly comparison table (Q${q} ${yr} vs Q${q} ${yr - 1})
    - Extract ALL 4 required metrics: revenueYoY, netMargin, efficiency/operating, cashFromOps
+   - VERIFY each metric is QUARTERLY (not annual, not TTM)
    - If you cannot extract these → THE RESPONSE WILL BE REJECTED AND RETRIED
 
 3. **REAL URLs ONLY** (User will verify these manually!):
@@ -1171,8 +1293,14 @@ This is NOT optional! The response will be REJECTED if these requirements are no
 ⚠️ **THIS RESPONSE WILL BE VALIDATED**:
 - Missing PDF URL → REJECTED & RETRY
 - All metrics null → REJECTED & RETRY
+- Any metric > reasonable quarterly range → REJECTED & RETRY (you extracted annual data!)
 - Generic "no data" responses → REJECTED & RETRY
 - Made-up/non-working URLs → REJECTED & RETRY
+
+🎯 **FINAL REMINDER - QUARTERLY DATA ONLY**:
+- Banks: Q${q} FCF typically $500M-$2B (not $5B!)
+- Tech/Industrial: Q${q} FCF typically $100M-$1B (not $4B!)
+- If your number is way higher → you grabbed the ANNUAL number by mistake!
 
 Return ONLY valid JSON - NO markdown, NO explanations, NO extra text
 `;
@@ -1321,66 +1449,102 @@ Return ONLY valid JSON with no markdown formatting or explanations.`
         data.concerns = ["Data not available from IR sources", "Data not available from IR sources"];
       }
 
-      // ✅ PDF Metrics - VALIDATION & OVERRIDE of API data
+  // ✅ PDF Metrics - AI IS PRIMARY SOURCE (always override API data)
       if (aiData.pdfMetrics) {
-        logger.info(`📄 ===== PDF METRICS (for validation) =====`);
+        logger.info(`📄 ===== PDF METRICS (PRIMARY SOURCE) =====`);
 
-        // 1. Revenue YoY Growth - Compare with API calculation
+        // 1. Revenue YoY Growth - ALWAYS use PDF if available
         if (aiData.pdfMetrics.revenueYoY !== null && aiData.pdfMetrics.revenueYoY !== undefined) {
           const pdfRevYoY = aiData.pdfMetrics.revenueYoY;
           const apiRevYoY = data.yoyGrowth.revenueChange;
 
-          logger.info(`📊 Revenue YoY: PDF=${pdfRevYoY.toFixed(2)}%, API=${apiRevYoY !== null ? apiRevYoY.toFixed(2) : 'N/A'}%`);
+          logger.info(`📊 Revenue YoY: PDF=${pdfRevYoY.toFixed(2)}% (QUARTERLY), API=${apiRevYoY !== null ? apiRevYoY.toFixed(2) : 'N/A'}%${data.yoyGrowth.revenueChangeType === 'TTM' ? ' (TTM)' : ''}`);
 
-          // If API is TTM or significantly different, use PDF
-          if (data.yoyGrowth.revenueChangeType === "TTM" || apiRevYoY === null || Math.abs(pdfRevYoY - apiRevYoY) > 10) {
-            logger.warn(`   🔄 OVERRIDING API Revenue YoY with PDF data (${pdfRevYoY.toFixed(2)}%)`);
-            data.yoyGrowth.revenueChange = pdfRevYoY;
-            data.yoyGrowth.revenueChangeType = "quarterly";
-          }
+          // ALWAYS use PDF (it's quarterly and from official report)
+          logger.info(`   ✅ Using PDF Revenue YoY (${pdfRevYoY.toFixed(2)}%) - PRIMARY SOURCE`);
+          data.yoyGrowth.revenueChange = pdfRevYoY;
+          data.yoyGrowth.revenueChangeType = "quarterly";
+        } else if (data.yoyGrowth.revenueChange !== null) {
+          logger.warn(`   ⚠️ PDF Revenue YoY unavailable - using API fallback (${data.yoyGrowth.revenueChange?.toFixed(2)}%${data.yoyGrowth.revenueChangeType === 'TTM' ? ' TTM - not ideal!' : ''})`);
+        } else {
+          logger.warn(`   ❌ Revenue YoY unavailable from both PDF and API`);
         }
 
-        // 2. Net Margin - Override if different or unavailable
+        // 2. Net Margin - ALWAYS use PDF if available
         if (aiData.pdfMetrics.netMargin !== null && aiData.pdfMetrics.netMargin !== undefined) {
           const pdfNetMargin = aiData.pdfMetrics.netMargin;
           const apiNetMargin = data.margins.netMargin;
 
-          logger.info(`📊 Net Margin: PDF=${pdfNetMargin.toFixed(2)}%, API=${apiNetMargin !== null ? apiNetMargin.toFixed(2) : 'N/A'}%`);
+          logger.info(`📊 Net Margin: PDF=${pdfNetMargin.toFixed(2)}% (QUARTERLY), API=${apiNetMargin !== null ? apiNetMargin.toFixed(2) : 'N/A'}%`);
 
-          if (apiNetMargin === null || Math.abs(pdfNetMargin - apiNetMargin) > 5) {
-            logger.warn(`   🔄 OVERRIDING API Net Margin with PDF data (${pdfNetMargin.toFixed(2)}%)`);
-            data.margins.netMargin = pdfNetMargin;
-          }
+          // ALWAYS use PDF
+          logger.info(`   ✅ Using PDF Net Margin (${pdfNetMargin.toFixed(2)}%) - PRIMARY SOURCE`);
+          data.margins.netMargin = pdfNetMargin;
+        } else if (data.margins.netMargin !== null) {
+          logger.warn(`   ⚠️ PDF Net Margin unavailable - using API fallback (${data.margins.netMargin.toFixed(2)}%)`);
+        } else {
+          logger.warn(`   ❌ Net Margin unavailable from both PDF and API`);
         }
 
-        // 3. Operating Margin / Efficiency Ratio - Override if available
-        if (aiData.pdfMetrics.efficiencyRatioOrOperatingMargin !== null && aiData.pdfMetrics.efficiencyRatioOrOperatingMargin !== undefined) {
-          const pdfOpMargin = aiData.pdfMetrics.efficiencyRatioOrOperatingMargin;
-          const apiOpMargin = data.margins.operatingMargin;
-
-          logger.info(`📊 Operating/Efficiency: PDF=${pdfOpMargin.toFixed(2)}%, API=${apiOpMargin !== null ? apiOpMargin.toFixed(2) : 'N/A'}%`);
-
-          if (apiOpMargin === null || Math.abs(pdfOpMargin - apiOpMargin) > 5) {
-            logger.warn(`   🔄 OVERRIDING API Operating Margin with PDF data (${pdfOpMargin.toFixed(2)}%)`);
-            data.margins.operatingMargin = pdfOpMargin;
+   // 3. Operating Margin / Efficiency Ratio - Bank-aware validation
+         // 3. Operating Margin / Efficiency Ratio - Bank-aware validation
+          if (aiData.pdfMetrics.marginMetric) {
+              const { type, value, source, verified } = aiData.pdfMetrics.marginMetric;
+              
+              // ✅ CRITICAL: בדוק שה-AI באמת אימת שהוא מצא את הערך
+              if (!source || source.toLowerCase().includes('not found') || source === 'N/A') {
+                  logger.error(`❌ ${symbol}: AI returned margin without source - rejecting!`);
+                  logger.warn(`   Value was: ${value}% but no PDF source cited`);
+                  data.margins.operatingMargin = null;
+                  data.margins.isEfficiencyRatio = false;
+              } else {
+                  // ✅ יש מקור - זה לגיטימי
+                  data.margins.operatingMargin = value;
+                  data.margins.isEfficiencyRatio = (type === 'efficiency_ratio');
+                  logger.info(`✅ Using PDF ${type} (${value.toFixed(2)}%) from ${source}`);
+              }
+          } else {
+              logger.warn(`⚠️ No margin metric returned by AI`);
           }
-        }
 
-        // 4. Cash from Operations / FCF - Use if FCF unavailable
+        // 4. 🔥 FREE CASH FLOW - CRITICAL: ALWAYS use PDF if available (API is often annual!)
         if (aiData.pdfMetrics.cashFromOperations !== null && aiData.pdfMetrics.cashFromOperations !== undefined) {
           const pdfCashFlow = aiData.pdfMetrics.cashFromOperations * 1e6; // Convert millions to dollars
+          const apiFCF = data.cashFlow.freeCashFlow;
 
-          logger.info(`📊 Cash from Operations: PDF=$${(pdfCashFlow / 1e9).toFixed(2)}B`);
+          logger.info(`📊 Cash Flow: PDF=$${(pdfCashFlow / 1e9).toFixed(2)}B (QUARTERLY), API=${apiFCF !== null ? '$' + (apiFCF / 1e9).toFixed(2) + 'B' : 'N/A'}`);
 
-          if (data.cashFlow.freeCashFlow === null) {
-            logger.warn(`   🔄 Using PDF Cash from Operations (FCF unavailable): $${(pdfCashFlow / 1e6).toFixed(2)}M`);
+          // 🛡️ VALIDATION: Quarterly FCF shouldn't exceed $3B for most companies
+          if (Math.abs(pdfCashFlow) > 3e9) {
+            logger.error(`   ❌ PDF FCF too large ($${(pdfCashFlow / 1e9).toFixed(2)}B) - AI probably extracted annual data! Rejecting.`);
+            if (apiFCF !== null && Math.abs(apiFCF) < 3e9) {
+              logger.warn(`   ⚠️ Using API FCF as fallback ($${(apiFCF / 1e6).toFixed(2)}M) - but this may also be annual!`);
+            } else {
+              logger.warn(`   ⚠️ Both PDF and API FCF look suspicious - setting to null`);
+              data.cashFlow.freeCashFlow = null;
+            }
+          } else {
+            // PDF FCF is reasonable - ALWAYS use it
+            logger.info(`   ✅ Using PDF Cash Flow ($${(pdfCashFlow / 1e6).toFixed(2)}M) - PRIMARY SOURCE`);
             data.cashFlow.freeCashFlow = pdfCashFlow;
           }
+        } else if (data.cashFlow.freeCashFlow !== null) {
+          // No PDF data - check if API FCF is reasonable
+          const apiFCF = data.cashFlow.freeCashFlow;
+          if (Math.abs(apiFCF) > 3e9) {
+            logger.error(`   ❌ API FCF too large ($${(apiFCF / 1e9).toFixed(2)}B) - probably annual/TTM! Rejecting.`);
+            data.cashFlow.freeCashFlow = null;
+          } else {
+            logger.warn(`   ⚠️ PDF FCF unavailable - using API fallback ($${(apiFCF / 1e6).toFixed(2)}M) - verify manually!`);
+          }
+        } else {
+          logger.warn(`   ❌ FCF unavailable from both PDF and API`);
         }
 
         logger.info(`📄 ===== END PDF METRICS =====`);
       } else {
-        logger.warn(`⚠️ No pdfMetrics found in AI response - cannot validate API data`);
+        logger.error(`❌ CRITICAL: No pdfMetrics found in AI response - AI extraction failed!`);
+        logger.warn(`⚠️ Will use API data as fallback, but this is NOT recommended (may be annual/TTM)`);
       }
 
       // ✅ Data Sources (PDF URLs for verification)
@@ -1609,9 +1773,10 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   const netMargin = fullData.margins?.netMargin !== null && fullData.margins?.netMargin !== undefined
     ? `${fullData.margins.netMargin.toFixed(2)}%`
     : "לא זמין";
-  const opMargin = fullData.margins?.operatingMargin !== null && fullData.margins?.operatingMargin !== undefined
-    ? `${fullData.margins.operatingMargin.toFixed(2)}%`
-    : "לא זמין";
+const opMarginLabel = fullData.margins?.isEfficiencyRatio ? 'Efficiency' : 'Operating';
+const opMargin = fullData.margins?.operatingMargin !== null && fullData.margins?.operatingMargin !== undefined
+  ? `${fullData.margins.operatingMargin.toFixed(2)}%`
+  : "לא זמין";
 
   // FCF - show dollar amount instead of "חיובי"/"שלילי"
   const fcfStatus = fullData.cashFlow?.freeCashFlow !== null && fullData.cashFlow?.freeCashFlow !== undefined
@@ -1636,7 +1801,7 @@ EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${e
 תחזית: ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
 Free Cash Flow: ${fcfStatus}${fcfTrend}
 YoY Growth: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth}
-שולי רווח: Net ${netMargin} | Operating ${opMargin}
+שולי רווח: Net ${netMargin} | ${opMarginLabel} ${opMargin}
 סנטימנט: ${fullData.sentiment.overall}${fullData.sentiment.reasoning ? ` - ${fullData.sentiment.reasoning}` : ''}
 
 ניקוד: ${miraScore.totalScore}
@@ -1674,11 +1839,17 @@ ${tradeParams.direction === "NEUTRAL ⚪" ? `
 📊 פרטי דוח:
 - EPS: $${fullData.eps.actual} מול תחזית $${fullData.eps.estimate} (סטייה ${epsDeviation}%)
 - Revenues: $${(fullData.revenue.actual / 1e6).toFixed(0)}M מול תחזית $${(fullData.revenue.estimate / 1e6).toFixed(0)}M (סטייה ${revenueDeviation}%)
-- Guidance: ${fullData.guidance.status === 'raised' ? 'הועלה' : fullData.guidance.status === 'lowered' ? 'הופחת' : fullData.guidance.status === 'maintained' ? 'נשמר' : 'לא זמין'}${fullData.guidance.details ? `
+- - Guidance: ${
+  fullData.guidance.status === 'raised' ? '🔺 הועלה' : 
+  fullData.guidance.status === 'lowered' ? '🔻 הופחת' : 
+  fullData.guidance.status === 'maintained' ? '➡️ נשמר' : 
+  'לא זמין'
+}${fullData.guidance.details ? `
   📝 ${fullData.guidance.details}` : ''}
+- שולי רווח: Net ${netMargin}% | ${opMarginLabel} ${opMargin}%
 - Free Cash Flow: ${fcfStatus}${fcfTrend}
 - YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
-- שולי רווח: Net ${netMargin}% | Operating ${opMargin}%
+- שולי רווח: Net ${netMargin}% | ${opMarginLabel} ${opMargin}%
 - סנטימנט הנהלה: ${fullData.sentiment.overall === 'positive' ? 'חיובי' : fullData.sentiment.overall === 'negative' ? 'שלילי' : 'ניטרלי'}${fullData.sentiment.reasoning ? `
   📝 ${fullData.sentiment.reasoning}` : ''}
 
@@ -1796,8 +1967,8 @@ private async processNextStock(): Promise<void> {
     if (!this.isRunning) return;
 
     const stock = this.stocks.find((s) => {
-        if (s.status !== "pending" && s.status !== "checking") return false;
-        if (!this.isMarketWindowOpen(s.windowStart)) return false;
+        // if (s.status !== "pending" && s.status !== "checking") return false;
+        // if (!this.isMarketWindowOpen(s.windowStart)) return false;
         if (s.sentToTelegram) return false;  // ✅ Skip if already sent
         return true;
     });

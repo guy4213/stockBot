@@ -1,14 +1,14 @@
 {
-  "date": "2026-01-13",
+  "date": "2026-01-21",
   "stocks": [
     {
-      "symbol": "BK",
-      "companyName": "The Bank of New York Mellon Corporation",
+      "symbol": "JNJ",
+      "companyName": "Johnson & Johnson",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 84142263187,
-      "volume": 3015952,
+      "marketCap": 525732284207,
+      "volume": 10235488,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -18,19 +18,20 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 2.0432,
+        "epsEstimate": 2.4624,
         "revenueActual": null,
-        "revenueEstimate": 5293168115
-      }
+        "revenueEstimate": 24400832581
+      },
+      "sentToTelegram": false
     },
     {
-      "symbol": "DAL",
-      "companyName": "Delta Air Lines, Inc.",
+      "symbol": "SCHW",
+      "companyName": "The Charles Schwab Corporation",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 46379945411,
-      "volume": 9197198,
+      "marketCap": 183319003065,
+      "volume": 10968926,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -40,19 +41,20 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 1.5422,
+        "epsEstimate": 1.4169,
         "revenueActual": null,
-        "revenueEstimate": 14839394346
-      }
+        "revenueEstimate": 6496526880
+      },
+      "sentToTelegram": false
     },
     {
-      "symbol": "CNXC",
-      "companyName": "Concentrix Corporation",
+      "symbol": "PLD",
+      "companyName": "Prologis, Inc.",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 2573464995,
-      "volume": 1667630,
+      "marketCap": 121505092270,
+      "volume": 3953420,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -62,10 +64,402 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 2.9682,
+        "epsEstimate": 0.6848,
         "revenueActual": null,
-        "revenueEstimate": 2590068660
-      }
+        "revenueEstimate": 2169277495
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "TEL",
+      "companyName": "TE Connectivity Ltd.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 68625526581,
+      "volume": 3132550,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 1,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 2.5792,
+        "revenueActual": null,
+        "revenueEstimate": 4579975471
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "TFC",
+      "companyName": "Truist Financial Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 63362842583,
+      "volume": 16656954,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 1.1058,
+        "revenueActual": null,
+        "revenueEstimate": 5369625438
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "KMI",
+      "companyName": "Kinder Morgan, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 62204289600,
+      "volume": 14782318,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.37,
+        "revenueActual": null,
+        "revenueEstimate": 4356783853
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "TRV",
+      "companyName": "The Travelers Companies, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 60698332985,
+      "volume": 1698028,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 8.8904,
+        "revenueActual": null,
+        "revenueEstimate": 11087019803
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "HAL",
+      "companyName": "Halliburton Company",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 27334424544,
+      "volume": 15374674,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.55,
+        "revenueActual": null,
+        "revenueEstimate": 5466581852
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "CFG",
+      "companyName": "Citizens Financial Group, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 25687569084,
+      "volume": 7429584,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 1.1179,
+        "revenueActual": null,
+        "revenueEstimate": 2177991340
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "MKC",
+      "companyName": "McCormick & Company, Incorporated",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 18203922374,
+      "volume": 4198377,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.8847,
+        "revenueActual": null,
+        "revenueEstimate": 1863364150
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "ALLY",
+      "companyName": "Ally Financial Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 13067616532,
+      "volume": 4394007,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 1.0526,
+        "revenueActual": null,
+        "revenueEstimate": 2186397601
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "ONB",
+      "companyName": "Old National Bancorp",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 8948701700,
+      "volume": 2254814,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.5988,
+        "revenueActual": null,
+        "revenueEstimate": 713304975
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "KNX",
+      "companyName": "Knight-Swift Transportation Holdings Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 8940008730,
+      "volume": 2833235,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.3612,
+        "revenueActual": null,
+        "revenueEstimate": 1919296475
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "PNFP",
+      "companyName": "Pinnacle Financial Partners, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 7481924359,
+      "volume": 1827626,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 2.2699,
+        "revenueActual": null,
+        "revenueEstimate": 561525300
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "MMYT",
+      "companyName": "MakeMyTrip Limited",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 7097043447,
+      "volume": 1648650,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 3,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.3978,
+        "revenueActual": null,
+        "revenueEstimate": 310213620
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "SNV",
+      "companyName": "Synovus Financial Corp.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 6947716125,
+      "volume": 9310401,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 1.4199,
+        "revenueActual": null,
+        "revenueEstimate": 619000174
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "FULT",
+      "companyName": "Fulton Financial Corporation",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 3552375032,
+      "volume": 1447653,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.5131,
+        "revenueActual": null,
+        "revenueEstimate": 284110800
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "WNS",
+      "companyName": "WNS (Holdings) Limited",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 3321384300,
+      "volume": 2851390,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 3,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 1.2241,
+        "revenueActual": null,
+        "revenueEstimate": 355966420
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "BANC",
+      "companyName": "Banc of California, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 3186044654,
+      "volume": 2070773,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.3792,
+        "revenueActual": null,
+        "revenueEstimate": 268552291
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "PPBI",
+      "companyName": "Pacific Premier Bancorp, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 2375319386,
+      "volume": 19566748,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.3774,
+        "revenueActual": null,
+        "revenueEstimate": 142749000
+      },
+      "sentToTelegram": false
     }
   ]
 }

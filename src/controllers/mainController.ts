@@ -208,6 +208,7 @@ let activeProcessor: StockProcessor | null = null;
 export const runDailyCheck = async (req?: Request, res?: Response) => {
   try {
 
+
     const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
     const filePath = path.join(__dirname, "../data/stocksReportingToday.json");
 

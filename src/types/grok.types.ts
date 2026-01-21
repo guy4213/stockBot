@@ -135,17 +135,18 @@ export interface CashFlow {
 export interface Margins {
   netMargin: number | null;
   operatingMargin: number | null;
-  trend: "improving" | "stable" | "declining" | "unavailable";
+  trend: string;
+  isEfficiencyRatio?: boolean; 
 }
 
 export interface Guidance {
   status: "raised" | "maintained" | "lowered" | "unavailable";
-  details: string | null;  // פירוט של מה בדיוק שונה בתחזית
+  details: string | null;  
 }
 
 export interface Sentiment {
   overall: "positive" | "neutral" | "negative";
-  reasoning: string | null;  // הסבר למה הסנטימנט כזה (1 משפט בעברית)
+  reasoning: string | null; 
 }
 
 export interface DataQuality {
@@ -167,6 +168,7 @@ export interface FullExtractionResponse {
   reportTime: string;
   marketData: MarketData;
   eps: EPS;
+  isEfficiencyRatio? : boolean; 
   revenue: Revenue;
   yoyGrowth: YoYGrowth;
   cashFlow: CashFlow;
