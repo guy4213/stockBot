@@ -2102,4 +2102,4 @@ private async processNextStock(): Promise<void> {
   stop() { this.isRunning = false; if (this.checkInterval) clearInterval(this.checkInterval); }
 }
 
-export default { morningIntelligence, miniCheck, fullExtraction, finalAnalysis, StockProcessor };
+export default { morningIntelligence, miniCheck, fullExtraction, finalAnalysis, StockProcessor };//
