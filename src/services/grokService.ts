@@ -28,11 +28,11 @@ dotenv.config({ quiet: true });
 const GROK_API_URL = "https://api.x.ai/v1/chat/completions";
 const GROK_API_KEY = process.env.GROK_API_KEY;
 const GROK_MODEL = "grok-3-mini"; 
-
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;
-const DELAY_BETWEEN_STOCKS_MS = 2 * 60 * 1000;
 const MAX_API_RETRIES = 3;
-
+const CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes between iterations
+const DELAY_BETWEEN_STOCKS_MS = 5000; // 5 seconds between individual stock checks
+const MAX_CHECK_ATTEMPTS = 10; // Stop checking after 10 failed attempts
+const WINDOW_BUFFER_HOURS = 1; // Check stocks ±2 hours from their window
 interface ExtendedStock extends Stock {
     quarter?: number;
     fiscalYear?: number;
@@ -1943,8 +1943,11 @@ ${tradeParams.direction === "NEUTRAL ⚪" ? '6. עבור NEUTRAL: הדגש שצ�
   }
 }
 // ============================================
-// 6. STOCK PROCESSOR (ENGINE)
+// STOCK PROCESSOR (ENGINE) - OPTIMIZED VERSION
 // ============================================
+
+
+
 export class StockProcessor {
   private stocks: (StockProcessingState & { quarter?: number, fiscalYear?: number })[] = [];
   private isRunning: boolean = false;
@@ -1952,154 +1955,295 @@ export class StockProcessor {
 
   constructor(private onComplete?: (stock: StockProcessingState) => void) {}
 
-  private isMarketWindowOpen(windowStart: string): boolean {
-    const nyTime = new Date().toLocaleString("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit" });
-    return nyTime >= windowStart;
+  /**
+   * פונקציה חדשה: בודק אם מניה בטווח זמן סביר לבדיקה
+   * @param windowStart - זמן התחלת החלון (HH:MM)
+   * @param reportType - BMO או AMC
+   * @returns true אם כדאי לבדוק את המניה עכשיו
+   */
+  private isWithinReasonableCheckWindow(windowStart: string, reportType: "BMO" | "AMC"): boolean {
+    try {
+      const now = new Date();
+      const nyTime = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const currentHour = nyTime.getHours();
+      const currentMinute = nyTime.getMinutes();
+      
+      const [windowHour, windowMinute] = windowStart.split(':').map(Number);
+      
+      // המר לדקות מחצות
+      const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
+      const windowMinutesFromMidnight = windowHour * 60 + windowMinute;
+      
+      // BMO: בדוק בין 05:00-12:00 (2 שעות לפני עד 2.5 אחרי)
+      if (reportType === "BMO") {
+        const checkStart = Math.max(5 * 60, windowMinutesFromMidnight - (WINDOW_BUFFER_HOURS * 60));
+        const checkEnd = windowMinutesFromMidnight + (150); // 2.5 hours after
+        return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+      }
+      
+      // AMC: בדוק בין 14:00-20:00 (2 שעות לפני עד 2 אחרי)
+      if (reportType === "AMC") {
+        const checkStart = Math.max(14 * 60, windowMinutesFromMidnight - (WINDOW_BUFFER_HOURS * 60));
+        const checkEnd = windowMinutesFromMidnight + (WINDOW_BUFFER_HOURS * 60);
+        return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+      }
+      
+      return true; // במקרה של ספק - בדוק
+    } catch (error) {
+      logger.error(`Error in isWithinReasonableCheckWindow: ${error}`);
+      return true; // במקרה של שגיאה - בדוק
+    }
   }
 
-  getStatus() {
-      return { total: this.stocks.length, pending: this.stocks.filter(s => s.status === 'pending').length };
-  }
-
- // In StockProcessor.processNextStock()
-
-private async processNextStock(): Promise<void> {
+  /**
+   * פונקציה מעודכנת: מעבד את כל המניות בכל iteration
+   */
+  private async processAllStocks(): Promise<void> {
     if (!this.isRunning) return;
 
-    const stock = this.stocks.find((s) => {
-        // if (s.status !== "pending" && s.status !== "checking") return false;
-        // if (!this.isMarketWindowOpen(s.windowStart)) return false;
-        if (s.sentToTelegram) return false;  // ✅ Skip if already sent
-        return true;
+    logger.info(`\n${"=".repeat(60)}`);
+    logger.info(`🔄 Starting new iteration - checking all stocks`);
+    logger.info(`${"=".repeat(60)}\n`);
+
+    // סינון מניות שצריך לבדוק
+    const stocksToCheck = this.stocks.filter((s) => {
+      // דלג על מניות שכבר נשלחו
+      if (s.sentToTelegram) return false;
+      
+      // דלג על מניות שכבר היו יותר מדי ניסיונות
+      if (s.checkCount >= MAX_CHECK_ATTEMPTS) {
+        if (s.checkCount === MAX_CHECK_ATTEMPTS) {
+          logger.warn(`⚠️ ${s.symbol} - Reached max attempts (${MAX_CHECK_ATTEMPTS}). Stopping checks.`);
+        }
+        return false;
+      }
+      
+      // בדוק רק מניות בטווח זמן סביר
+      if (!this.isWithinReasonableCheckWindow(s.windowStart, s.reportType)) {
+        return false;
+      }
+      
+      return true;
     });
 
-    if (!stock) {
-        const remaining = this.stocks.filter(s =>
-            (s.status === "pending" || s.status === "checking") && !s.sentToTelegram
-        ).length;
-        if (remaining > 0) {
-            logger.info(`⏳ No stocks ready for CURRENT window (NY Time). Waiting... (${remaining} left)`);
-            return;
-        } else {
-            logger.info("✅ All done for today.");
-            this.stop();
-            return;
-        }
+    if (stocksToCheck.length === 0) {
+      const totalSent = this.stocks.filter(s => s.sentToTelegram).length;
+      const maxedOut = this.stocks.filter(s => s.checkCount >= MAX_CHECK_ATTEMPTS).length;
+      const outOfWindow = this.stocks.length - totalSent - maxedOut - stocksToCheck.length;
+      
+      logger.info(`\n📊 No stocks to check in current iteration:`);
+      logger.info(`   ✅ Already sent: ${totalSent}`);
+      logger.info(`   🔒 Max attempts reached: ${maxedOut}`);
+      logger.info(`   ⏰ Outside time window: ${outOfWindow}`);
+      logger.info(`   📦 Total stocks: ${this.stocks.length}\n`);
+      
+      // אם כולם נשלחו - עצור
+      if (totalSent === this.stocks.length) {
+        logger.info("✅ All stocks processed! Stopping processor.");
+        this.stop();
+      }
+      
+      return;
     }
 
-    try {
-        // ✅ Double-check: Skip if already sent to Telegram
+    logger.info(`🎯 Checking ${stocksToCheck.length} stocks in this iteration:\n`);
+    stocksToCheck.forEach(s => {
+      logger.info(`   • ${s.symbol} (${s.reportType} ${s.windowStart}) - Attempt ${s.checkCount + 1}/${MAX_CHECK_ATTEMPTS}`);
+    });
+    logger.info('');
+
+    // לולאה על כל המניות
+    for (const stock of stocksToCheck) {
+      if (!this.isRunning) break;
+
+      try {
+        // דלוג אם כבר נשלח (בדיקה כפולה)
         if (stock.sentToTelegram) {
-            logger.info(`⏭️ Skipping ${stock.symbol} - already sent to Telegram`);
-            return;
+          logger.info(`⏭️ Skipping ${stock.symbol} - already sent to Telegram`);
+          continue;
         }
 
-        logger.info(`📦 Processing ${stock.symbol} (Window: ${stock.windowStart})...`);
+        logger.info(`\n${"─".repeat(50)}`);
+        logger.info(`📦 Processing ${stock.symbol} (${stock.reportType} ${stock.windowStart})`);
+        logger.info(`   Attempt: ${stock.checkCount + 1}/${MAX_CHECK_ATTEMPTS}`);
+        logger.info(`${"─".repeat(50)}`);
+
         stock.status = "checking";
         stock.checkCount++;
+        stock.lastCheck = new Date().toISOString();
         
-        const finnhubHasData = await checkFinnhubUpdates(stock.symbol, new Date().toISOString().split("T")[0]);
+        // שלב 1: בדיקת Finnhub
+        const finnhubHasData = await checkFinnhubUpdates(
+          stock.symbol, 
+          new Date().toISOString().split("T")[0]
+        );
+        
         let reportConfirmed = false;
 
         if (finnhubHasData) {
-            logger.info(`🚀 FINNHUB CONFIRMED: ${stock.symbol} reported! Skipping AI check.`);
+          logger.info(`🚀 FINNHUB CONFIRMED: ${stock.symbol} has reported!`);
+          reportConfirmed = true;
+        } else {
+          // שלב 2: Mini-check עם AI
+          logger.info(`🔍 Running AI mini-check for ${stock.symbol}...`);
+          const miniCheckResult = await miniCheck(
+            stock.symbol, 
+            stock.companyName, 
+            stock.quarter, 
+            stock.fiscalYear
+          );
+          
+          if (miniCheckResult.result === "YES") {
+            logger.info(`🤖 AI CONFIRMED: ${stock.symbol} has reported!`);
             reportConfirmed = true;
-        } else {
-            const miniCheckResult = await miniCheck(stock.symbol, stock.companyName, stock.quarter, stock.fiscalYear);
-            if (miniCheckResult.result === "YES") {
-                logger.info(`🤖 AI FOUND REPORT: ${stock.symbol} reported!`);
-                reportConfirmed = true;
-            }
+          } else {
+            logger.info(`⏳ ${stock.symbol} - Not published yet (${miniCheckResult.result})`);
+          }
         }
 
+        // שלב 3: אם דוח אושר - עיבוד מלא
         if (reportConfirmed) {
-            logger.info(`✅ Report Found! Running Full Analysis...`);
-            stock.status = "extracting";
-            await delay(2000);
-            
-            // ✅ GET PRICE FROM FMP
-            let currentPrice: number | undefined;
-            try {
-                const quote = await getQuote(stock.symbol);
-                currentPrice = quote?.price || undefined;
-                
-                if (currentPrice && currentPrice > 0) {
-                    logger.info(`💰 Fetched current price for ${stock.symbol}: $${currentPrice}`);
-                } else {
-                    logger.error(`❌ FMP returned invalid price for ${stock.symbol}: ${currentPrice}`);
-                    currentPrice = undefined;
-                }
-            } catch (e: any) {
-                logger.error(`❌ Could not fetch current price for ${stock.symbol}: ${e.message}`);
-                currentPrice = undefined;
-            }
-            
-            // ✅ העבר את המחיר ונתוני Finnhub ל-fullExtraction
-            const fullData = await fullExtraction(
-                stock.symbol,
-                stock.companyName,
-                new Date().toISOString().split("T")[0],
-                currentPrice,  // ✅ המחיר מועבר כאן
-                // @ts-ignore - העבר את הנתונים מ-Finnhub אם קיימים
-                stock.finnhubData,
-                stock.quarter,      // ✅ הרבעון מ-JSON
-                stock.fiscalYear    // ✅ שנת הכספים מ-JSON
-            );
-            stock.fullData = fullData;
-            
-            // ✅ בדוק שהמחיר אכן נשמר ב-fullData
-            if (fullData.marketData?.price && fullData.marketData.price > 0) {
-                logger.info(`✅ Price confirmed in fullData: $${fullData.marketData.price}`);
-            } else {
-                logger.warn(`⚠️ No valid price in fullData for ${stock.symbol}`);
-            }
-            
-            const miraScore = calculateDetailedScore(fullData);
-            logger.info(`🧮 Score for ${stock.symbol}: ${miraScore.totalScore} (${miraScore.classification})`);
+          logger.info(`✅ Report confirmed for ${stock.symbol}! Starting full extraction...`);
+          stock.status = "extracting";
 
-            // ✅ finalAnalysis יקבל את fullData עם המחיר
-            const analysis = await finalAnalysis(fullData, miraScore);
-            
-            stock.analysis = analysis;
-            stock.status = "completed";
-            
-            logger.info(`✅ ${stock.symbol} analysis complete!`);
-            
-            if (this.onComplete) this.onComplete(stock);
-            
+          const fullData = await fullExtraction(
+            stock.symbol,
+            stock.companyName,
+            stock.quarter,
+            stock.fiscalYear
+          );
+
+          if (fullData) {
+            stock.fullData = fullData;
+            logger.info(`📊 Full extraction complete for ${stock.symbol}`);
+
+            // ניתוח סופי
+            const analysis = await finalAnalysis(stock.symbol, fullData);
+
+            if (analysis) {
+              stock.analysis = analysis;
+              stock.status = "completed";
+              logger.info(`✅ Analysis complete for ${stock.symbol}!`);
+
+              // קריאה ל-callback
+              if (this.onComplete) {
+                await this.onComplete(stock);
+              }
+            } else {
+              logger.error(`❌ Analysis failed for ${stock.symbol}`);
+              stock.status = "error";
+              stock.error = "Analysis failed";
+            }
+          } else {
+            logger.error(`❌ Full extraction failed for ${stock.symbol}`);
+            stock.status = "error";
+            stock.error = "Extraction failed";
+          }
         } else {
-            logger.info(`⏳ Not published yet (Finnhub & AI both negative). Waiting.`);
-            stock.status = "checking";
+          // לא נמצא דוח - חזור ל-pending לניסיון הבא
+          stock.status = "pending";
         }
-    } catch (e: any) {
-        logger.error(`❌ Error processing ${stock.symbol}: ${e.message}`, e);
+
+      } catch (error: any) {
+        logger.error(`❌ Error processing ${stock.symbol}: ${error.message}`);
         stock.status = "error";
-        stock.error = e.message;
-    }
-    
-    if (this.isRunning) {
+        stock.error = error.message;
+      }
+
+      // המתנה קצרה בין מניות (למנוע rate limits)
+      if (this.isRunning) {
         await delay(DELAY_BETWEEN_STOCKS_MS);
+      }
     }
-}
+
+    // סיכום iteration
+    const summary = this.getSummary();
+    logger.info(`\n${"=".repeat(60)}`);
+    logger.info(`📊 Iteration Summary:`);
+    logger.info(`   ✅ Completed: ${summary.completed}`);
+    logger.info(`   📤 Sent to Telegram: ${summary.sent}`);
+    logger.info(`   ⏳ Still pending: ${summary.pending}`);
+    logger.info(`   🔄 Currently checking: ${summary.checking}`);
+    logger.info(`   ❌ Errors: ${summary.errors}`);
+    logger.info(`   📦 Total: ${summary.total}`);
+    logger.info(`${"=".repeat(60)}\n`);
+  }
+
+  /**
+   * פונקציה חדשה: מחזירה סיכום מצב
+   */
+  private getSummary() {
+    return {
+      total: this.stocks.length,
+      completed: this.stocks.filter(s => s.status === 'completed').length,
+      sent: this.stocks.filter(s => s.sentToTelegram).length,
+      pending: this.stocks.filter(s => s.status === 'pending').length,
+      checking: this.stocks.filter(s => s.status === 'checking').length,
+      extracting: this.stocks.filter(s => s.status === 'extracting').length,
+      errors: this.stocks.filter(s => s.status === 'error').length,
+    };
+  }
+
+  getStatus() {
+    return this.getSummary();
+  }
 
   initialize(data: MorningIntelligenceResponse) {
-      this.stocks = data.stocks.map(s => ({
-          ...s,
-          status: 'pending',
-          checkCount: 0,
-          lastCheck: null,
-          error: null,
-          fullData: null,
-          analysis: null,
-          sentToTelegram: s.sentToTelegram || false,  // ✅ Preserve existing flag or default to false
-          // @ts-ignore
-          quarter: s.quarter,
-          // @ts-ignore
-          fiscalYear: s.fiscalYear
-      } as any));
+    this.stocks = data.stocks.map(s => ({
+      ...s,
+      status: 'pending',
+      checkCount: 0,
+      lastCheck: null,
+      error: null,
+      fullData: null,
+      analysis: null,
+      sentToTelegram: s.sentToTelegram || false,
+      // @ts-ignore
+      quarter: s.quarter,
+      // @ts-ignore
+      fiscalYear: s.fiscalYear
+    } as any));
+
+    logger.info(`\n✅ Initialized processor with ${this.stocks.length} stocks`);
+    logger.info(`   BMO stocks: ${this.stocks.filter(s => s.reportType === 'BMO').length}`);
+    logger.info(`   AMC stocks: ${this.stocks.filter(s => s.reportType === 'AMC').length}\n`);
   }
-  start() { this.isRunning = true; this.processNextStock(); this.checkInterval = setInterval(() => this.processNextStock(), CHECK_INTERVAL_MS); }
-  stop() { this.isRunning = false; if (this.checkInterval) clearInterval(this.checkInterval); }
+
+  /**
+   * מתחיל את המעבד - רץ iteration מיד ואז כל X דקות
+   */
+  start() {
+    if (this.isRunning) {
+      logger.warn("⚠️ Processor already running!");
+      return;
+    }
+
+    this.isRunning = true;
+    logger.info(`🚀 Starting Stock Processor...`);
+    logger.info(`   Check interval: ${CHECK_INTERVAL_MS / 60000} minutes`);
+    logger.info(`   Max attempts per stock: ${MAX_CHECK_ATTEMPTS}`);
+    logger.info(`   Window buffer: ±${WINDOW_BUFFER_HOURS} hours\n`);
+
+    // הרצה מיידית
+    this.processAllStocks();
+
+    // interval לבדיקות חוזרות
+    this.checkInterval = setInterval(() => {
+      this.processAllStocks();
+    }, CHECK_INTERVAL_MS);
+  }
+
+  /**
+   * עוצר את המעבד
+   */
+  stop() {
+    this.isRunning = false;
+    if (this.checkInterval) {
+      clearInterval(this.checkInterval);
+      this.checkInterval = null;
+    }
+    logger.info("🛑 Stock Processor stopped.");
+  }
 }
 
 export default { morningIntelligence, miniCheck, fullExtraction, finalAnalysis, StockProcessor };//
