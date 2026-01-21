@@ -17,12 +17,12 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 2.46,
         "epsEstimate": 2.4624,
-        "revenueActual": null,
+        "revenueActual": 24564000000,
         "revenueEstimate": 24400832581
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "SCHW",
@@ -40,9 +40,9 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 1.39,
         "epsEstimate": 1.4169,
-        "revenueActual": null,
+        "revenueActual": 6336000000,
         "revenueEstimate": 6496526880
       },
       "sentToTelegram": false
@@ -86,12 +86,12 @@
       "quarter": 1,
       "fiscalYear": 2026,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 2.72,
         "epsEstimate": 2.5792,
-        "revenueActual": null,
+        "revenueActual": 4669000000,
         "revenueEstimate": 4579975471
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "TFC",
@@ -109,12 +109,12 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 1.12,
         "epsEstimate": 1.1058,
-        "revenueActual": null,
+        "revenueActual": 5246000000,
         "revenueEstimate": 5369625438
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "KMI",
@@ -155,12 +155,12 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 11.13,
         "epsEstimate": 8.8904,
-        "revenueActual": null,
+        "revenueActual": 12452000000,
         "revenueEstimate": 11087019803
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "HAL",
@@ -178,12 +178,12 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 0.69,
         "epsEstimate": 0.55,
-        "revenueActual": null,
+        "revenueActual": 5657000000,
         "revenueEstimate": 5466581852
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "CFG",
@@ -201,12 +201,12 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 1.13,
         "epsEstimate": 1.1179,
-        "revenueActual": null,
+        "revenueActual": 2157000000,
         "revenueEstimate": 2177991340
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "MKC",
@@ -247,9 +247,9 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 1.09,
         "epsEstimate": 1.0526,
-        "revenueActual": null,
+        "revenueActual": 2123000000,
         "revenueEstimate": 2186397601
       },
       "sentToTelegram": false
@@ -270,9 +270,9 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 0.62,
         "epsEstimate": 0.5988,
-        "revenueActual": null,
+        "revenueActual": 698600000,
         "revenueEstimate": 713304975
       },
       "sentToTelegram": false
@@ -339,9 +339,9 @@
       "quarter": 3,
       "fiscalYear": 2026,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 0.52,
         "epsEstimate": 0.3978,
-        "revenueActual": null,
+        "revenueActual": 295690000,
         "revenueEstimate": 310213620
       },
       "sentToTelegram": false

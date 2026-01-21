@@ -1515,9 +1515,9 @@ Return ONLY valid JSON with no markdown formatting or explanations.`
           logger.info(`📊 Cash Flow: PDF=$${(pdfCashFlow / 1e9).toFixed(2)}B (QUARTERLY), API=${apiFCF !== null ? '$' + (apiFCF / 1e9).toFixed(2) + 'B' : 'N/A'}`);
 
           // 🛡️ VALIDATION: Quarterly FCF shouldn't exceed $3B for most companies
-          if (Math.abs(pdfCashFlow) > 3e9) {
+          if (Math.abs(pdfCashFlow) > 10e9) {
             logger.error(`   ❌ PDF FCF too large ($${(pdfCashFlow / 1e9).toFixed(2)}B) - AI probably extracted annual data! Rejecting.`);
-            if (apiFCF !== null && Math.abs(apiFCF) < 3e9) {
+            if (apiFCF !== null && Math.abs(apiFCF) < 10e9) {
               logger.warn(`   ⚠️ Using API FCF as fallback ($${(apiFCF / 1e6).toFixed(2)}M) - but this may also be annual!`);
             } else {
               logger.warn(`   ⚠️ Both PDF and API FCF look suspicious - setting to null`);
@@ -1531,7 +1531,7 @@ Return ONLY valid JSON with no markdown formatting or explanations.`
         } else if (data.cashFlow.freeCashFlow !== null) {
           // No PDF data - check if API FCF is reasonable
           const apiFCF = data.cashFlow.freeCashFlow;
-          if (Math.abs(apiFCF) > 3e9) {
+          if (Math.abs(apiFCF) > 10e9) {
             logger.error(`   ❌ API FCF too large ($${(apiFCF / 1e9).toFixed(2)}B) - probably annual/TTM! Rejecting.`);
             data.cashFlow.freeCashFlow = null;
           } else {
@@ -2100,41 +2100,56 @@ export class StockProcessor {
             logger.info(`⏳ ${stock.symbol} - Not published yet (${miniCheckResult.result})`);
           }
         }
+          let currentPrice = 0;
 
         // שלב 3: אם דוח אושר - עיבוד מלא
         if (reportConfirmed) {
           logger.info(`✅ Report confirmed for ${stock.symbol}! Starting full extraction...`);
           stock.status = "extracting";
+          try {
+              const quote = await getQuote(stock.symbol);
+              currentPrice = quote?.price || 0;
+              logger.info(`💰 Retrieved price for ${stock.symbol}: $${currentPrice}`);
+            } catch (err: any) {
+              logger.error(`❌ Failed to get price: ${err.message}`);
+            }
 
-          const fullData = await fullExtraction(
+            const fullData = await fullExtraction(
             stock.symbol,
             stock.companyName,
-            stock.quarter,
-            stock.fiscalYear
-          );
+            new Date().toISOString().split("T")[0],  // reportDate (YYYY-MM-DD)
+            currentPrice,                                // currentPrice (אין לנו)
+            stock.finnhubData,                       // finnhubData מה-JSON!
+            stock.quarter,                           // quarter
+            stock.fiscalYear                         // fiscalYear
+        );
 
-          if (fullData) {
-            stock.fullData = fullData;
-            logger.info(`📊 Full extraction complete for ${stock.symbol}`);
+              if (fullData) {
+          stock.fullData = fullData;
+          logger.info(`📊 Full extraction complete for ${stock.symbol}`);
 
-            // ניתוח סופי
-            const analysis = await finalAnalysis(stock.symbol, fullData);
+          // ✅ חישוב Mira Score
+          const miraScore = calculateDetailedScore(fullData);
+          logger.info(`🎯 Mira Score for ${stock.symbol}: ${miraScore.totalScore} (${miraScore.classification})`);
 
-            if (analysis) {
-              stock.analysis = analysis;
-              stock.status = "completed";
-              logger.info(`✅ Analysis complete for ${stock.symbol}!`);
+          // ✅ ניתוח סופי - שים לב לסדר הפרמטרים!
+          const analysis = await finalAnalysis(fullData, miraScore);
 
-              // קריאה ל-callback
-              if (this.onComplete) {
-                await this.onComplete(stock);
-              }
-            } else {
-              logger.error(`❌ Analysis failed for ${stock.symbol}`);
-              stock.status = "error";
-              stock.error = "Analysis failed";
+          if (analysis) {
+            stock.analysis = analysis;
+            stock.status = "completed";
+            logger.info(`✅ Analysis complete for ${stock.symbol}!`);
+
+            // קריאה ל-callback
+            if (this.onComplete) {
+              await this.onComplete(stock);
             }
           } else {
+            logger.error(`❌ Analysis failed for ${stock.symbol}`);
+            stock.status = "error";
+            stock.error = "Analysis failed";
+          }
+        } else {
             logger.error(`❌ Full extraction failed for ${stock.symbol}`);
             stock.status = "error";
             stock.error = "Extraction failed";

@@ -252,5 +252,13 @@ export interface StockProcessingState {
   error: string | null;
   fullData: FullExtractionResponse | null;
   analysis: FinalAnalysis | null;
-  sentToTelegram: boolean;  // ✅ Track if already sent to Telegram
+  sentToTelegram: boolean;
+  
+  // ✅ הוסף את השדות האלה:
+  finnhubData?: {
+    epsActual: number | null;
+    epsEstimate: number | null;
+    revenueActual: number | null;
+    revenueEstimate: number | null;
+  };
 }
