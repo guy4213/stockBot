@@ -253,7 +253,9 @@ export interface StockProcessingState {
   fullData: FullExtractionResponse | null;
   analysis: FinalAnalysis | null;
   sentToTelegram: boolean;
-  
+  extractionAttempts?: number;
+  lastExtractionFailure?: string;
+  nextRetryTime?: string|null;
   // ✅ הוסף את השדות האלה:
   finnhubData?: {
     epsActual: number | null;
