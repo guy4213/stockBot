@@ -1946,8 +1946,41 @@ ${tradeParams.direction === "NEUTRAL ⚪" ? '6. עבור NEUTRAL: הדגש שצ�
 // STOCK PROCESSOR (ENGINE) - OPTIMIZED VERSION
 // ============================================
 
+interface TimeContext {
+  detectionTime: Date;        // זמן הבדיקה (local/IST)
+  reportingDateET: string;    // תאריך הדיווח לפי ארה"ב (YYYY-MM-DD)
+  currentETHour: number;
+  currentETMinute: number;  
+  currentETTimeStr: string; // השעה בארה"ב עכשיו
+}
 
-
+function getTimeContext(): TimeContext {
+  const now = new Date();
+  
+  const etTimeStr = now.toLocaleString('en-US', { 
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  });
+  
+  const [dateStr, timeStr] = etTimeStr.split(', ');
+  const [month, day, year] = dateStr.split('/');
+  const reportingDateET = `${year}-${month}-${day}`;
+  
+  const [hourStr, minuteStr] = timeStr.split(':');
+  
+  return {
+    detectionTime: now,
+    reportingDateET,
+    currentETHour: parseInt(hourStr),
+    currentETMinute: parseInt(minuteStr),
+    currentETTimeStr: timeStr  // ✅ שמור את "13:02" כמו שהוא!
+  };
+}
 export class StockProcessor {
   private stocks: (StockProcessingState & { quarter?: number, fiscalYear?: number })[] = [];
   private isRunning: boolean = false;
@@ -2000,17 +2033,20 @@ export class StockProcessor {
    */
   private async processAllStocks(): Promise<void> {
     if (!this.isRunning) return;
+    const timeContext = getTimeContext();
 
     logger.info(`\n${"=".repeat(60)}`);
-    logger.info(`🔄 Starting new iteration - checking all stocks`);
-    logger.info(`${"=".repeat(60)}\n`);
+  logger.info(`🔄 Starting new iteration - checking all stocks`);
+  logger.info(`📅 Local Time (IL): ${new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })}`);
+  logger.info(`📅 US Time (ET): ${timeContext.currentETTimeStr}`);
+  logger.info(`📅 Reporting Date (US): ${timeContext.reportingDateET}`);
+  logger.info(`${"=".repeat(60)}\n`);
 
     // סינון מניות שצריך לבדוק
     const stocksToCheck = this.stocks.filter((s) => {
       // דלג על מניות שכבר נשלחו
       if (s.sentToTelegram) return false;
-      
-      // דלג על מניות שכבר היו יותר מדי ניסיונות
+        // דלג על מניות שכבר היו יותר מדי ניסיונות
       if (s.checkCount >= MAX_CHECK_ATTEMPTS) {
         if (s.checkCount === MAX_CHECK_ATTEMPTS) {
           logger.warn(`⚠️ ${s.symbol} - Reached max attempts (${MAX_CHECK_ATTEMPTS}). Stopping checks.`);
@@ -2075,7 +2111,7 @@ export class StockProcessor {
         // שלב 1: בדיקת Finnhub
         const finnhubHasData = await checkFinnhubUpdates(
           stock.symbol, 
-          new Date().toISOString().split("T")[0]
+          timeContext.reportingDateET
         );
         
         let reportConfirmed = false;
@@ -2117,7 +2153,7 @@ export class StockProcessor {
             const fullData = await fullExtraction(
             stock.symbol,
             stock.companyName,
-            new Date().toISOString().split("T")[0],  // reportDate (YYYY-MM-DD)
+            timeContext.reportingDateET,  // ✅ התאריך לפי ארה"ב!
             currentPrice,                                // currentPrice (אין לנו)
             stock.finnhubData,                       // finnhubData מה-JSON!
             stock.quarter,                           // quarter
