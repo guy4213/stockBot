@@ -7,8 +7,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 349855746956,
-      "volume": 9574073,
+      "marketCap": 350346461002,
+      "volume": 15383481,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -30,8 +30,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 317572824185,
-      "volume": 8005825,
+      "marketCap": 311170103745,
+      "volume": 12594258,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -53,8 +53,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 259809975000,
-      "volume": 94021252,
+      "marketCap": 259106400000,
+      "volume": 154053301,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -63,12 +63,12 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 0.15,
         "epsEstimate": 0.0813,
-        "revenueActual": null,
+        "revenueActual": 13674000000,
         "revenueEstimate": 13639574956
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "ABT",
@@ -76,8 +76,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 191241640084,
-      "volume": 21493464,
+      "marketCap": 189011585998,
+      "volume": 34347088,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -99,8 +99,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 190343849846,
-      "volume": 1108088,
+      "marketCap": 188490530568,
+      "volume": 2862708,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -109,12 +109,12 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 2.53,
         "epsEstimate": 2.3043,
-        "revenueActual": null,
+        "revenueActual": 2866200000,
         "revenueEstimate": 2798789832
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "COF",
@@ -122,8 +122,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 150573504344,
-      "volume": 2327008,
+      "marketCap": 149441898527,
+      "volume": 4384243,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -132,12 +132,12 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 3.86,
         "epsEstimate": 4.1466,
-        "revenueActual": null,
+        "revenueActual": 15583000000,
         "revenueEstimate": 15636232119
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "FCX",
@@ -145,8 +145,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 86945601463,
-      "volume": 14920332,
+      "marketCap": 84576315874,
+      "volume": 22631586,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -168,8 +168,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 68107659166,
-      "volume": 5500438,
+      "marketCap": 66627260286,
+      "volume": 22406925,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -178,12 +178,12 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 0.39,
         "epsEstimate": 0.4152,
-        "revenueActual": null,
+        "revenueActual": 3508000000,
         "revenueEstimate": 3579916437
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "NTRS",
@@ -191,8 +191,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 29020060273,
-      "volume": 1280479,
+      "marketCap": 28957651541,
+      "volume": 2279720,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -214,8 +214,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 28708604000,
-      "volume": 48099446,
+      "marketCap": 27779472000,
+      "volume": 86564611,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -237,8 +237,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 22020463306,
-      "volume": 4227978,
+      "marketCap": 21948061595,
+      "volume": 10264311,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -260,8 +260,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 16603478912,
-      "volume": 3242360,
+      "marketCap": 16350988980,
+      "volume": 7589294,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -270,12 +270,58 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 1.26,
         "epsEstimate": 0.9429,
-        "revenueActual": null,
+        "revenueActual": 3449000000,
         "revenueEstimate": 3404805595
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
+    },
+    {
+      "symbol": "EWBC",
+      "companyName": "East West Bancorp, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 15863620141,
+      "volume": 1686199,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 2.52,
+        "epsEstimate": 2.5518,
+        "revenueActual": 758250000,
+        "revenueEstimate": 690591255
+      },
+      "sentToTelegram": true
+    },
+    {
+      "symbol": "SSB",
+      "companyName": "SouthState Corporation",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 10107824702,
+      "volume": 1011293,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 2.47,
+        "epsEstimate": 2.2987,
+        "revenueActual": 686870000,
+        "revenueEstimate": 673042426
+      },
+      "sentToTelegram": true
     },
     {
       "symbol": "ORI",
@@ -283,8 +329,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 9581165188,
-      "volume": 3781250,
+      "marketCap": 9677769500,
+      "volume": 6541328,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -306,8 +352,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 8606642309,
-      "volume": 12303275,
+      "marketCap": 8553740961,
+      "volume": 17923303,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -329,8 +375,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 8387541860,
-      "volume": 3475273,
+      "marketCap": 8141616599,
+      "volume": 5760991,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -347,13 +393,13 @@
       "sentToTelegram": false
     },
     {
-      "symbol": "COLB",
-      "companyName": "Columbia Banking System, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:05",
-      "windowEnd": "20:00",
-      "marketCap": 6501989204,
-      "volume": 1056701,
+      "symbol": "CBSH",
+      "companyName": "Commerce Bancshares, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 8106532050,
+      "volume": 1718811,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -362,10 +408,79 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 1.01,
+        "epsEstimate": 1.0106,
+        "revenueActual": 449360000,
+        "revenueEstimate": 451254456
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "GBCI",
+      "companyName": "Glacier Bancorp, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 6480175823,
+      "volume": 1118691,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.49,
+        "epsEstimate": 0.5032,
+        "revenueActual": 306510000,
+        "revenueEstimate": 270815304
+      },
+      "sentToTelegram": true
+    },
+    {
+      "symbol": "COLB",
+      "companyName": "Columbia Banking System, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 6413365017,
+      "volume": 3963194,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.82,
         "epsEstimate": 0.7288,
-        "revenueActual": null,
+        "revenueActual": 717000000,
         "revenueEstimate": 710115075
+      },
+      "sentToTelegram": true
+    },
+    {
+      "symbol": "UBSI",
+      "companyName": "United Bankshares, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 6002809308,
+      "volume": 1246152,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.91,
+        "epsEstimate": 0.8798,
+        "revenueActual": 319190000,
+        "revenueEstimate": 321938010
       },
       "sentToTelegram": false
     },
@@ -375,8 +490,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 5609789268,
-      "volume": 1745482,
+      "marketCap": 5667203631,
+      "volume": 4706618,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -385,12 +500,58 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 0.43,
         "epsEstimate": 0.1229,
-        "revenueActual": null,
+        "revenueActual": 3632000000,
         "revenueEstimate": 3679038544
       },
+      "sentToTelegram": true
+    },
+    {
+      "symbol": "AUB",
+      "companyName": "Atlantic Union Bankshares Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 5653695090,
+      "volume": 1809067,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.97,
+        "epsEstimate": 0.8675,
+        "revenueActual": 391790000,
+        "revenueEstimate": 382041256
+      },
       "sentToTelegram": false
+    },
+    {
+      "symbol": "SLM",
+      "companyName": "SLM Corporation",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 5566452713,
+      "volume": 2494947,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 1.12,
+        "epsEstimate": 0.9358,
+        "revenueActual": 377060000,
+        "revenueEstimate": 419781250
+      },
+      "sentToTelegram": true
     },
     {
       "symbol": "EBC",
@@ -398,8 +559,8 @@
       "reportType": "AMC",
       "windowStart": "16:05",
       "windowEnd": "20:00",
-      "marketCap": 4655403658,
-      "volume": 1087860,
+      "marketCap": 4579977989,
+      "volume": 2527262,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -408,12 +569,35 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": null,
+        "epsActual": 0.44,
         "epsEstimate": 0.4186,
-        "revenueActual": null,
+        "revenueActual": 283500000,
         "revenueEstimate": 251884910
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
+    },
+    {
+      "symbol": "ASB",
+      "companyName": "Associated Banc-Corp",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 4559836830,
+      "volume": 2842892,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.8,
+        "epsEstimate": 0.7073,
+        "revenueActual": 393560000,
+        "revenueEstimate": 386218232
+      },
+      "sentToTelegram": true
     },
     {
       "symbol": "NG",
@@ -421,8 +605,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 4386672931,
-      "volume": 3272340,
+      "marketCap": 4268664104,
+      "volume": 5032316,
       "confidence": 100,
       "sources": [
         "Finnhub",

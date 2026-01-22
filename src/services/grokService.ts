@@ -32,10 +32,17 @@ const MAX_API_RETRIES = 3;
 const CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes between iterations
 const DELAY_BETWEEN_STOCKS_MS = 5000; // 5 seconds between individual stock checks
 const MAX_CHECK_ATTEMPTS = 10; // Stop checking after 10 failed attempts
-const WINDOW_BUFFER_HOURS = 1; // Check stocks ±2 hours from their window
+const WINDOW_BUFFER_HOURS = 3; // Check stocks ±2 hours from their window
 interface ExtendedStock extends Stock {
     quarter?: number;
     fiscalYear?: number;
+}
+
+// ✅ הוסף את זה:
+interface StockProcessingStateExtended extends StockProcessingState {
+  extractionAttempts?: number;
+  lastExtractionFailure?: string;
+  nextRetryTime?: string;
 }
 
 // ============================================
@@ -281,7 +288,6 @@ async function verifyEarningsDate(symbol: string, expectedDate: string): Promise
 // 2. MINI-CHECK
 // ============================================
 export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {
-  logger.info(`🔍 AI Fallback Check for ${symbol}...`);
   const now = new Date().toISOString();
   const today = now.split("T")[0];
   const specificTerm = (quarter && fiscalYear) ? `Q${quarter} ${fiscalYear}` : "Quarterly";
@@ -521,11 +527,28 @@ function calculateTradeParams(price: number, classification: string) {
 
 
 
-// ============================================
-// 4. FULL EXTRACTION (FORCE SYMBOL) 🛑
-// ============================================
-// HELPER: Validate AI Response
-// ============================================
+async function findEarningsPDF(symbol: string, companyName: string, q: number, yr: number): Promise<string | null> {
+  const searches = [
+    `${companyName} Q${q} ${yr} earnings presentation PDF`,
+    `${companyName} investor relations Q${q} ${yr}`,
+    `${symbol} quarterly results Q${q} ${yr} PDF`,
+    `site:investors.${companyName.toLowerCase().replace(/\s+/g, '')}.com Q${q} ${yr}`
+  ];
+
+  for (const search of searches) {
+    // חפש ואמת שה-PDF קיים
+    const result = await callGrokAPI([{
+      role: "user",
+      content: `Search for: "${search}". Return ONLY the direct PDF URL if found, or "NOT_FOUND" if no PDF exists.`
+    }], 0.1, 200, true);
+
+    if (result && !result.includes("NOT_FOUND") && result.includes("pdf")) {
+      return result.trim();
+    }
+  }
+
+  return null;
+}
 function validateAIResponse(aiData: any, symbol: string): { isValid: boolean; reason: string } {
   // Check if pdfMetrics has at least some data
   const hasMetrics = aiData.pdfMetrics &&
@@ -575,9 +598,337 @@ function validateAIResponse(aiData: any, symbol: string): { isValid: boolean; re
   return { isValid: true, reason: "Valid response with PDF and metrics" };
 }
 
-// ============================================
-// 4. FULL EXTRACTION & ANALYSIS
-// ============================================
+//fullExtraction function
+// export async function fullExtraction(
+//   symbol: string,
+//   companyName: string,
+//   reportDate: string,
+//   currentPrice?: number,
+//   finnhubData?: {
+//     epsActual: number | null;
+//     epsEstimate: number | null | undefined;
+//     revenueActual: number | null;
+//     revenueEstimate: number | null;
+//   },
+//   quarter?: number,
+//   fiscalYear?: number
+// ): Promise<FullExtractionResponse> {
+//   logger.info(`\n${"=".repeat(70)}`);
+//   logger.info(`📊 FULL EXTRACTION: ${symbol} (${companyName})`);
+//   logger.info(`📅 Report Date: ${reportDate} | Quarter: Q${quarter || 'TBD'} ${fiscalYear || 'TBD'}`);
+//   logger.info(`💰 Current Price: $${currentPrice || 'N/A'}`);
+//   logger.info(`${"=".repeat(70)}`);
+
+//   const q = quarter || Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
+//   const yr = fiscalYear || new Date(reportDate).getFullYear();
+
+//   // ============================================
+//   // 🔥 CRITICAL: VERIFY PDF EXISTS FIRST!
+//   // ============================================
+//   logger.info(`\n🔍 Step 1: Verifying earnings report exists...`);
+  
+//   const pdfUrl = await findEarningsPDF(symbol, companyName, q, yr);
+  
+//   if (!pdfUrl) {
+//     logger.error(`❌ CRITICAL: No earnings report found for ${symbol} Q${q} ${yr}`);
+//     logger.error(`   This likely means the report hasn't been published yet`);
+//     logger.error(`   🚫 ABORTING EXTRACTION - Cannot proceed without official report`);
+    
+//     throw new Error(`Earnings report not published yet - no PDF found for ${symbol} Q${q} ${yr}`);
+//   }
+
+//   logger.info(`✅ Report found: ${pdfUrl}`);
+//   logger.info(`   Proceeding with extraction...\n`);
+
+//   // ============================================
+//   // STEP 2: CHECK FINNHUB DATA
+//   // ============================================
+//   const hasEPS = finnhubData?.epsActual !== null && finnhubData?.epsActual !== undefined;
+//   const hasRevenue = finnhubData?.revenueActual !== null && finnhubData?.revenueActual !== undefined;
+//   const hasFinnhubData = hasEPS && hasRevenue;
+
+//   logger.info(`🔍 Data Source Check:`);
+//   logger.info(`   Finnhub EPS: ${hasEPS ? '✅' : '❌'}`);
+//   logger.info(`   Finnhub Revenue: ${hasRevenue ? '✅' : '❌'}`);
+//   logger.info(`   Mode: ${hasFinnhubData ? 'Fast Path (Finnhub + PDF)' : 'Full PDF Extraction'}`);
+
+//   let epsActual: number | null = null;
+//   let epsEstimate: number | null = null;
+//   let revenueActual: number | null = null;
+//   let revenueEstimate: number | null = null;
+//   let epsBeatPercent: number = 0;
+//   let revBeatPercent: number = 0;
+
+//   if (hasFinnhubData) {
+//     epsActual = finnhubData.epsActual !== null ? Math.round(finnhubData.epsActual * 100) / 100 : null;
+//     epsEstimate = finnhubData.epsEstimate ? Math.round(finnhubData.epsEstimate * 100) / 100 : epsActual;
+//     revenueActual = finnhubData.revenueActual !== null ? Math.round(finnhubData.revenueActual) : null;
+//     revenueEstimate = finnhubData.revenueEstimate ? Math.round(finnhubData.revenueEstimate) : revenueActual;
+
+//     epsBeatPercent = epsEstimate && epsEstimate !== 0 && epsActual !== null
+//       ? ((epsActual - epsEstimate) / Math.abs(epsEstimate)) * 100
+//       : 0;
+//     revBeatPercent = revenueEstimate && revenueEstimate !== 0 && revenueActual !== null
+//       ? ((revenueActual - revenueEstimate) / revenueEstimate) * 100
+//       : 0;
+
+//     logger.info(`\n✅ Using Finnhub Data:`);
+//     logger.info(`   EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent >= 0 ? '+' : ''}${epsBeatPercent.toFixed(2)}%)`);
+//     logger.info(`   Revenue: $${(revenueActual! / 1e9).toFixed(2)}B vs $${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent >= 0 ? '+' : ''}${revBeatPercent.toFixed(2)}%)`);
+//   }
+
+//   // ============================================
+//   // STEP 3: FETCH API DATA (YoY, FCF, Margins)
+//   // ============================================
+//   logger.info(`\n📊 Fetching API Data...`);
+
+//   const apiData = {
+//     yoyEpsChange: null as number | null,
+//     yoyRevenueChange: null as number | null,
+//     netMargin: null as number | null,
+//     operatingMargin: null as number | null,
+//     fcf: null as number | null
+//   };
+
+//   // [Keep the existing API data fetching code - Finnhub Metrics + FMP]
+//   // ... (same as before)
+
+//   // ============================================
+//   // STEP 4: AI EXTRACTION WITH VERIFIED PDF
+//   // ============================================
+//   logger.info(`\n🤖 Extracting from verified PDF...`);
+
+//   const supplementPrompt = `
+// You are extracting data from an official earnings report PDF.
+
+// TARGET: ${symbol} (${companyName})
+// QUARTER: Q${q} ${yr}
+// VERIFIED PDF URL: ${pdfUrl}
+
+// 🎯 CRITICAL INSTRUCTION:
+// You MUST extract data ONLY from this specific PDF: ${pdfUrl}
+// DO NOT use web search, news articles, or estimates!
+// If you cannot find a metric in the PDF → return null
+
+// ${hasFinnhubData ? `
+// KNOWN DATA (from Finnhub - verified):
+// - EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
+// - Revenue: $${(revenueActual! / 1e9).toFixed(2)}B vs $${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
+
+// DO NOT extract EPS/Revenue - already have them!
+// ` : `
+// 🔴 MANDATORY: Extract EPS and Revenue from the PDF!
+
+// 1. **EPS** (from PDF only!):
+//    - Actual: Q${q} ${yr} diluted EPS
+//    - Estimate: Consensus (if not in PDF → search "${symbol} Q${q} ${yr} EPS estimate" ONCE)
+//    - Calculate beatPercent
+
+// 2. **Revenue** (from PDF only!):
+//    - Actual: Q${q} ${yr} total revenue (in dollars!)
+//    - Estimate: Consensus (if not in PDF → search ONCE)
+//    - Calculate beatPercent
+// `}
+
+// **EXTRACT FROM PDF:**
+
+// 3. **Revenue YoY Growth** (QUARTERLY!):
+//    - Find table: Q${q} ${yr} vs Q${q} ${yr - 1}
+//    - Calculate: ((current - prior) / prior) * 100
+//    - ⚠️ Must be quarterly, NOT annual!
+
+// 4. **Net Margin Q${q}**:
+//    - (Net Income / Revenue) * 100
+//    - From quarterly table only!
+
+// 5. **Operating Margin OR Efficiency Ratio**:
+//    - Banks: Find "Efficiency Ratio"
+//    - Others: (Operating Income / Revenue) * 100
+
+// 6. **Cash from Operations Q${q}**:
+//    - From Cash Flow Statement
+//    - Operating Cash Flow (NOT Net Income!)
+//    - Return in MILLIONS
+
+// 7. **Guidance**: raised/lowered/maintained/unavailable
+
+// 8. **Sentiment**: positive/neutral/negative (with reasoning in Hebrew)
+
+// 9. **Highlights**: 2 specific achievements
+
+// 10. **Concerns**: 2 specific risks
+
+// OUTPUT FORMAT:
+// {
+//   "pdfUrl": "${pdfUrl}",
+//   ${!hasFinnhubData ? `
+//   "eps": {
+//     "actual": <number>,
+//     "estimate": <number>,
+//     "beatPercent": <number>
+//   },
+//   "revenue": {
+//     "actual": <number>,
+//     "estimate": <number>,
+//     "beatPercent": <number>
+//   },
+//   ` : ''}
+//   "guidance": {...},
+//   "sentiment": {...},
+//   "highlights": [...],
+//   "concerns": [...],
+//   "pdfMetrics": {
+//     "revenueYoY": <number> | null,
+//     "netMargin": <number> | null,
+//     "marginMetric": {...} | null,
+//     "cashFromOperations": <number> | null
+//   }
+// }
+
+// 🚨 RULES:
+// 1. Extract ONLY from PDF ${pdfUrl}
+// 2. If metric not in PDF → return null
+// 3. Quarterly data ONLY (no TTM, no annual)
+// 4. Real numbers only - NO estimates or calculations!
+
+// Return ONLY valid JSON.
+// `;
+
+//   const MAX_RETRIES = 2; // Reduced - if PDF exists, should work quickly
+//   let aiData: any = null;
+
+//   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+//     try {
+//       logger.info(`   🔄 Attempt ${attempt}/${MAX_RETRIES}...`);
+
+//       const aiRes = await callGrokAPI(
+//         [
+//           {
+//             role: "system",
+//             content: `You extract data from PDFs. You have verified that ${pdfUrl} exists. Extract ONLY from this PDF. Return ONLY valid JSON.`
+//           },
+//           {
+//             role: "user",
+//             content: supplementPrompt
+//           }
+//         ],
+//         0.05, // Very low temperature - factual extraction only!
+//         3000,
+//         true
+//       );
+
+//       let cleanedRes = aiRes.trim()
+//         .replace(/```json\n?/g, '')
+//         .replace(/```\n?$/g, '')
+//         .replace(/^```\n?/g, '')
+//         .trim();
+
+//       const tempAiData = JSON.parse(cleanedRes);
+
+//       logger.info(`\n📎 ===== EXTRACTION RESULTS =====`);
+//       logger.info(`   📄 PDF: ${tempAiData.pdfUrl || pdfUrl}`);
+//       logger.info(`   ✅ Status: SUCCESS`);
+//       logger.info(`📎 ===== END =====\n`);
+
+//       aiData = tempAiData;
+//       break;
+
+//     } catch (err: any) {
+//       logger.error(`   ❌ Attempt ${attempt} error: ${err.message}`);
+//       if (attempt >= MAX_RETRIES) {
+//         logger.error(`\n🚫 CRITICAL: Failed to extract from PDF after ${MAX_RETRIES} attempts`);
+//         throw new Error(`PDF extraction failed: ${err.message}`);
+//       }
+//       await new Promise(resolve => setTimeout(resolve, 3000));
+//     }
+//   }
+
+//   if (!aiData) throw new Error('PDF extraction failed');
+
+//   // ============================================
+//   // STEP 5: BUILD FINAL DATA
+//   // ============================================
+//   logger.info(`\n🔗 Building Final Data Object...`);
+
+//   if (!hasFinnhubData && aiData.eps && aiData.revenue) {
+//     epsActual = aiData.eps.actual;
+//     epsEstimate = aiData.eps.estimate;
+//     revenueActual = aiData.revenue.actual;
+//     revenueEstimate = aiData.revenue.estimate;
+//     epsBeatPercent = aiData.eps.beatPercent || 0;
+//     revBeatPercent = aiData.revenue.beatPercent || 0;
+    
+//     logger.info(`   ✅ EPS: ${epsActual} vs ${epsEstimate} (PDF)`);
+//     logger.info(`   ✅ Revenue: $${(revenueActual! / 1e9).toFixed(2)}B (PDF)`);
+//   }
+
+//   // Validate critical fields
+//   if (epsActual === null || revenueActual === null) {
+//     logger.error(`❌ CRITICAL: Missing EPS or Revenue after extraction!`);
+//     throw new Error('Missing critical data (EPS/Revenue) - cannot proceed');
+//   }
+
+//   const data: FullExtractionResponse = {
+//     symbol,
+//     companyName,
+//     reportDate,
+//     eps: {
+//       actual: epsActual!,
+//       estimate: epsEstimate!,
+//       beatPercent: epsBeatPercent,
+//       beat: null,
+//       source: hasFinnhubData ? "Finnhub" : "PDF"
+//     },
+//     revenue: {
+//       actual: revenueActual!,
+//       estimate: revenueEstimate!,
+//       beatPercent: revBeatPercent,
+//       beat: null,
+//       source: hasFinnhubData ? "Finnhub" : "PDF"
+//     },
+//     guidance: aiData.guidance || { status: "unavailable", details: null },
+//     sentiment: aiData.sentiment || { overall: "neutral", reasoning: null },
+//     yoyGrowth: {
+//       epsChange: apiData.yoyEpsChange,
+//       revenueChange: aiData.pdfMetrics?.revenueYoY || apiData.yoyRevenueChange
+//     },
+//     cashFlow: {
+//       freeCashFlow: aiData.pdfMetrics?.cashFromOperations ? aiData.pdfMetrics.cashFromOperations * 1e6 : apiData.fcf,
+//       yoyChange: null
+//     },
+//     margins: {
+//       netMargin: aiData.pdfMetrics?.netMargin || apiData.netMargin,
+//       operatingMargin: aiData.pdfMetrics?.marginMetric?.value || apiData.operatingMargin,
+//       trend: "stable",
+//       isEfficiencyRatio: aiData.pdfMetrics?.marginMetric?.type === "efficiency_ratio"
+//     },
+//     highlights: aiData.highlights || ["Data extracted from earnings report", "See PDF for details"],
+//     concerns: aiData.concerns || ["Data extracted from earnings report", "See PDF for details"],
+//     marketData: {
+//       price: currentPrice || null,
+//       marketCap: null,
+//       volume: null,
+//       source: "FMP"
+//     },
+//     reportTime: "",
+//     managementCommentary: null,
+//     dataQuality: "high" as any,
+//     aiRecommendation: "hold" as any
+//   };
+
+//   logger.info(`\n${"=".repeat(70)}`);
+//   logger.info(`✅ EXTRACTION COMPLETE: ${symbol}`);
+//   logger.info(`   📄 Source: ${pdfUrl}`);
+//   logger.info(`   EPS: ${data.eps.actual} (${data.eps.beatPercent >= 0 ? '+' : ''}${data.eps.beatPercent.toFixed(2)}%)`);
+//   logger.info(`   Revenue: $${(data.revenue.actual / 1e9).toFixed(2)}B (${data.revenue.beatPercent >= 0 ? '+' : ''}${data.revenue.beatPercent.toFixed(2)}%)`);
+//   logger.info(`   YoY Revenue: ${data.yoyGrowth.revenueChange !== null ? data.yoyGrowth.revenueChange.toFixed(2) + '%' : 'N/A'}`);
+//   logger.info(`${"=".repeat(70)}\n`);
+
+//   return data;
+// }
+
+
+
 export async function fullExtraction(
   symbol: string,
   companyName: string,
@@ -585,769 +936,371 @@ export async function fullExtraction(
   currentPrice?: number,
   finnhubData?: {
     epsActual: number | null;
-    epsEstimate: number | null|undefined;
+    epsEstimate: number | null | undefined;
     revenueActual: number | null;
     revenueEstimate: number | null;
   },
   quarter?: number,
   fiscalYear?: number
 ): Promise<FullExtractionResponse> {
-  logger.info(`📊 Extracting ${symbol}...`);
-  
-  // ✅ אם יש נתוני Finnhub - השתמש בהם ישירות!
-  if (finnhubData && 
-      finnhubData.epsActual !== null && 
-      finnhubData.revenueActual !== null) {
-    
-    logger.info(`🎯 Using Finnhub data directly for ${symbol}!`);
+  logger.info(`\n${"=".repeat(70)}`);
+  logger.info(`📊 FULL EXTRACTION: ${symbol} (${companyName})`);
+  logger.info(`📅 Report Date: ${reportDate} | Quarter: Q${quarter || 'TBD'} ${fiscalYear || 'TBD'}`);
+  logger.info(`💰 Current Price: $${currentPrice || 'N/A'}`);
+  logger.info(`${"=".repeat(70)}`);
 
-    // Round actual values to 2 decimal places for consistency
-    const epsActual = finnhubData.epsActual !== null ? Math.round(finnhubData.epsActual * 100) / 100 : null;
-    const revenueActual = finnhubData.revenueActual !== null ? Math.round(finnhubData.revenueActual) : null;
+  const q = quarter || Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
+  const yr = fiscalYear || new Date(reportDate).getFullYear();
 
-    // Use estimate if available, otherwise warn and use actual
-    let epsEstimate = finnhubData.epsEstimate ? Math.round(finnhubData.epsEstimate * 100) / 100 : null;
-    let revenueEstimate = finnhubData.revenueEstimate ? Math.round(finnhubData.revenueEstimate) : null;
+  // ============================================
+  // STEP 1: CHECK FINNHUB DATA
+  // ============================================
+  const hasEPS = finnhubData?.epsActual !== null && finnhubData?.epsActual !== undefined;
+  const hasRevenue = finnhubData?.revenueActual !== null && finnhubData?.revenueActual !== undefined;
+  const hasFinnhubData = hasEPS && hasRevenue;
 
-    // 🛡️ VALIDATION: Check if estimates are missing
-    if (!epsEstimate && epsActual !== null) {
-      logger.warn(`   ⚠️ EPS estimate missing from Finnhub - using actual ${epsActual} (beat will be 0%)`);
-      epsEstimate = epsActual;
-    }
-    if (!revenueEstimate && revenueActual !== null) {
-      logger.warn(`   ⚠️ Revenue estimate missing from Finnhub - using actual $${(revenueActual / 1e9).toFixed(2)}B (beat will be 0%)`);
-      revenueEstimate = revenueActual;
-    }
+  logger.info(`\n🔍 Step 1: Data Source Check`);
+  logger.info(`   Finnhub EPS: ${hasEPS ? '✅' : '❌'}`);
+  logger.info(`   Finnhub Revenue: ${hasRevenue ? '✅' : '❌'}`);
+  logger.info(`   Mode: ${hasFinnhubData ? 'Finnhub + PDF Supplement' : 'Full PDF Extraction'}`);
 
-    // Calculate beat percentages
-    const epsBeatPercent = epsEstimate && epsEstimate !== 0 && epsActual !== null
-      ? ((epsActual - epsEstimate) / Math.abs(epsEstimate)) * 100
+  let epsActual: number | null = null;
+  let epsEstimate: number | null = null;
+  let revenueActual: number | null = null;
+  let revenueEstimate: number | null = null;
+  let epsBeatPercent: number = 0;
+  let revBeatPercent: number = 0;
+
+  if (hasFinnhubData) {
+    epsActual = Math.round(finnhubData.epsActual! * 100) / 100;
+    epsEstimate = finnhubData.epsEstimate ? Math.round(finnhubData.epsEstimate * 100) / 100 : epsActual;
+    revenueActual = Math.round(finnhubData.revenueActual!);
+    revenueEstimate = finnhubData.revenueEstimate ? Math.round(finnhubData.revenueEstimate) : revenueActual;
+
+    epsBeatPercent = epsEstimate && epsEstimate !== 0
+      ? ((epsActual! - epsEstimate) / Math.abs(epsEstimate)) * 100
+      : 0;
+    revBeatPercent = revenueEstimate && revenueEstimate !== 0
+      ? ((revenueActual! - revenueEstimate) / revenueEstimate) * 100
       : 0;
 
-    const revBeatPercent = revenueEstimate && revenueEstimate !== 0 && revenueActual !== null && revenueEstimate !== null
-      ? ((revenueActual - revenueEstimate) / revenueEstimate) * 100
-      : 0;
+    logger.info(`   ✅ EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent >= 0 ? '+' : ''}${epsBeatPercent.toFixed(2)}%)`);
+    logger.info(`   ✅ Revenue: $${(revenueActual! / 1e9).toFixed(2)}B vs $${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent >= 0 ? '+' : ''}${revBeatPercent.toFixed(2)}%)`);
+  } else {
+    logger.info(`   ⚠️ Will extract EPS & Revenue from PDF`);
+  }
 
-    // 🛡️ VALIDATION: Warn if beat% is suspicious
-    if (Math.abs(epsBeatPercent) > 50 && epsActual !== null && epsActual !== epsEstimate) {
-      logger.warn(`   ⚠️ EPS beat ${epsBeatPercent.toFixed(2)}% is very large - verify estimate accuracy`);
-    }
-    if (Math.abs(revBeatPercent) > 20) {
-      logger.warn(`   ⚠️ Revenue beat ${revBeatPercent.toFixed(2)}% is very large - verify estimate accuracy`);
-    }
+  // ============================================
+  // STEP 2: FETCH API DATA (Fallback)
+  // ============================================
+  logger.info(`\n📊 Step 2: Fetching API Fallback Data...`);
 
-    logger.info(`📊 ${symbol} - EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)`);
-    logger.info(`📊 ${symbol} - Revenue: $${revenueActual !== null ? (revenueActual / 1e9).toFixed(2) : 'N/A'}B vs $${revenueEstimate !== null ? (revenueEstimate / 1e9).toFixed(2) : 'N/A'}B (${revBeatPercent.toFixed(2)}%)`);
+  const apiData = {
+    yoyEpsChange: null as number | null,
+    yoyRevenueChange: null as number | null,
+    netMargin: null as number | null,
+    operatingMargin: null as number | null,
+    fcf: null as number | null
+  };
 
-    // ✅ בנה את האובייקט עם נתונים אמיתיים
-    const data: FullExtractionResponse = {
-      symbol,
-      companyName,
-      reportDate,
-      eps: {
-        actual: epsActual!,
-        estimate: epsEstimate!,
-        beatPercent: epsBeatPercent,
-        beat: null,
-        source: ""
-      },
-      revenue: {
-        actual: revenueActual!,
-        estimate: revenueEstimate!,
-        beatPercent: revBeatPercent,
-        beat: null,
-        source: ""
-      },
-      guidance: {
-        status: "unavailable",
-        details: null
-      },
-      yoyGrowth: {
-        epsChange: null,
-        revenueChange: null
-      },
-      cashFlow: {
-        freeCashFlow: null,
-        yoyChange: null
-      },
-      margins: {
-        netMargin: null,
-        operatingMargin: null,
-        trend: "unavailable"
-      },
-      sentiment: {
-        overall: "neutral",
-        reasoning: null
-      },
-      marketData: {
-        price: currentPrice || null,
-        marketCap: null,
-        volume: null,
-        source: ""
-      },
-      highlights: [],
-      concerns: [],
-      reportTime: "",
-      managementCommentary: null,
-      dataQuality: "high" as any,
-      aiRecommendation: "buy" as any
-    };
-
-    // ✅ תחילה - נסה לחלץ YoY/FCF/Margins מ-Finnhub Metrics (הכי אמין!)
-    logger.info(`📊 Fetching Finnhub Metrics for ${symbol}...`);
-    try {
-      const finnhubMetrics = await getFinnhubMetrics(symbol);
-      if (finnhubMetrics) {
-        // YoY Growth - EPS
-        if (finnhubMetrics.epsGrowthTTM !== null && finnhubMetrics.epsGrowthTTM !== undefined) {
-          data.yoyGrowth.epsChange = finnhubMetrics.epsGrowthTTM;
-          logger.info(`   ✅ YoY EPS Growth (Finnhub): ${finnhubMetrics.epsGrowthTTM}%`);
-        } else {
-          // ⚠️ Finnhub מחזיר null בשני מקרים:
-          // 1. המניה בהפסד (EPS שלילי)
-          // 2. נתוני Q2 עדיין לא פורסמו בFinnhub
-          logger.info(`   ⚠️ YoY EPS Growth unavailable from Finnhub - trying manual calculation from quarterly data...`);
-          try {
-            const earningsData = await getEarnings(symbol);
-            if (earningsData && earningsData.length >= 5) {
-              // הרבעון הנוכחי (אינדקס 0) vs אותו רבעון אשתקד (אינדקס 4)
-              const currentQ = earningsData[0];
-              const priorYearQ = earningsData[4]; // 4 רבעונים אחורה = שנה
-
-              if (currentQ?.epsActual !== null && currentQ.epsActual !== undefined &&
-                  priorYearQ?.epsActual !== null && priorYearQ.epsActual !== undefined) {
-                const current = currentQ.epsActual;
-                const prior = priorYearQ.epsActual;
-
-                // חישוב YoY - עובד גם על הפסדים!
-                let yoyGrowth: number;
-                if (prior === 0) {
-                  yoyGrowth = current > 0 ? 100 : current < 0 ? -100 : 0;
-                } else {
-                  yoyGrowth = ((current - prior) / Math.abs(prior)) * 100;
-                }
-
-                data.yoyGrowth.epsChange = yoyGrowth;
-                logger.info(`   ✅ YoY EPS Growth (manual calc): ${yoyGrowth.toFixed(2)}% ($${prior} → $${current}) [${currentQ.date} vs ${priorYearQ.date}]`);
-              } else {
-                logger.warn(`   ⚠️ YoY EPS unavailable - missing Q2 or prior year EPS data (current: ${currentQ?.epsActual}, prior: ${priorYearQ?.epsActual})`);
-              }
-            } else {
-              logger.warn(`   ⚠️ YoY EPS unavailable - not enough quarterly data (need 5 quarters, got ${earningsData?.length || 0})`);
-            }
-          } catch (err: any) {
-            logger.warn(`   ⚠️ YoY EPS unavailable - calculation failed: ${err.message}`);
-          }
-        }
-
-        // YoY Growth - Revenue (QUARTERLY comparison, not TTM!)
-        // Try manual calculation from FMP quarterly data first
-        logger.info(`   🔍 Calculating YoY Revenue Growth from quarterly data...`);
-        try {
-          const incomeStatement = await getIncomeStatement(symbol);
-          if (incomeStatement && incomeStatement.length >= 5) {
-            const currentQ = incomeStatement[0]; // Latest quarter
-            const priorYearQ = incomeStatement[4]; // 4 quarters back = 1 year
-
-            if (currentQ?.revenue !== null && priorYearQ?.revenue !== null && priorYearQ.revenue !== 0) {
-              const current = currentQ.revenue;
-              const prior = priorYearQ.revenue;
-              const yoyRevGrowth = ((current - prior) / prior) * 100;
-
-              // 🛡️ VALIDATION: Revenue YoY shouldn't exceed 150%
-              if (Math.abs(yoyRevGrowth) > 150) {
-                logger.warn(`   ⚠️ Revenue YoY Growth ${yoyRevGrowth.toFixed(2)}% is unrealistic - possibly wrong comparison`);
-              } else {
-                data.yoyGrowth.revenueChange = yoyRevGrowth;
-                data.yoyGrowth.revenueChangeType = "quarterly";
-                logger.info(`   ✅ YoY Revenue Growth (quarterly): ${yoyRevGrowth.toFixed(2)}% ($${(prior / 1e9).toFixed(2)}B → $${(current / 1e9).toFixed(2)}B) [${priorYearQ.date} vs ${currentQ.date}]`);
-              }
-            } else {
-              logger.warn(`   ⚠️ Missing revenue data for YoY calculation (current: ${currentQ?.revenue}, prior: ${priorYearQ?.revenue})`);
-            }
-          } else {
-            logger.warn(`   ⚠️ Not enough quarterly data for YoY Revenue (got ${incomeStatement?.length || 0} quarters)`);
-          }
-        } catch (err: any) {
-          logger.warn(`   ⚠️ Could not calculate YoY Revenue manually: ${err.message}`);
-        }
-
-        // Fallback to Finnhub TTM if manual calculation failed
-        if (data.yoyGrowth.revenueChange === null && finnhubMetrics.revenueGrowthTTM !== null && finnhubMetrics.revenueGrowthTTM !== undefined) {
-          // 🛡️ VALIDATION: Revenue YoY shouldn't exceed 150% (unrealistic for most companies)
-          if (Math.abs(finnhubMetrics.revenueGrowthTTM) > 150) {
-            logger.warn(`   ⚠️ Revenue YoY Growth ${finnhubMetrics.revenueGrowthTTM}% (TTM) is unrealistic - rejecting`);
-          } else {
-            data.yoyGrowth.revenueChange = finnhubMetrics.revenueGrowthTTM;
-            data.yoyGrowth.revenueChangeType = "TTM";
-            logger.warn(`   ⚠️ YoY Revenue Growth (TTM fallback): ${finnhubMetrics.revenueGrowthTTM}% - Not quarterly comparison!`);
-          }
-        }
-
-        // Margins - FALLBACK to TTM if Q2 unavailable
-        if (finnhubMetrics.netMarginTTM !== null && finnhubMetrics.netMarginTTM !== undefined) {
-          data.margins.netMargin = finnhubMetrics.netMarginTTM;
-          logger.info(`   📊 Net Margin (TTM fallback): ${finnhubMetrics.netMarginTTM}%`);
-        }
-        if (finnhubMetrics.operatingMarginTTM !== null && finnhubMetrics.operatingMarginTTM !== undefined) {
-          data.margins.operatingMargin = finnhubMetrics.operatingMarginTTM;
-          logger.info(`   📊 Operating Margin (TTM fallback): ${finnhubMetrics.operatingMarginTTM}%`);
-        }
-
-        // FCF - FALLBACK calculation from EV/FCF
-        if (finnhubMetrics.evFcfRatio && finnhubMetrics.enterpriseValue) {
-          // EV / FCF = ratio → FCF = EV / ratio
-          const fcf = (finnhubMetrics.enterpriseValue * 1000000) / finnhubMetrics.evFcfRatio;
-          data.cashFlow.freeCashFlow = fcf;
-          logger.info(`   📊 Free Cash Flow (TTM fallback): $${(fcf / 1e6).toFixed(2)}M`);
-        }
-
-        // Margin Trend
-        if (data.margins.netMargin !== null) {
-          data.margins.trend = data.margins.netMargin > 0 ? "improving" : "declining";
-        }
-
-        logger.info(`✅ Finnhub Metrics loaded successfully for ${symbol}`);
-      } else {
-        logger.warn(`⚠️ No Finnhub Metrics available for ${symbol}`);
+  // Finnhub Metrics
+  try {
+    const metrics = await getFinnhubMetrics(symbol);
+    if (metrics) {
+      if (metrics.epsGrowthTTM !== null) {
+        apiData.yoyEpsChange = metrics.epsGrowthTTM;
+        logger.info(`   📊 YoY EPS: ${metrics.epsGrowthTTM.toFixed(2)}% (Finnhub TTM - fallback)`);
       }
-    } catch (err: any) {
-      logger.error(`❌ Failed to fetch Finnhub Metrics for ${symbol}:`, err.message);
-    }
-
-    // 🎯 PRIMARY: שליפת נתונים רבעוניים (Q2) מ-FMP - עדיפות על TTM!
-    logger.info(`📊 Fetching Q2 quarterly data for ${symbol}...`);
-
-    // בדיקה: האם נתוני FMP מעודכנים לדוח הזה?
-    let fmpDataIsFresh = false;
-    let needAIExtraction = {
-      netMargin: true,
-      operatingMargin: true,
-      fcf: true
-    };
-
-    // 1️⃣ Margins - נסה לחלץ את הרבעון האחרון מ-Income Statement
-    try {
-      const incomeStatement = await getIncomeStatement(symbol);
-      if (incomeStatement && incomeStatement.length > 0) {
-        const latestQ = incomeStatement[0]; // הרבעון האחרון
-
-        // בדיקת תאריך: האם הנתונים מתאימים לדוח?
-        const latestQDate = new Date(latestQ.date);
-        const reportDateObj = new Date(reportDate);
-        const daysDiff = Math.abs((reportDateObj.getTime() - latestQDate.getTime()) / (1000 * 60 * 60 * 24));
-
-        if (daysDiff <= 45) {
-          // FMP מעודכן! (הנתונים בטווח של 45 ימים מהדוח)
-          fmpDataIsFresh = true;
-          logger.info(`   ✅ FMP data is fresh (${latestQ.date}, ${Math.round(daysDiff)} days from report)`);
-
-          // חישוב Net Margin: (Net Income / Revenue) * 100
-          if (latestQ.netIncome !== null && latestQ.revenue !== null && latestQ.revenue !== 0) {
-            const netMargin = (latestQ.netIncome / latestQ.revenue) * 100;
-            data.margins.netMargin = netMargin;
-            needAIExtraction.netMargin = false;
-            logger.info(`   ✅ Net Margin Q2: ${netMargin.toFixed(2)}% (${latestQ.calendarYear} ${latestQ.period})`);
-          }
-
-          // חישוב Operating Margin: (Operating Income / Revenue) * 100
-          if (latestQ.operatingIncome !== null && latestQ.revenue !== null && latestQ.revenue !== 0) {
-            const operatingMargin = (latestQ.operatingIncome / latestQ.revenue) * 100;
-            data.margins.operatingMargin = operatingMargin;
-            needAIExtraction.operatingMargin = false;
-            logger.info(`   ✅ Operating Margin Q2: ${operatingMargin.toFixed(2)}%`);
-          }
-        } else {
-          logger.warn(`   ⚠️ FMP data is stale (${latestQ.date}, ${Math.round(daysDiff)} days old) - will request AI extraction`);
-        }
-      } else {
-        logger.warn(`   ⚠️ No income statement data available`);
+      if (metrics.revenueGrowthTTM !== null && Math.abs(metrics.revenueGrowthTTM) <= 150) {
+        apiData.yoyRevenueChange = metrics.revenueGrowthTTM;
+        logger.info(`   📊 YoY Revenue: ${metrics.revenueGrowthTTM.toFixed(2)}% (Finnhub TTM - fallback)`);
       }
-    } catch (err: any) {
-      logger.warn(`   ⚠️ Could not fetch Q2 margins from FMP: ${err.message}`);
-    }
-
-    // 2️⃣ FCF - נסה לחלץ את הרבעון האחרון מ-Cash Flow Statement
-    try {
-      const cashFlow = await getCashFlow(symbol);
-      if (cashFlow && cashFlow.length > 0) {
-        const latestQ = cashFlow[0]; // הרבעון האחרון
-
-        // בדיקת תאריך: האם הנתונים מתאימים לדוח?
-        const latestQDate = new Date(latestQ.date);
-        const reportDateObj = new Date(reportDate);
-        const daysDiff = Math.abs((reportDateObj.getTime() - latestQDate.getTime()) / (1000 * 60 * 60 * 24));
-
-        if (daysDiff <= 45 && fmpDataIsFresh) {
-          // FCF = Operating Cash Flow - CapEx
-          if (latestQ.operatingCashFlow !== null && latestQ.capitalExpenditure !== null) {
-            const fcf = latestQ.operatingCashFlow + latestQ.capitalExpenditure; // capitalExpenditure הוא שלילי
-
-            // 🛡️ VALIDATION: FCF shouldn't exceed $5B quarterly for most stocks
-            if (Math.abs(fcf) > 5e9) {
-              logger.warn(`   ⚠️ FCF too large ($${(fcf / 1e9).toFixed(2)}B) - possibly annual data, not quarterly! Rejecting.`);
-              needAIExtraction.fcf = true; // Request AI to find correct quarterly FCF
-            } else {
-              data.cashFlow.freeCashFlow = fcf;
-              needAIExtraction.fcf = false;
-              logger.info(`   ✅ Free Cash Flow Q${Math.ceil((new Date(latestQ.date).getMonth() + 1) / 3)}: $${(fcf / 1e6).toFixed(2)}M (${latestQ.calendarYear} ${latestQ.period})`);
-
-              // YoY FCF Change (אם יש נתון של אותו רבעון אשתקד)
-              if (cashFlow.length >= 5) {
-                const priorYearQ = cashFlow[4]; // 4 רבעונים אחורה
-                if (priorYearQ.operatingCashFlow !== null && priorYearQ.capitalExpenditure !== null) {
-                  const priorFcf = priorYearQ.operatingCashFlow + priorYearQ.capitalExpenditure;
-                  if (priorFcf !== 0) {
-                    const yoyChange = ((fcf - priorFcf) / Math.abs(priorFcf)) * 100;
-
-                    // 🛡️ VALIDATION: YoY shouldn't exceed 200% (unrealistic)
-                    if (Math.abs(yoyChange) > 200) {
-                      logger.warn(`   ⚠️ FCF YoY change too extreme (${yoyChange.toFixed(2)}%) - possibly comparing wrong periods`);
-                    } else {
-                      data.cashFlow.yoyChange = yoyChange;
-                      logger.info(`   ✅ FCF YoY Change: ${yoyChange.toFixed(2)}% ($${(priorFcf / 1e6).toFixed(2)}M → $${(fcf / 1e6).toFixed(2)}M)`);
-                    }
-                  }
-                }
-              }
-            }
-          }
-        } else {
-          logger.warn(`   ⚠️ Cash flow data is stale (${latestQ.date}, ${Math.round(daysDiff)} days old) - will request AI extraction`);
-        }
-      } else {
-        logger.warn(`   ⚠️ No cash flow data available`);
+      if (metrics.netMarginTTM !== null) {
+        apiData.netMargin = metrics.netMarginTTM;
+        logger.info(`   📊 Net Margin: ${metrics.netMarginTTM.toFixed(2)}% (TTM - fallback)`);
       }
-    } catch (err: any) {
-      logger.warn(`   ⚠️ Could not fetch Q2 FCF from FMP: ${err.message}`);
+      if (metrics.operatingMarginTTM !== null) {
+        apiData.operatingMargin = metrics.operatingMarginTTM;
+        logger.info(`   📊 Operating Margin: ${metrics.operatingMarginTTM.toFixed(2)}% (TTM - fallback)`);
+      }
+      if (metrics.evFcfRatio && metrics.enterpriseValue) {
+        apiData.fcf = (metrics.enterpriseValue * 1000000) / metrics.evFcfRatio;
+        logger.info(`   📊 FCF: $${(apiData.fcf / 1e6).toFixed(2)}M (TTM - fallback)`);
+      }
     }
+  } catch (err: any) {
+    logger.warn(`   ⚠️ Finnhub Metrics failed: ${err.message}`);
+  }
 
-    // Margin Trend (עדכון לאחר שיש לנו נתוני Q2)
-    if (data.margins.netMargin !== null) {
-      data.margins.trend = data.margins.netMargin > 0 ? "improving" : "declining";
+  // FMP Quarterly
+  try {
+    const incomeStatement = await getIncomeStatement(symbol);
+    if (incomeStatement && incomeStatement.length >= 5) {
+      const currentQ = incomeStatement[0];
+      const priorQ = incomeStatement[4];
+
+      if (currentQ.revenue && priorQ.revenue && priorQ.revenue !== 0) {
+        const yoyRev = ((currentQ.revenue - priorQ.revenue) / priorQ.revenue) * 100;
+        if (Math.abs(yoyRev) <= 150) {
+          apiData.yoyRevenueChange = yoyRev;
+          logger.info(`   ✅ YoY Revenue: ${yoyRev.toFixed(2)}% (FMP Quarterly - preferred)`);
+        }
+      }
+
+      if (currentQ.netIncome && currentQ.revenue && currentQ.revenue !== 0) {
+        apiData.netMargin = (currentQ.netIncome / currentQ.revenue) * 100;
+        logger.info(`   ✅ Net Margin: ${apiData.netMargin.toFixed(2)}% (FMP Q${q})`);
+      }
+      if (currentQ.operatingIncome && currentQ.revenue && currentQ.revenue !== 0) {
+        apiData.operatingMargin = (currentQ.operatingIncome / currentQ.revenue) * 100;
+        logger.info(`   ✅ Operating Margin: ${apiData.operatingMargin.toFixed(2)}% (FMP Q${q})`);
+      }
     }
+  } catch (err: any) {
+    logger.warn(`   ⚠️ FMP Income Statement failed: ${err.message}`);
+  }
 
-    logger.info(`✅ Quarterly data extraction complete for ${symbol}`);
+  // FCF from FMP
+  try {
+    const cashFlow = await getCashFlow(symbol);
+    if (cashFlow && cashFlow.length > 0) {
+      const currentQ = cashFlow[0];
+      if (currentQ.operatingCashFlow && currentQ.capitalExpenditure) {
+        const fcf = currentQ.operatingCashFlow + currentQ.capitalExpenditure;
+        if (Math.abs(fcf) <= 5e9) {
+          apiData.fcf = fcf;
+          logger.info(`   ✅ FCF: $${(fcf / 1e6).toFixed(2)}M (FMP Q${q})`);
+        }
+      }
+    }
+  } catch (err: any) {
+    logger.warn(`   ⚠️ FMP Cash Flow failed: ${err.message}`);
+  }
 
-    // 🔍 Track missing data for AI extraction
-   logger.info(`🤖 AI will extract ALL quarterly metrics from PDF (FMP/Finnhub are fallback only)`);
-  logger.info(`📊 API data available for comparison/validation: ${
-  [
-    data.margins.netMargin !== null ? 'Net Margin' : null,
-    data.margins.operatingMargin !== null ? 'Operating Margin' : null,
-    data.cashFlow.freeCashFlow !== null ? 'FCF' : null,
-    data.yoyGrowth.epsChange !== null ? 'YoY EPS' : null,
-    data.yoyGrowth.revenueChange !== null ? 'YoY Revenue' : null
-  ].filter(Boolean).join(', ') || 'None'
-}`);
+  // ============================================
+  // STEP 3: AI SUPPLEMENT (Original Working Prompt!)
+  // ============================================
+  logger.info(`\n🤖 Step 3: AI Supplement Extraction...`);
 
-    // ✅ עכשיו תשתמש ב-AI רק לנתונים חסרים (guidance, sentiment, highlights)
-    try {
-      // Use quarter/fiscalYear from parameters (from stockReportingToday JSON)
-      // If not provided, fallback to calculation from reportDate
-      const q = quarter || Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
-      const yr = fiscalYear || new Date(reportDate).getFullYear();
-      logger.info(`📅 Report date ${reportDate} → Q${q} ${yr} earnings${quarter ? ' (from calendar)' : ' (calculated)'}`);
-      
-const supplementPrompt = `
+  const supplementPrompt = `
 You are a financial data analyst extracting information from official earnings reports.
 
 TARGET COMPANY: ${symbol} (${companyName})
 REPORT DATE: ${reportDate}
 QUARTER: Q${q} ${yr}
 
-KNOWN DATA (Already extracted from Finnhub - DO NOT EXTRACT AGAIN):
+${hasFinnhubData ? `
+KNOWN DATA (Already extracted - DO NOT EXTRACT AGAIN):
 - EPS: ${epsActual} vs estimate ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
-- Revenue: $${revenueActual !== null ? (revenueActual / 1e9).toFixed(2) : 'N/A'}B vs estimate $${revenueEstimate !== null ? (revenueEstimate / 1e9).toFixed(2) : 'N/A'}B (${revBeatPercent.toFixed(2)}%)
+- Revenue: $${(revenueActual! / 1e9).toFixed(2)}B vs estimate $${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
+` : `
+⚠️ CRITICAL: EPS and Revenue NOT yet extracted - you MUST extract them!
+`}
+
+🎯 YOUR PRIMARY MISSION: Extract quarterly metrics from the official earnings PDF!
 
 CRITICAL INSTRUCTIONS:
-1. **SEARCH STRATEGY** - Search by COMPANY NAME, not ticker symbol:
 
-   STEP 1: Find the company's investor relations page
-   - Search: "${companyName} investor relations"
-   - Common patterns:
-     * {companyname}.com/investors
-     * {companyname}.com/investor-relations
-     * investors.{companyname}.com
-     * ir.{companyname}.com
-   - For major banks: often {company}.com/about/investor-relations
+**STEP 1: Find the Investor Relations Website**
+1. Search: "${companyName} investor relations"
+2. Common URL patterns:
+   - investors.${companyName}.com
+   - investor.${companyName}.com
+    - investors.${symbol}.com
+   - investor.${symbol}.com
+   - ir.{company}.com
+   - {company}.com/investors
+3. 🎯 SAVE THIS URL as "irWebsiteUrl"
 
-   STEP 2: Once on IR site, look for Q${q} ${yr} materials (in order of priority):
+**STEP 2: Find the Q${q} ${yr} Earnings Materials**
+1. Look on the IR site for:
+   - "Q${q} ${yr} Earnings Presentation" (PDF slides)
+   - "Q${q} ${yr} Press Release" (PDF/HTML)
+   - "Quarter Ended [date] Results"
+2. 🎯 SAVE THE PDF/PRESS RELEASE URL as "pdfUrl"
 
-   a) **PDF Earnings Presentation/Slides**:
-      - Usually in: /earnings, /presentations, /quarterly-results, /events
-      - Look for: "Q${q} ${yr} Earnings Presentation" or "Quarter Ended [date] Investor Presentation"
+🚨 MANDATORY: You MUST find and return BOTH URLs before extracting data!
+If you cannot find the PDF → return error with "pdfUrl": null
 
-   b) **Earnings Press Release (PDF/HTML)**:
-      - Usually in: /press-releases, /news-releases, /financial-results
-      - Look for: "Reports Q${q} ${yr} Results" or "Q${q} Earnings"
+**STEP 3: Extract Quarterly Metrics from PDF**
 
-   c) **8-K SEC Filing** (last resort):
-      - sec.gov/cgi-bin/browse-edgar → search for ${symbol} → recent 8-K filings
+🔴 CRITICAL RULE: Extract ONLY from the QUARTERLY comparison table!
+- Look for columns: "Q${q} ${yr}" and "Q${q} ${yr - 1}"
+- IGNORE: "Full Year ${yr}", "FY ${yr}", "TTM", "Year to Date"
+- If you see annual data → STOP and move to next section!
 
-   d) **Conference Call Transcript**:
-      - Usually in: /events, /webcasts
-      - Seeking Alpha also publishes transcripts
+You MUST extract ALL of these metrics:
 
-2. **PDF URLs - CRITICAL RULES**:
-   - ✅ ONLY return URLs you ACTUALLY FOUND and VISITED
-   - ❌ DO NOT invent/guess URLs (like "ir.wfc.com/static-files/xyz123.pdf")
-   - ❌ DO NOT use placeholder URLs
-   - If you cannot find the PDF URL, return null (it's better than a fake URL!)
-   - The URL MUST be the direct link to the PDF or HTML page you extracted data from
+${!hasFinnhubData ? `
+1. **EPS** (from PDF only!):
+   - Actual: Q${q} ${yr} diluted EPS
+   - Estimate: Wall Street consensus (if not in PDF → search "${symbol} Q${q} ${yr} EPS estimate")
+   - Calculate beatPercent: ((actual - estimate) / |estimate|) * 100
 
-3. **Search Priority**: PDFs contain the most accurate quarterly data!
-   - Financial tables are usually on pages 10-15
-   - Look for "Q${q} ${yr}" or "Quarter Ended" headers
-   - Ignore "Full Year" or "FY ${yr}" sections
+2. **Revenue** (from PDF only!):
+   - Actual: Q${q} ${yr} total revenue (in dollars, NOT billions!)
+   - Estimate: Analyst consensus (if not in PDF → search "${symbol} Q${q} ${yr} revenue estimate")
+   - Calculate beatPercent: ((actual - estimate) / estimate) * 100
+` : ''}
 
-4. DO NOT use news articles, analyst reports, or third-party summaries (unless you can't find IR materials)
-5. DO NOT confuse quarterly vs annual/TTM data:
-   ❌ WRONG: "FY 2025 FCF: $4.6B" (annual)
-   ✅ CORRECT: "Q4 FCF: $1.2B" (quarterly)
-
-EXTRACT THE FOLLOWING DATA:
-
-1. **Guidance** (2 fields):
-   a) **Status**: Did management raise/lower/maintain guidance for next quarter or full year?
-      - Look for phrases: "raising full-year guidance", "updating outlook", "reaffirming guidance", "increasing forecast"
-      - Return: "raised" | "lowered" | "maintained" | "unavailable"
-
-   b) **Details** (1 sentence in HEBREW explaining WHAT changed):
-      - If raised: מה הועלה? (revenue target, EPS target, margins, etc.)
-      - If lowered: מה הופחת ולמה?
-      - If maintained: מה נשמר על אף מה?
-      - If unavailable: return null
-      - Example: "הנהלה העלתה תחזית הכנסות שנתית ל-$950M-$980M, מעל הקונצנזוס של $920M"
-
-2. **Sentiment** (2 fields):
-   a) **Overall**: Overall tone from CEO/CFO in prepared remarks
-      - Positive: Optimistic language, strong growth emphasis, exceeding expectations
-      - Neutral: Stable outlook, meeting expectations, balanced tone
-      - Negative: Challenges emphasized, cautious outlook, disappointing results
-      - Return: "positive" | "neutral" | "negative"
-
-   b) **Reasoning** (1 sentence in HEBREW explaining WHY):
-      - What specific achievements/challenges led to this sentiment?
-      - Quote key phrases from management (translated to Hebrew)
-      - Example: "מנכ\"ל הדגיש צמיחה של 15% בשוק אירופה והשקת פלטפורמת AI חדשה"
-
-3. **Key Highlights** (exactly 2 bullet points):
-   - Major achievements from the quarter
-   - Record metrics, product launches, market expansions
-   - Cost savings, margin improvements
-
-4. **Key Concerns** (exactly 2 bullet points):
-   - Risks mentioned by management
-   - Challenges, headwinds, competitive pressures
-   - Areas that missed expectations
-
-⚠️ **MANDATORY PDF EXTRACTION** (PRIMARY SOURCE - NOT VALIDATION!):
-
-🚨 CRITICAL: The PDF is your PRIMARY and ONLY source for quarterly metrics!
-- API data (Finnhub/FMP) is FALLBACK ONLY if PDF extraction fails
-- DO NOT assume API data is correct - it often contains annual/TTM data
-- YOU MUST extract quarterly data from the PDF for ALL 4 metrics below
-- If you cannot find quarterly data in PDF, return null (don't use API data)
-
-**STEP 1: Find the Quarterly Comparison Table in the PDF**
-This is CRITICAL! Look for a table showing:
-- Column 1: "Q${q} ${yr}" or "4Q25" or "Quarter Ended [date]"
-- Column 2: "Q${q} ${yr - 1}" or "4Q24" (prior year same quarter)
-This table is usually on pages 5-15 of the earnings presentation or press release.
-
-**STEP 2: Extract ALL of the following metrics (MANDATORY, not optional!):**
-
-5. **Revenue YoY Growth** (MANDATORY - QUARTERLY ONLY!):
-   a) Find "Total Revenue" or "Net Interest Income" (for banks) or "Total Income":
-      - Q${q} ${yr}: $X.X billion
-      - Q${q} ${yr - 1}: $Y.Y billion
-   b) Calculate: ((current - prior) / prior) * 100
-   c) Or the PDF states "up X%" or "increased X%" - use that!
-   d) Return as number (e.g., 7.0 for +7%, -2.5 for -2.5%)
-
-   ⚠️ CRITICAL: Must be QUARTERLY comparison, NOT "Full Year" or "TTM"!
-   ⚠️ If table shows "Total revenue up 7%" → return 7.0
-   ❌ WRONG: "FY 2025 revenue growth: 12%" ← Ignore this! Only quarterly!
-   ✅ CORRECT: "Q4 2025 revenue vs Q4 2024: up 7%" → return 7.0
-
-6. **Net Margin Q${q}** (MANDATORY - QUARTERLY ONLY, calculate it):
-   a) From the quarterly table, find:
-      - Net Income Q${q} ${yr}: $A.A billion
-      - Revenue Q${q} ${yr}: $B.B billion
-   b) Calculate: (Net Income / Revenue) * 100
-   c) Return as number (e.g., 17.5 for 17.5%)
-   d) For banks, this is usually 15-20%
-
-   ⚠️ Must use Q${q} ${yr} quarterly numbers, NOT TTM!
-   ❌ WRONG: "Annual net margin: 25%" ← Ignore this!
-   ✅ CORRECT: "Q4 Net Income $2.0B / Revenue $6.1B = 32.8%" → return 32.8
-
-7. **Operating Margin OR Efficiency Ratio** (MANDATORY - QUARTERLY ONLY):
-    
-   🚨 CRITICAL ANTI-HALLUCINATION RULES:
-   1. You MUST find this number EXPLICITLY stated in the PDF
-   2. It MUST be labeled "Efficiency Ratio" or "Operating Margin"
-   3. It MUST be for Q${q} ${yr} (not prior quarter, not annual)
-   4. If you CANNOT find it → return null
-   5. DO NOT calculate it yourself
-   6. DO NOT estimate it
-   7. DO NOT use similar-sounding metrics (like "expense ratio" or "cost-to-income")
-   8. DO NOT copy values from other stocks you've seen
+3. **Revenue YoY Growth** (MANDATORY - QUARTERLY ONLY!):
+   - Find table showing Q${q} ${yr} vs Q${q} ${yr - 1}
+   - Calculate: ((current - prior) / prior) * 100
+   - Return as number (e.g., 7.0 for +7%)
    
-   🏦 **STEP 1: Identify Company Type**
-   - Is this a BANK? (keywords: "bank", "bancorp", "financial", "trust")
-   
-   🏦 **STEP 2a: FOR BANKS ONLY** → Extract "Efficiency Ratio"
-   - EXACT search terms to look for:
-     * "Efficiency ratio"
-     * "Adjusted efficiency ratio" 
-     * "GAAP efficiency ratio"
-   - WHERE to look (in order):
-     1. "Quarterly Financial Highlights" table
-     2. "Key Metrics" or "Performance Metrics" section
-     3. "Consolidated Statement of Income" footnotes
-   - WHAT it looks like:
-     * "Efficiency ratio: 62.3%" ✅
-     * "Adjusted efficiency ratio was 58.7%" ✅
-     * "Fourth quarter efficiency ratio of 65.1%" ✅
-   
-   📋 EXTRACTION CHECKLIST (ALL must be YES):
-   ☐ Did you find the exact phrase "efficiency ratio" in the PDF?
-   ☐ Is the number next to that phrase for Q${q} ${yr}?
-   ☐ Can you cite the page number where you found it?
-   ☐ Is it clearly a percentage (with % symbol or stated as such)?
-   
-   If ANY checkbox is NO → RETURN NULL
-   
-   🏭 **STEP 2b: FOR NON-BANKS** → Extract "Operating Margin"
-   - Same rules as above, but search for:
-     * "Operating margin"
-     * "EBIT margin"
-     * "Operating income margin"
-   
-   ⚠️ WHAT TO AVOID (these are NOT what we want):
-   ❌ "Expense ratio" - different metric!
-   ❌ "Cost-to-income ratio" - different metric!
-   ❌ "Non-interest expense to revenue" - this is the FORMULA, not the final %
-   ❌ Any number you calculated yourself
-   
-   📤 RETURN FORMAT:
-   - If FOUND: {"type": "efficiency_ratio", "value": 62.3, "source": "Page 12, Q4 Financial Highlights"}
-   - If NOT FOUND: null
-   
-   🛡️ SELF-CHECK BEFORE RETURNING:
-   Ask yourself: "Can I point to the EXACT sentence in the PDF where this number appears?"
-   - YES → Return the value
-   - NO → Return null
+   Example:
+   ✅ CORRECT: Q4 2025 Revenue $3.5B, Q4 2024 Revenue $3.3B → 6.1%
+   ❌ WRONG: Full Year 2025 $14B vs Full Year 2024 $13B → 7.7%
 
-8. **Cash from Operations Q${q}** (MANDATORY - QUARTERLY ONLY!):
+4. **Net Margin Q${q}** (MANDATORY - CALCULATE IT):
+   - Net Income Q${q} ${yr} / Revenue Q${q} ${yr} * 100
+   - Return as number (e.g., 17.5 for 17.5%)
    
-   🚨 CRITICAL QUARTERLY VALIDATION:
-   - You MUST find the quarterly comparison table in the PDF
-   - Look for column headers: "Q${q} ${yr}" vs "Q${q} ${yr - 1}"
-   - DO NOT use "Full Year", "FY ${yr}", "Annual", or "TTM" rows
-   - Quarterly FCF for large banks is typically $500M - $2B
-   - Quarterly FCF for tech/industrial is typically $100M - $1B
-   - If you find a number > $3B, it's probably ANNUAL - reject it!
+   Example:
+   ✅ CORRECT: Q4 Net Income $500M / Q4 Revenue $3.5B = 14.3%
+   ❌ WRONG: Annual Net Income $2B / Annual Revenue $14B = 14.3%
+
+5. **Operating Margin OR Efficiency Ratio** (MANDATORY):
    
-   a) Look for "Cash Flow Statement" or "Condensed Cash Flow" section
-   b) Find the QUARTERLY table (not annual summary)
-   c) Look for these rows IN ORDER OF PRIORITY:
-      
-      **Option 1 - Direct FCF** (best):
-      - "Free Cash Flow" (Q${q} ${yr} column)
-      - "Adjusted Free Cash Flow"
-      
-      **Option 2 - Calculate FCF**:
-      - "Cash from Operating Activities" (Q${q} ${yr}): $X.X billion
-      - "Capital Expenditures" (Q${q} ${yr}): $(Y.Y) billion
-      - FCF = Operating Cash Flow - |CapEx|
-      
-      **Option 3 - Operating Cash only** (if CapEx unavailable):
-      - "Cash from Operations" or "Operating Cash Flow"
+   🏦 FOR BANKS ONLY: Extract "Efficiency Ratio"
+   - EXACT search: "Efficiency ratio" or "Adjusted efficiency ratio"
+   - WHERE: "Quarterly Financial Highlights" or "Key Metrics" section
+   - WHAT: A percentage like "62.3%"
+   - ✅ If found: Return {"type": "efficiency_ratio", "value": 62.3, "source": "Page X, Section Y", "verified": true}
+   - ❌ If NOT found: Return null (DO NOT estimate or calculate!)
    
-   d) VALIDATION BEFORE RETURNING:
-      ✅ If quarterly FCF is $200M - $2B → probably correct
-      ⚠️ If quarterly FCF is $2B - $3B → double-check it's quarterly!
-      ❌ If quarterly FCF is > $3B → REJECT, it's annual/TTM!
+   🏭 FOR NON-BANKS: Extract "Operating Margin"
+   - Calculate from quarterly data or find stated margin
+   - Return {"type": "operating_margin", "value": X, "source": "Page Y", "verified": true}
+
+6. **Cash from Operations Q${q}** (MANDATORY - QUARTERLY ONLY):
+   - Find "Cash Flow Statement" quarterly table
+   - Look for: "Operating Cash Flow" or "Cash from Operations"
+   - Q${q} ${yr} value (NOT annual, NOT TTM!)
+   - Return in MILLIONS (e.g., 1500 for $1.5B)
+   - 🛡️ VALIDATION: Quarterly FCF typically $100M-$3B (not $5B+!)
    
-   e) Return as number in MILLIONS (e.g., 1200 for $1.2B quarterly FCF)
-   
-   📋 EXAMPLES:
-   ✅ CORRECT: "Q4 2025: Operating cash flow $1.8B, CapEx $0.3B → FCF = $1.5B" → return 1500
-   ✅ CORRECT: "Quarter ended Dec 31: Free cash flow $950M" → return 950
-   ✅ CORRECT: "Fourth quarter: Cash from operations $2.1B, Capital expenditures $(0.6B) → FCF $1.5B" → return 1500
-   ❌ WRONG: "Full Year 2025: FCF $5.4B" → DO NOT USE THIS! Return null instead
-   ❌ WRONG: "TTM Free Cash Flow: $4.2B" → DO NOT USE THIS! Return null instead
-   ❌ WRONG: "Annual cash from operations: $8.2B" → DO NOT USE THIS! Return null instead
-   
-   🔍 HOW TO SPOT QUARTERLY vs ANNUAL:
-   - Quarterly tables usually show 5 columns: Q${q} ${yr}, Q${q-1} ${yr}, Q${q} ${yr-1}, YTD ${yr}, YTD ${yr-1}
-   - Look for labels: "Three months ended", "Quarter ended", "Q4", "Fourth quarter"
-   - Avoid labels: "Year ended", "Twelve months", "Annual", "FY", "TTM"
-   
-   ⚠️ FINAL CHECK: If the number seems too large (>$3B for one quarter), ask yourself:
-   - Does this company generate $12B+ FCF annually? (Only mega-caps like Apple/Microsoft)
-   - If not, you probably grabbed the annual number by mistake!
-      ⚠️ **CRITICAL - FCF vs Net Income:**
-- FCF is CASH (from Cash Flow Statement)
-- Net Income is PROFIT (from Income Statement)
-- DO NOT confuse them!
+   ⚠️ DO NOT USE:
+   - Net Income (wrong metric!)
+   - Annual/TTM numbers
 
-📋 SANITY CHECK before returning:
-1. Is FCF you found from "Cash Flow Statement" section? (NOT Income Statement)
-2. Is the number labeled "Operating Cash Flow" or "Free Cash Flow"? (NOT Net Income)
-3. For banks: Q4 FCF typically $2-3B, NOT $1.5B (too close to Net Income!)
-4. If FCF ≈ Net Income → YOU PROBABLY GRABBED THE WRONG NUMBER!
+**STEP 4: Extract Qualitative Data**
 
-Example for PNC Q4:
-- Net Income: $2.02B ← from Income Statement (NOT this!)
-- Operating CF: $2.8B ← from Cash Flow Statement (use this!)
-- CapEx: $0.3B
-- FCF = $2.8B - $0.3B = $2.5B ✅ (NOT $2.02B!)
+7. **Guidance**:
+   - Status: "raised" | "lowered" | "maintained" | "unavailable"
+   - Details: One sentence in HEBREW explaining what changed
 
-**SUMMARY - You MUST extract ALL 4 metrics above (5-8):**
-1. Revenue YoY Growth (quarterly Q${q} ${yr} vs Q${q} ${yr-1} comparison)
-2. Net Margin (calculate from Q${q} ${yr} Net Income / Revenue)
-3. Operating Margin or Efficiency Ratio (Q${q} ${yr} only, for banks: Efficiency Ratio)
-4. Cash from Operations or FCF (Q${q} ${yr} only, NOT annual, NOT TTM)
+8. **Sentiment**:
+   - Overall: "positive" | "neutral" | "negative"
+   - Reasoning: One sentence in HEBREW explaining why
 
-These are MANDATORY extractions from the PDF - this is your PRIMARY job!
+9. **Highlights**: Exactly 2 bullet points (specific achievements)
 
-SEARCH QUERY EXAMPLES TO USE (use COMPANY NAME, not ticker):
-1. First, find the IR page:
-   - "${companyName} investor relations"
-   - "${companyName} earnings"
-   - "${companyName} quarterly results"
+10. **Concerns**: Exactly 2 bullet points (specific risks/challenges)
 
-2. Then, search for specific quarter materials:
-   - "${companyName} Q${q} ${yr} earnings presentation PDF"
-   - "${companyName} Q${q} ${yr} press release"
-   - "${companyName} Q${q} ${yr} investor presentation"
-   - site:{domain-you-found} Q${q} ${yr}
-
-OUTPUT FORMAT - Return ONLY this JSON structure:
+OUTPUT FORMAT - Return ONLY this JSON:
 {
+  "irWebsiteUrl": "https://investors.{company}.com",
+  "pdfUrl": "https://investors.{company}.com/.../Q${q}-${yr}-earnings.pdf" | null,
+  ${!hasFinnhubData ? `
+  "eps": {
+    "actual": <number>,
+    "estimate": <number>,
+    "beatPercent": <number>
+  },
+  "revenue": {
+    "actual": <number in dollars>,
+    "estimate": <number in dollars>,
+    "beatPercent": <number>
+  },
+  ` : ''}
   "guidance": {
     "status": "raised" | "lowered" | "maintained" | "unavailable",
-    "details": "משפט אחד בעברית מה שונה בתחזית" | null
+    "details": "משפט בעברית" | null
   },
   "sentiment": {
     "overall": "positive" | "neutral" | "negative",
-    "reasoning": "משפט אחד בעברית למה הסנטימנט כזה" | null
+    "reasoning": "משפט בעברית" | null
   },
-  "highlights": [
-    "First specific achievement or positive metric",
-    "Second specific achievement or positive metric"
-  ],
-  "concerns": [
-    "First specific risk or challenge mentioned",
-    "Second specific risk or challenge mentioned"
-  ],
-"pdfMetrics": {
-  "revenueYoY": 7.0 | null,
-  "netMargin": 17.5 | null,
-"marginMetric": {
-  "type": "efficiency_ratio" | "operating_margin",
-  "value": 62.5,
-  "source": "Page 12, Quarterly Highlights table",  // ✅ חדש!
-  "verified": true | false  // ✅ חדש!
-} | null,
-  "cashFromOperations": 3500 | null
-}
+  "highlights": ["Achievement 1", "Achievement 2"],
+  "concerns": ["Risk 1", "Risk 2"],
+  "pdfMetrics": {
+    "revenueYoY": 7.0 | null,
+    "netMargin": 17.5 | null,
+    "marginMetric": {
+      "type": "efficiency_ratio" | "operating_margin",
+      "value": 62.5,
+      "source": "Page 12, Quarterly Highlights",
+      "verified": true
+    } | null,
+    "cashFromOperations": 1500 | null
+  },
   "dataSources": {
-    "pdfUrl": "https://full-url-to-pdf-presentation.pdf" | null,
-    "pressReleaseUrl": "https://full-url-to-press-release" | null,
-    "pagesReferenced": "10-15" | null,
-    "extractionMethod": "PDF Slides" | "Press Release" | "Call Transcript" | "IR Website"
+    "irWebsiteUrl": "https://...",
+    "pdfUrl": "https://..." | null,
+    "pageTitle": "Q${q} ${yr} Results",
+    "searchUsed": "Which search worked"
   }
 }
 
-⚠️ **CRITICAL - MANDATORY PDF REQUIREMENT**:
-This is NOT optional! The response will be REJECTED if these requirements are not met:
+⚠️ CRITICAL RULES:
+1. Always return irWebsiteUrl (even if PDF not found)
+2. Always return dataSources object
+3. Quarterly metrics ONLY (not TTM, not annual)
+4. Real URLs only (user will verify them!)
+5. If you cannot extract a metric → return null (don't estimate!)
 
-1. **YOU MUST FIND THE OFFICIAL PDF**:
-   - Search "${companyName} investor relations" → Find their IR website
-   - Look for "Q${q} ${yr} earnings" materials on that site
-   - The PDF is usually named like: "Q${q}-${yr}-earnings.pdf" or "fourth-quarter-${yr}-earnings.pdf"
+🚨 IF EXTRACTION FAILS:
+Return this error format (but still include URLs you found!):
+{
+  "error": "EXTRACTION_FAILED",
+  "reason": "Specific reason why",
+  "irWebsiteUrl": "https://..." (if found),
+  "pdfUrl": "https://..." | null,
+  "foundFields": ["list what you found"],
+  "missingFields": ["list what's missing"],
+  "searchesAttempted": ["searches you tried"],
+  "dataSources": {
+    "irWebsiteUrl": "https://...",
+    "pdfUrl": null,
+    "searchUsed": "..."
+  }
+}
 
-2. **YOU MUST EXTRACT QUARTERLY METRICS FROM THE PDF**:
-   - Find the quarterly comparison table (Q${q} ${yr} vs Q${q} ${yr - 1})
-   - Extract ALL 4 required metrics: revenueYoY, netMargin, efficiency/operating, cashFromOps
-   - VERIFY each metric is QUARTERLY (not annual, not TTM)
-   - If you cannot extract these → THE RESPONSE WILL BE REJECTED AND RETRIED
+🎯 SELF-CHECK BEFORE RETURNING:
+- Did I find the PDF URL? (if no → set pdfUrl: null)
+- Did I extract from QUARTERLY table? (not annual!)
+- Are my numbers reasonable? (Revenue YoY <50%, FCF <$3B, etc.)
 
-3. **REAL URLs ONLY** (User will verify these manually!):
-   - ✅ CORRECT: "https://www.wellsfargo.com/assets/pdf/about/investor-relations/earnings/fourth-quarter-2025-earnings.pdf"
-   - ❌ WRONG: Made-up URLs like "https://ir.wfc.com/static-files/abc123.pdf"
-   - ❌ WRONG: Generic placeholders or null values
-   - The user will click this URL - it MUST work!
-
-4. **IF YOU CANNOT FIND THE PDF**:
-   - Do NOT return generic "no data available" responses
-   - Do NOT make up URLs or metrics
-   - The system will automatically retry with a different search strategy
-   - Try searching: "${companyName} ${reportDate} earnings", "${symbol} Q${q} ${yr} investor presentation"
-
-⚠️ **THIS RESPONSE WILL BE VALIDATED**:
-- Missing PDF URL → REJECTED & RETRY
-- All metrics null → REJECTED & RETRY
-- Any metric > reasonable quarterly range → REJECTED & RETRY (you extracted annual data!)
-- Generic "no data" responses → REJECTED & RETRY
-- Made-up/non-working URLs → REJECTED & RETRY
-
-🎯 **FINAL REMINDER - QUARTERLY DATA ONLY**:
-- Banks: Q${q} FCF typically $500M-$2B (not $5B!)
-- Tech/Industrial: Q${q} FCF typically $100M-$1B (not $4B!)
-- If your number is way higher → you grabbed the ANNUAL number by mistake!
-
-Return ONLY valid JSON - NO markdown, NO explanations, NO extra text
+Return ONLY valid JSON - NO markdown, NO explanations, NO extra text.
 `;
 
-      // ✅ Retry Loop: Try up to 3 times to get valid AI response with PDF
-      const MAX_RETRIES = 3;
-      let aiData: any = null;
-      let lastError: string = "";
+  const MAX_RETRIES = 3;
+  let aiData: any = null;
+  let lastError: string = "";
 
-      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        try {
-          logger.info(`🤖 Calling AI to supplement with guidance & sentiment (Attempt ${attempt}/${MAX_RETRIES})...`);
-          logger.info(`🔍 AI will search: ir.${symbol.toLowerCase()}.com and ${companyName} Investor Relations`);
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      logger.info(`   🔄 AI Request Attempt ${attempt}/${MAX_RETRIES}...`);
 
-          const aiRes = await callGrokAPI(
-            [
-              {
-                role: "system",
-                content: `You are a financial data extraction API. YOUR RESPONSE WILL BE VALIDATED AND REJECTED IF INCOMPLETE.
-
-MANDATORY REQUIREMENTS:
-1. Find the official earnings PDF from ${companyName} investor relations
-2. Extract quarterly metrics from the PDF (not TTM, not annual)
-3. Return the REAL PDF URL (user will verify it works)
-4. Return specific highlights/concerns (not generic "no data" responses)
-
-If you cannot find the PDF or extract data → your response will be REJECTED and retried.
-Return ONLY valid JSON with no markdown formatting or explanations.`
-              },
+      const aiRes = await callGrokAPI(
+        [
+          {
+            role: "system",
+            content: `You are a financial data extraction API. Always return irWebsiteUrl and dataSources, even if extraction fails. Return ONLY valid JSON with no markdown.`
+          },
           {
             role: "user",
             content: supplementPrompt
           }
         ],
-        0.1,  // ✅ טמפרטורה נמוכה מאוד - פחות "יצירתיות"
+        0.1,
         2500,
-        true  // ✅ Enable web search
+        true
       );
 
-      // 🛑 DEBUG: Print full AI response
-      logger.info(`📥 ===== FULL AI RESPONSE (RAW) =====`);
-      logger.info(`Length: ${aiRes.length} characters`);
-      logger.info(aiRes);
-      logger.info(`📥 ===== END OF RAW RESPONSE =====`);
-
+      // Clean markdown
       let cleanedRes = aiRes.trim();
-      // ✅ נקה markdown בכל הצורות האפשריות
       if (cleanedRes.startsWith('```json')) {
         cleanedRes = cleanedRes.replace(/```json\n?/g, '').replace(/```\n?$/g, '');
       }
@@ -1356,388 +1309,269 @@ Return ONLY valid JSON with no markdown formatting or explanations.`
       }
       cleanedRes = cleanedRes.trim();
 
-      // 🛑 DEBUG: Print cleaned response
-      logger.info(`📥 ===== CLEANED RESPONSE =====`);
-      logger.info(cleanedRes);
-      logger.info(`📥 ===== END OF CLEANED RESPONSE =====`);
+      const tempAiData = JSON.parse(cleanedRes);
 
-          const tempAiData = JSON.parse(cleanedRes);
+      // ============================================
+      // DISPLAY EXTRACTION RESULTS
+      // ============================================
+      logger.info(`\n📎 ===== AI EXTRACTION RESULTS =====`);
+      
+      // URLs
+      if (tempAiData.irWebsiteUrl || tempAiData.dataSources?.irWebsiteUrl) {
+        const irUrl = tempAiData.irWebsiteUrl || tempAiData.dataSources?.irWebsiteUrl;
+        logger.info(`   🏢 IR Website: ${irUrl}`);
+      } else {
+        logger.error(`   ❌ IR Website URL: NOT FOUND`);
+      }
 
-          // 🛑 DEBUG: Print parsed JSON
-          logger.info(`📥 ===== PARSED JSON OBJECT =====`);
-          logger.info(JSON.stringify(tempAiData, null, 2));
-          logger.info(`📥 ===== END OF PARSED JSON =====`);
+      if (tempAiData.pdfUrl || tempAiData.dataSources?.pdfUrl) {
+        const pdfUrl = tempAiData.pdfUrl || tempAiData.dataSources?.pdfUrl;
+        logger.info(`   📎 PDF Document: ${pdfUrl}`);
+      } else {
+        logger.warn(`   ⚠️ PDF URL: NOT FOUND`);
+      }
 
-          // ✅ VALIDATE: Check if AI found PDF and extracted data
-          const validation = validateAIResponse(tempAiData, symbol);
-          if (!validation.isValid) {
-            lastError = validation.reason;
-            logger.warn(`⚠️ Attempt ${attempt}/${MAX_RETRIES} failed: ${validation.reason}`);
-            if (attempt < MAX_RETRIES) {
-              logger.info(`🔄 Retrying in 5 seconds...`);
-              await new Promise(resolve => setTimeout(resolve, 5000));
-              continue;  // Try again
-            } else {
-              throw new Error(`Failed after ${MAX_RETRIES} attempts: ${lastError}`);
-            }
+      // Status
+      if (tempAiData.error === "EXTRACTION_FAILED") {
+        logger.error(`   ❌ Status: EXTRACTION FAILED`);
+        logger.error(`   📝 Reason: ${tempAiData.reason}`);
+        
+        if (tempAiData.foundFields && tempAiData.foundFields.length > 0) {
+          logger.info(`   ✅ Found: ${tempAiData.foundFields.join(', ')}`);
+        }
+        
+        if (tempAiData.missingFields && tempAiData.missingFields.length > 0) {
+          logger.warn(`   ❌ Missing: ${tempAiData.missingFields.join(', ')}`);
+        }
+      } else {
+        logger.info(`   ✅ Status: SUCCESS`);
+      }
+
+      // Searches attempted
+      if (tempAiData.searchesAttempted && tempAiData.searchesAttempted.length > 0) {
+        logger.info(`   🔍 Searches: ${tempAiData.searchesAttempted.length} attempts`);
+      }
+
+      logger.info(`📎 ===== END EXTRACTION RESULTS =====\n`);
+
+      // ============================================
+      // 🔥 CRITICAL: VALIDATE PDF URL EXISTS!
+      // ============================================
+      const pdfUrl = tempAiData.pdfUrl || tempAiData.dataSources?.pdfUrl;
+      
+      if (!pdfUrl || pdfUrl === null || pdfUrl.toLowerCase().includes('not found')) {
+        logger.error(`❌ CRITICAL: No PDF URL returned by AI`);
+        logger.error(`   This means the earnings report is not published yet`);
+        logger.error(`   🚫 ABORTING EXTRACTION`);
+        
+        throw new Error(`Earnings report not published - PDF URL not found for ${symbol} Q${q} ${yr}`);
+      }
+
+      logger.info(`✅ PDF URL validated: ${pdfUrl}`);
+      logger.info(`   Proceeding with data extraction...\n`);
+
+      // ============================================
+      // VALIDATION & DECISION
+      // ============================================
+      
+      if (tempAiData.error === "EXTRACTION_FAILED") {
+        const foundCount = tempAiData.foundFields?.length || 0;
+        const missingCount = tempAiData.missingFields?.length || 0;
+        const hasUrls = !!(tempAiData.irWebsiteUrl || tempAiData.pdfUrl);
+
+        // Accept if we have URLs or some data
+        if (foundCount >= 2 || hasUrls) {
+          logger.warn(`   ⚠️ Partial extraction - accepting with ${foundCount} fields + URLs`);
+          
+          // Convert error response to normal response
+          delete tempAiData.error;
+          delete tempAiData.reason;
+          
+          // Ensure dataSources exists
+          if (!tempAiData.dataSources) {
+            tempAiData.dataSources = {};
           }
-
-          // ✅ Valid response - save it and break the retry loop
+          
+          if (tempAiData.irWebsiteUrl) {
+            tempAiData.dataSources.irWebsiteUrl = tempAiData.irWebsiteUrl;
+          }
+          if (tempAiData.pdfUrl) {
+            tempAiData.dataSources.pdfUrl = tempAiData.pdfUrl;
+          }
+          
           aiData = tempAiData;
-          logger.info(`✅ Valid AI response received on attempt ${attempt}/${MAX_RETRIES}`);
+          logger.info(`   ✅ Continuing with partial data`);
           break;
-
-        } catch (parseError: any) {
-          lastError = parseError.message;
-          logger.error(`❌ Attempt ${attempt}/${MAX_RETRIES} error: ${parseError.message}`);
+        } else {
+          lastError = tempAiData.reason || "Unknown extraction error";
+          logger.warn(`   ⏳ Attempt ${attempt}/${MAX_RETRIES} failed - no usable data`);
+          
           if (attempt < MAX_RETRIES) {
-            logger.info(`🔄 Retrying in 5 seconds...`);
+            logger.info(`   🔄 Retrying in 5 seconds...`);
             await new Promise(resolve => setTimeout(resolve, 5000));
+            continue;
           } else {
-            throw new Error(`Failed to get valid AI response after ${MAX_RETRIES} attempts: ${lastError}`);
+            throw new Error(`Failed after ${MAX_RETRIES} attempts: ${lastError}`);
           }
         }
       }
 
-      // ✅ Check if we got valid aiData after all retries
-      if (!aiData) {
-        throw new Error(`Failed to extract earnings data after ${MAX_RETRIES} attempts: ${lastError}`);
-      }
+      // Validate success response
+      const hasGuidance = tempAiData.guidance?.status;
+      const hasSentiment = tempAiData.sentiment?.overall;
+      const hasHighlights = tempAiData.highlights?.length >= 2;
+      const hasConcerns = tempAiData.concerns?.length >= 2;
 
-      // ✅ מיזוג עם הנתונים מ-Finnhub + אימות
-      if (aiData.guidance && aiData.guidance.status) {
-        data.guidance = {
-          status: aiData.guidance.status,
-          details: aiData.guidance.details || null
-        };
-        logger.info(`📈 Guidance: ${data.guidance.status}`);
-        if (data.guidance.details) {
-          logger.info(`   📝 Details: ${data.guidance.details}`);
-        }
-      } else {
-        logger.warn(`⚠️ No valid guidance found`);
-      }
-
-      if (aiData.sentiment && aiData.sentiment.overall) {
-        data.sentiment = {
-          overall: aiData.sentiment.overall,
-          reasoning: aiData.sentiment.reasoning || null
-        };
-        logger.info(`💭 Sentiment: ${data.sentiment.overall}`);
-        if (data.sentiment.reasoning) {
-          logger.info(`   📝 Reasoning: ${data.sentiment.reasoning}`);
-        }
-      } else {
-        logger.warn(`⚠️ No valid sentiment found`);
-      }
-
-      // ℹ️ YoY Growth, FCF, Margins already loaded from Finnhub Metrics (see above)
-
-      if (aiData.highlights && Array.isArray(aiData.highlights) && aiData.highlights.length >= 2) {
-        data.highlights = aiData.highlights.slice(0, 2); // לקחת רק 2 ראשונים
-        logger.info(`✨ Highlights: ${data.highlights.join(' | ')}`);
-      } else {
-        logger.warn(`⚠️ No valid highlights found (got ${aiData.highlights?.length || 0})`);
-        data.highlights = ["Data not available from IR sources", "Data not available from IR sources"];
-      }
-
-      if (aiData.concerns && Array.isArray(aiData.concerns) && aiData.concerns.length >= 2) {
-        data.concerns = aiData.concerns.slice(0, 2); // לקחת רק 2 ראשונים
-        logger.info(`⚠️ Concerns: ${data.concerns.join(' | ')}`);
-      } else {
-        logger.warn(`⚠️ No valid concerns found (got ${aiData.concerns?.length || 0})`);
-        data.concerns = ["Data not available from IR sources", "Data not available from IR sources"];
-      }
-
-  // ✅ PDF Metrics - AI IS PRIMARY SOURCE (always override API data)
-      if (aiData.pdfMetrics) {
-        logger.info(`📄 ===== PDF METRICS (PRIMARY SOURCE) =====`);
-
-        // 1. Revenue YoY Growth - ALWAYS use PDF if available
-        if (aiData.pdfMetrics.revenueYoY !== null && aiData.pdfMetrics.revenueYoY !== undefined) {
-          const pdfRevYoY = aiData.pdfMetrics.revenueYoY;
-          const apiRevYoY = data.yoyGrowth.revenueChange;
-
-          logger.info(`📊 Revenue YoY: PDF=${pdfRevYoY.toFixed(2)}% (QUARTERLY), API=${apiRevYoY !== null ? apiRevYoY.toFixed(2) : 'N/A'}%${data.yoyGrowth.revenueChangeType === 'TTM' ? ' (TTM)' : ''}`);
-
-          // ALWAYS use PDF (it's quarterly and from official report)
-          logger.info(`   ✅ Using PDF Revenue YoY (${pdfRevYoY.toFixed(2)}%) - PRIMARY SOURCE`);
-          data.yoyGrowth.revenueChange = pdfRevYoY;
-          data.yoyGrowth.revenueChangeType = "quarterly";
-        } else if (data.yoyGrowth.revenueChange !== null) {
-          logger.warn(`   ⚠️ PDF Revenue YoY unavailable - using API fallback (${data.yoyGrowth.revenueChange?.toFixed(2)}%${data.yoyGrowth.revenueChangeType === 'TTM' ? ' TTM - not ideal!' : ''})`);
+      if (!hasGuidance || !hasSentiment || !hasHighlights || !hasConcerns) {
+        lastError = `Incomplete qualitative data`;
+        logger.warn(`   ⏳ Attempt ${attempt}/${MAX_RETRIES}: ${lastError}`);
+        
+        if (attempt < MAX_RETRIES) {
+          logger.info(`   🔄 Retrying in 5 seconds...`);
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          continue;
         } else {
-          logger.warn(`   ❌ Revenue YoY unavailable from both PDF and API`);
+          logger.warn(`   ⚠️ Accepting incomplete qualitative data after ${MAX_RETRIES} attempts`);
         }
-
-        // 2. Net Margin - ALWAYS use PDF if available
-        if (aiData.pdfMetrics.netMargin !== null && aiData.pdfMetrics.netMargin !== undefined) {
-          const pdfNetMargin = aiData.pdfMetrics.netMargin;
-          const apiNetMargin = data.margins.netMargin;
-
-          logger.info(`📊 Net Margin: PDF=${pdfNetMargin.toFixed(2)}% (QUARTERLY), API=${apiNetMargin !== null ? apiNetMargin.toFixed(2) : 'N/A'}%`);
-
-          // ALWAYS use PDF
-          logger.info(`   ✅ Using PDF Net Margin (${pdfNetMargin.toFixed(2)}%) - PRIMARY SOURCE`);
-          data.margins.netMargin = pdfNetMargin;
-        } else if (data.margins.netMargin !== null) {
-          logger.warn(`   ⚠️ PDF Net Margin unavailable - using API fallback (${data.margins.netMargin.toFixed(2)}%)`);
-        } else {
-          logger.warn(`   ❌ Net Margin unavailable from both PDF and API`);
-        }
-
-   // 3. Operating Margin / Efficiency Ratio - Bank-aware validation
-         // 3. Operating Margin / Efficiency Ratio - Bank-aware validation
-          if (aiData.pdfMetrics.marginMetric) {
-              const { type, value, source, verified } = aiData.pdfMetrics.marginMetric;
-              
-              // ✅ CRITICAL: בדוק שה-AI באמת אימת שהוא מצא את הערך
-              if (!source || source.toLowerCase().includes('not found') || source === 'N/A') {
-                  logger.error(`❌ ${symbol}: AI returned margin without source - rejecting!`);
-                  logger.warn(`   Value was: ${value}% but no PDF source cited`);
-                  data.margins.operatingMargin = null;
-                  data.margins.isEfficiencyRatio = false;
-              } else {
-                  // ✅ יש מקור - זה לגיטימי
-                  data.margins.operatingMargin = value;
-                  data.margins.isEfficiencyRatio = (type === 'efficiency_ratio');
-                  logger.info(`✅ Using PDF ${type} (${value.toFixed(2)}%) from ${source}`);
-              }
-          } else {
-              logger.warn(`⚠️ No margin metric returned by AI`);
-          }
-
-        // 4. 🔥 FREE CASH FLOW - CRITICAL: ALWAYS use PDF if available (API is often annual!)
-        if (aiData.pdfMetrics.cashFromOperations !== null && aiData.pdfMetrics.cashFromOperations !== undefined) {
-          const pdfCashFlow = aiData.pdfMetrics.cashFromOperations * 1e6; // Convert millions to dollars
-          const apiFCF = data.cashFlow.freeCashFlow;
-
-          logger.info(`📊 Cash Flow: PDF=$${(pdfCashFlow / 1e9).toFixed(2)}B (QUARTERLY), API=${apiFCF !== null ? '$' + (apiFCF / 1e9).toFixed(2) + 'B' : 'N/A'}`);
-
-          // 🛡️ VALIDATION: Quarterly FCF shouldn't exceed $3B for most companies
-          if (Math.abs(pdfCashFlow) > 10e9) {
-            logger.error(`   ❌ PDF FCF too large ($${(pdfCashFlow / 1e9).toFixed(2)}B) - AI probably extracted annual data! Rejecting.`);
-            if (apiFCF !== null && Math.abs(apiFCF) < 10e9) {
-              logger.warn(`   ⚠️ Using API FCF as fallback ($${(apiFCF / 1e6).toFixed(2)}M) - but this may also be annual!`);
-            } else {
-              logger.warn(`   ⚠️ Both PDF and API FCF look suspicious - setting to null`);
-              data.cashFlow.freeCashFlow = null;
-            }
-          } else {
-            // PDF FCF is reasonable - ALWAYS use it
-            logger.info(`   ✅ Using PDF Cash Flow ($${(pdfCashFlow / 1e6).toFixed(2)}M) - PRIMARY SOURCE`);
-            data.cashFlow.freeCashFlow = pdfCashFlow;
-          }
-        } else if (data.cashFlow.freeCashFlow !== null) {
-          // No PDF data - check if API FCF is reasonable
-          const apiFCF = data.cashFlow.freeCashFlow;
-          if (Math.abs(apiFCF) > 10e9) {
-            logger.error(`   ❌ API FCF too large ($${(apiFCF / 1e9).toFixed(2)}B) - probably annual/TTM! Rejecting.`);
-            data.cashFlow.freeCashFlow = null;
-          } else {
-            logger.warn(`   ⚠️ PDF FCF unavailable - using API fallback ($${(apiFCF / 1e6).toFixed(2)}M) - verify manually!`);
-          }
-        } else {
-          logger.warn(`   ❌ FCF unavailable from both PDF and API`);
-        }
-
-        logger.info(`📄 ===== END PDF METRICS =====`);
-      } else {
-        logger.error(`❌ CRITICAL: No pdfMetrics found in AI response - AI extraction failed!`);
-        logger.warn(`⚠️ Will use API data as fallback, but this is NOT recommended (may be annual/TTM)`);
       }
 
-      // ✅ Data Sources (PDF URLs for verification)
-      if (aiData.dataSources) {
-        logger.info(`📄 DATA SOURCES:`);
-        if (aiData.dataSources.pdfUrl) {
-          logger.info(`   📎 PDF: ${aiData.dataSources.pdfUrl}`);
-        }
-        if (aiData.dataSources.pressReleaseUrl) {
-          logger.info(`   📰 Press Release: ${aiData.dataSources.pressReleaseUrl}`);
-        }
-        if (aiData.dataSources.pagesReferenced) {
-          logger.info(`   📖 Pages: ${aiData.dataSources.pagesReferenced}`);
-        }
-        if (aiData.dataSources.extractionMethod) {
-          logger.info(`   🔍 Method: ${aiData.dataSources.extractionMethod}`);
-        }
+      // Success!
+      aiData = tempAiData;
+      logger.info(`   ✅ Valid AI response received on attempt ${attempt}/${MAX_RETRIES}`);
+      break;
+
+    } catch (parseError: any) {
+      lastError = parseError.message;
+      logger.error(`   ❌ Attempt ${attempt}/${MAX_RETRIES} error: ${parseError.message}`);
+      
+      if (attempt < MAX_RETRIES) {
+        logger.info(`   🔄 Retrying in 5 seconds...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
       } else {
-        logger.warn(`⚠️ No data sources returned by AI`);
+        throw new Error(`Failed to get valid AI response after ${MAX_RETRIES} attempts: ${lastError}`);
       }
-
-      logger.info(`✅ AI supplement complete: Guidance=${data.guidance.status}, Sentiment=${data.sentiment.overall}`);
-
-    } catch (e: any) {
-      logger.error(`❌ AI supplement failed for ${symbol}:`, e.message);
-      logger.warn(`⚠️ Using default values for guidance/sentiment/highlights/concerns`);
-      // ברירות מחדל כבר מוגדרות למעלה
     }
-
-    // ✅ Override price with FMP data if available
-    if (currentPrice && currentPrice > 0) {
-      logger.info(`💰 Using FMP price: $${currentPrice}`);
-      data.marketData.price = currentPrice;
-    } else {
-      logger.warn(`⚠️ No valid price available for ${symbol}`);
-    }
-
-    return data;
   }
-  
-  // ============================================
-  // ✅ FALLBACK: אם אין נתוני Finnhub - נסה AI מלא
-  // ============================================
-  logger.warn(`⚠️ No Finnhub data for ${symbol}, falling back to full AI extraction`);
 
-  // Use quarter/fiscalYear from parameters (from stockReportingToday JSON)
-  // If not provided, fallback to calculation from reportDate
-  const q = quarter || Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
-  const yr = fiscalYear || new Date(reportDate).getFullYear();
-
-  const extractionPrompt = `
-You are a financial data extraction bot. Your ONLY job is to return valid JSON.
-
-SYMBOL: ${symbol}
-COMPANY: ${companyName}
-DATE: ${reportDate}
-QUARTER: Q${q} ${yr}
-
-CRITICAL INSTRUCTIONS:
-1. **SEARCH STRATEGY** - Search by COMPANY NAME "${companyName}", not ticker:
-   - First search: "${companyName} investor relations"
-   - Find their IR website (usually: {company}.com/investors OR {company}.com/investor-relations)
-   - For major banks: often {company}.com/about/investor-relations
-   - Then search: "${companyName} Q${q} ${yr} earnings" on that site
-
-2. Extract ONLY the following data from official sources (NOT news articles!)
-3. If a field is unavailable, use null (NOT 0, NOT empty string)
-4. Return ONLY valid JSON - NO explanations, NO markdown, NO extra text
-
-REQUIRED JSON STRUCTURE:
-{
-  "symbol": "${symbol}",
-  "companyName": "${companyName}",
-  "reportDate": "${reportDate}",
-  "eps": {
-    "actual": <number or null>,
-    "estimate": <number or null>,
-    "beatPercent": <number or null>
-  },
-  "revenue": {
-    "actual": <number in dollars or null>,
-    "estimate": <number in dollars or null>,
-    "beatPercent": <number or null>
-  },
-  "guidance": {
-    "status": "raised" | "lowered" | "maintained" | "unavailable"
-  },
-  "yoyGrowth": {
-    "epsChange": <number or null>,
-    "revenueChange": <number or null>
-  },
-  "cashFlow": {
-    "freeCashFlow": <number or null>,
-    "yoyChange": <number or null>
-  },
-  "margins": {
-    "netMargin": <number or null>,
-    "operatingMargin": <number or null>,
-    "trend": "improving" | "stable" | "declining" | "unavailable"
-  },
-  "sentiment": {
-    "overall": "positive" | "neutral" | "negative"
-  },
-  "marketData": {
-    "price": <number or null>
-  },
-  "highlights": [<string>, <string>],
-  "concerns": [<string>, <string>]
-}
-
-CRITICAL RULES:
-- Do NOT invent data
-- Do NOT use 0 for missing data - use null
-- Do NOT add explanations or markdown
-- Return ONLY the JSON object
-- Search official IR sources first before using news articles
-`;
-
-  try {
-    const res = await callGrokAPI(
-      [
-        {
-          role: "system",
-          content: "You are a data extraction API specialized in official investor relations documents. Return ONLY valid JSON. No markdown. No explanations. Prioritize IR websites."
-        },
-        {
-          role: "user",
-          content: extractionPrompt
-        }
-      ],
-      0.1,
-      4000,
-      true
-    );
-
-    // 🛑 DEBUG: Print full AI response (FALLBACK MODE)
-    logger.info(`📥 ===== FALLBACK MODE: FULL AI RESPONSE (RAW) =====`);
-    logger.info(`Length: ${res.length} characters`);
-    logger.info(res);
-    logger.info(`📥 ===== END OF RAW RESPONSE =====`);
-
-    // ✅ נקה markdown אם יש
-    let cleanedRes = res.trim();
-    if (cleanedRes.startsWith('```json')) {
-      cleanedRes = cleanedRes.replace(/```json\n?/g, '').replace(/```\n?$/g, '');
-    }
-    if (cleanedRes.startsWith('```')) {
-      cleanedRes = cleanedRes.replace(/^```\n?/g, '').replace(/```\n?$/g, '');
-    }
-    cleanedRes = cleanedRes.trim();
-
-    // 🛑 DEBUG: Print cleaned response
-    logger.info(`📥 ===== FALLBACK MODE: CLEANED RESPONSE =====`);
-    logger.info(cleanedRes);
-    logger.info(`📥 ===== END OF CLEANED RESPONSE =====`);
-
-    const data = JSON.parse(cleanedRes);
-
-    // 🛑 DEBUG: Print parsed JSON
-    logger.info(`📥 ===== FALLBACK MODE: PARSED JSON OBJECT =====`);
-    logger.info(JSON.stringify(data, null, 2));
-    logger.info(`📥 ===== END OF PARSED JSON =====`);
-    
-    // 🛑 FORCE SYMBOL INJECTION (למקרה שה-AI שכח)
-    data.symbol = symbol;
-    data.companyName = companyName;
-    data.reportDate = reportDate;
-    
-    // ✅ Override price with FMP data if available
-    if (currentPrice && currentPrice > 0) {
-      logger.info(`💰 Using FMP price: $${currentPrice} (overriding AI extraction)`);
-      data.marketData = data.marketData || {};
-      data.marketData.price = currentPrice;
-    }
-    
-    // ✅ VALIDATION: Check for fake zeros
-    if (data.revenue?.actual === 0 || data.revenue?.estimate === 0) {
-      logger.warn(`⚠️ ${symbol}: Revenue data looks suspicious (0 values) - AI may have failed`);
-    }
-    if (data.eps?.actual === 0 && data.eps?.estimate === 0) {
-      logger.warn(`⚠️ ${symbol}: EPS data looks suspicious (0 values) - AI may have failed`);
-    }
-    
-    // ✅ אימות שיש לפחות כמה נתונים בסיסיים
-    if (!data.eps?.actual && !data.revenue?.actual) {
-      logger.error(`❌ ${symbol}: AI returned no meaningful data - both EPS and Revenue are null/0`);
-    }
-    
-    return data;
-  } catch (e: any) { 
-    logger.error(`❌ Full AI extraction failed for ${symbol}:`, e.message); 
-    throw e; 
+  // Check if we got valid aiData
+  if (!aiData) {
+    throw new Error(`Failed to extract earnings data after ${MAX_RETRIES} attempts: ${lastError}`);
   }
+
+  // ============================================
+  // STEP 4: BUILD FINAL DATA OBJECT
+  // ============================================
+  logger.info(`\n🔗 Step 4: Building Final Data Object...`);
+
+  // If AI extracted EPS/Revenue, use it
+  if (!hasFinnhubData && aiData.eps && aiData.revenue) {
+    epsActual = aiData.eps.actual;
+    epsEstimate = aiData.eps.estimate;
+    revenueActual = aiData.revenue.actual;
+    revenueEstimate = aiData.revenue.estimate;
+    epsBeatPercent = aiData.eps.beatPercent || 0;
+    revBeatPercent = aiData.revenue.beatPercent || 0;
+    
+    logger.info(`   ✅ EPS: ${epsActual} vs ${epsEstimate} (from PDF)`);
+    logger.info(`   ✅ Revenue: $${(revenueActual! / 1e9).toFixed(2)}B (from PDF)`);
+  }
+
+  // Validate critical fields
+  if (epsActual === null || revenueActual === null) {
+    logger.error(`❌ CRITICAL: Missing EPS or Revenue after extraction!`);
+    throw new Error('Missing critical data (EPS/Revenue) - cannot proceed');
+  }
+
+  // Use PDF metrics if available, otherwise fallback to API
+  const finalYoyRevenue = aiData.pdfMetrics?.revenueYoY !== null && aiData.pdfMetrics?.revenueYoY !== undefined
+    ? aiData.pdfMetrics.revenueYoY
+    : apiData.yoyRevenueChange;
+
+  const finalNetMargin = aiData.pdfMetrics?.netMargin !== null && aiData.pdfMetrics?.netMargin !== undefined
+    ? aiData.pdfMetrics.netMargin
+    : apiData.netMargin;
+
+  const finalOperatingMargin = aiData.pdfMetrics?.marginMetric?.value !== null && aiData.pdfMetrics?.marginMetric?.value !== undefined
+    ? aiData.pdfMetrics.marginMetric.value
+    : apiData.operatingMargin;
+
+  const finalFcf = aiData.pdfMetrics?.cashFromOperations !== null && aiData.pdfMetrics?.cashFromOperations !== undefined
+    ? aiData.pdfMetrics.cashFromOperations * 1e6
+    : apiData.fcf;
+
+  const pdfUrl = aiData.pdfUrl || aiData.dataSources?.pdfUrl || "Unknown";
+
+  const data: FullExtractionResponse = {
+    symbol,
+    companyName,
+    reportDate,
+    eps: {
+      actual: epsActual,
+      estimate: epsEstimate,
+      beatPercent: epsBeatPercent,
+      beat: null,
+      source: hasFinnhubData ? "Finnhub" : "PDF"
+    },
+    revenue: {
+      actual: revenueActual,
+      estimate: revenueEstimate,
+      beatPercent: revBeatPercent,
+      beat: null,
+      source: hasFinnhubData ? "Finnhub" : "PDF"
+    },
+    guidance: aiData.guidance || { status: "unavailable", details: null },
+    sentiment: aiData.sentiment || { overall: "neutral", reasoning: null },
+    yoyGrowth: {
+      epsChange: apiData.yoyEpsChange,
+      revenueChange: finalYoyRevenue,
+      revenueChangeType: aiData.pdfMetrics?.revenueYoY !== null ? "quarterly" : "TTM"
+    },
+    cashFlow: {
+      freeCashFlow: finalFcf,
+      yoyChange: null
+    },
+    margins: {
+      netMargin: finalNetMargin,
+      operatingMargin: finalOperatingMargin,
+      trend: "stable",
+      isEfficiencyRatio: aiData.pdfMetrics?.marginMetric?.type === "efficiency_ratio"
+    },
+    highlights: aiData.highlights || ["Data extracted from earnings report", "See PDF for details"],
+    concerns: aiData.concerns || ["Data extracted from earnings report", "See PDF for details"],
+    marketData: {
+      price: currentPrice || null,
+      marketCap: null,
+      volume: null,
+      source: "FMP"
+    },
+    reportTime: "",
+    managementCommentary: null,
+    dataQuality: "high" as any,
+    aiRecommendation: "hold" as any
+  };
+
+  // ============================================
+  // FINAL SUMMARY
+  // ============================================
+  logger.info(`\n${"=".repeat(70)}`);
+  logger.info(`✅ EXTRACTION COMPLETE: ${symbol}`);
+  logger.info(`${"=".repeat(70)}`);
+  logger.info(`📄 PDF: ${pdfUrl}`);
+  logger.info(`📊 Quarter: Q${q} ${yr}`);
+  logger.info(`─`.repeat(70));
+  logger.info(`💰 EPS: ${data.eps.actual} vs ${data.eps.estimate} (${data.eps.beatPercent >= 0 ? '+' : ''}${data.eps.beatPercent.toFixed(2)}%) [${data.eps.source}]`);
+  logger.info(`💵 Revenue: $${(data.revenue.actual / 1e9).toFixed(2)}B vs $${(data.revenue.estimate / 1e9).toFixed(2)}B (${data.revenue.beatPercent >= 0 ? '+' : ''}${data.revenue.beatPercent.toFixed(2)}%) [${data.revenue.source}]`);
+  logger.info(`─`.repeat(70));
+  logger.info(`📈 YoY Revenue: ${data.yoyGrowth.revenueChange !== null ? (data.yoyGrowth.revenueChange >= 0 ? '+' : '') + data.yoyGrowth.revenueChange.toFixed(2) + '%' : 'N/A'} (${data.yoyGrowth.revenueChangeType || 'N/A'})`);
+  logger.info(`📊 Net Margin: ${data.margins.netMargin !== null ? data.margins.netMargin.toFixed(2) + '%' : 'N/A'}`);
+  logger.info(`📊 ${data.margins.isEfficiencyRatio ? 'Efficiency Ratio' : 'Operating Margin'}: ${data.margins.operatingMargin !== null ? data.margins.operatingMargin.toFixed(2) + '%' : 'N/A'}`);
+  logger.info(`💵 FCF: ${data.cashFlow.freeCashFlow !== null ? '$' + (data.cashFlow.freeCashFlow / 1e6).toFixed(2) + 'M' : 'N/A'}`);
+  logger.info(`─`.repeat(70));
+  logger.info(`📋 Guidance: ${data.guidance.status}`);
+  logger.info(`💭 Sentiment: ${data.sentiment.overall}`);
+  logger.info(`${"=".repeat(70)}\n`);
+
+  return data;
 }
 // ============================================
 // 5. FINAL ANALYSIS (TELEGRAM FORMAT)
@@ -1954,6 +1788,7 @@ interface TimeContext {
   currentETTimeStr: string; // השעה בארה"ב עכשיו
 }
 
+
 function getTimeContext(): TimeContext {
   const now = new Date();
   
@@ -2043,24 +1878,43 @@ export class StockProcessor {
   logger.info(`${"=".repeat(60)}\n`);
 
     // סינון מניות שצריך לבדוק
-    const stocksToCheck = this.stocks.filter((s) => {
-      // דלג על מניות שכבר נשלחו
-      if (s.sentToTelegram) return false;
-        // דלג על מניות שכבר היו יותר מדי ניסיונות
-      if (s.checkCount >= MAX_CHECK_ATTEMPTS) {
-        if (s.checkCount === MAX_CHECK_ATTEMPTS) {
-          logger.warn(`⚠️ ${s.symbol} - Reached max attempts (${MAX_CHECK_ATTEMPTS}). Stopping checks.`);
-        }
-        return false;
+ const stocksToCheck = this.stocks.filter((s) => {
+  // דלג על מניות שכבר נשלחו
+  if (s.sentToTelegram) return false;
+  
+  // דלג על מניות שכבר היו יותר מדי ניסיונות
+  if (s.checkCount >= MAX_CHECK_ATTEMPTS) {
+    if (s.checkCount === MAX_CHECK_ATTEMPTS) {
+      logger.warn(`⚠️ ${s.symbol} - Reached max check attempts (${MAX_CHECK_ATTEMPTS}). Stopping checks.`);
+    }
+    return false;
+  }
+
+  // ✅ חדש: בדוק אם צריך לחכות לפני retry של extraction
+  if (s.nextRetryTime) {
+    const now = Date.now();
+    const retryTime = new Date(s.nextRetryTime).getTime();
+    
+    if (now < retryTime) {
+      const minutesLeft = Math.ceil((retryTime - now) / (60 * 1000));
+      // Don't log every iteration - only occasionally
+      if (minutesLeft % 5 === 0) {
+        logger.debug(`⏰ ${s.symbol} - Waiting ${minutesLeft}m before extraction retry`);
       }
-      
-      // בדוק רק מניות בטווח זמן סביר
-      if (!this.isWithinReasonableCheckWindow(s.windowStart, s.reportType)) {
-        return false;
-      }
-      
-      return true;
-    });
+      return false; // לא בודקים עדיין
+    } else {
+      logger.info(`🔄 ${s.symbol} - Retry time reached, attempting extraction again (attempt ${(s.extractionAttempts || 0) + 1}/3)`);
+      s.nextRetryTime = null; // נסה שוב עכשיו
+    }
+  }
+  
+  // בדוק רק מניות בטווח זמן סביר
+  if (!this.isWithinReasonableCheckWindow(s.windowStart, s.reportType)) {
+    return false;
+  }
+  
+  return true;
+});
 
     if (stocksToCheck.length === 0) {
       const totalSent = this.stocks.filter(s => s.sentToTelegram).length;
@@ -2150,50 +2004,83 @@ export class StockProcessor {
               logger.error(`❌ Failed to get price: ${err.message}`);
             }
 
-            const fullData = await fullExtraction(
-            stock.symbol,
-            stock.companyName,
-            timeContext.reportingDateET,  // ✅ התאריך לפי ארה"ב!
-            currentPrice,                                // currentPrice (אין לנו)
-            stock.finnhubData,                       // finnhubData מה-JSON!
-            stock.quarter,                           // quarter
-            stock.fiscalYear                         // fiscalYear
-        );
+           try {
+    const fullData = await fullExtraction(
+      stock.symbol,
+      stock.companyName,
+      timeContext.reportingDateET,
+      currentPrice,
+      stock.finnhubData,
+      stock.quarter,
+      stock.fiscalYear
+    );
 
-              if (fullData) {
-          stock.fullData = fullData;
-          logger.info(`📊 Full extraction complete for ${stock.symbol}`);
+    // ✅ אם הגענו לכאן - extraction הצליח!
+    stock.fullData = fullData;
+    logger.info(`📊 Full extraction complete for ${stock.symbol}`);
 
-          // ✅ חישוב Mira Score
-          const miraScore = calculateDetailedScore(fullData);
-          logger.info(`🎯 Mira Score for ${stock.symbol}: ${miraScore.totalScore} (${miraScore.classification})`);
+    // ✅ חישוב Mira Score
+    const miraScore = calculateDetailedScore(fullData);
+    logger.info(`🎯 Mira Score for ${stock.symbol}: ${miraScore.totalScore} (${miraScore.classification})`);
 
-          // ✅ ניתוח סופי - שים לב לסדר הפרמטרים!
-          const analysis = await finalAnalysis(fullData, miraScore);
+    // ✅ ניתוח סופי
+    const analysis = await finalAnalysis(fullData, miraScore);
 
-          if (analysis) {
-            stock.analysis = analysis;
-            stock.status = "completed";
-            logger.info(`✅ Analysis complete for ${stock.symbol}!`);
+    if (analysis) {
+      stock.analysis = analysis;
+      stock.status = "completed";
+      logger.info(`✅ Analysis complete for ${stock.symbol}!`);
 
-            // קריאה ל-callback
-            if (this.onComplete) {
-              await this.onComplete(stock);
-            }
-          } else {
-            logger.error(`❌ Analysis failed for ${stock.symbol}`);
-            stock.status = "error";
-            stock.error = "Analysis failed";
-          }
-        } else {
-            logger.error(`❌ Full extraction failed for ${stock.symbol}`);
-            stock.status = "error";
-            stock.error = "Extraction failed";
-          }
-        } else {
-          // לא נמצא דוח - חזור ל-pending לניסיון הבא
-          stock.status = "pending";
-        }
+      // קריאה ל-callback
+      if (this.onComplete) {
+        await this.onComplete(stock);
+      }
+    } else {
+      logger.error(`❌ Analysis failed for ${stock.symbol}`);
+      stock.status = "error";
+      stock.error = "Analysis generation failed";
+    }
+    
+  } catch (extractionError: any) {
+    // ✅ תפוס שגיאות extraction
+    logger.error(`❌ Extraction error for ${stock.symbol}: ${extractionError.message}`);
+    
+    // ✅ בדוק אם זו שגיאת "data not ready"
+    if (extractionError.message.includes('Incomplete extraction') || 
+        extractionError.message.includes('AI extraction failed') ||
+        extractionError.message.includes('Report may not be ready')) {
+      
+      stock.extractionAttempts = (stock.extractionAttempts || 0) + 1;
+      stock.lastExtractionFailure = new Date().toISOString();
+      
+      if (stock.extractionAttempts >= 3) {
+        // Give up after 3 attempts
+        stock.status = "error";
+        stock.error = `Failed ${stock.extractionAttempts} times: ${extractionError.message}`;
+        logger.error(`🚫 ${stock.symbol}: Giving up after ${stock.extractionAttempts} extraction attempts`);
+        logger.error(`   Final error: ${extractionError.message}`);
+      } else {
+        // Schedule retry in 20 minutes
+        const retryDelay = 20 * 60 * 1000; // 20 minutes
+        stock.nextRetryTime = new Date(Date.now() + retryDelay).toISOString();
+        stock.status = "pending";
+        
+        logger.warn(`⏰ ${stock.symbol}: Data incomplete - will retry extraction`);
+        logger.warn(`   Retry scheduled for: ${stock.nextRetryTime}`);
+        logger.warn(`   Attempt ${stock.extractionAttempts}/3`);
+        logger.warn(`   Reason: ${extractionError.message}`);
+      }
+    } else {
+      // שגיאה אחרת (network, API, etc) - permanent
+      stock.status = "error";
+      stock.error = `Extraction error: ${extractionError.message}`;
+      logger.error(`🚫 ${stock.symbol}: Permanent extraction error - will not retry`);
+    }
+  }
+} else {
+  // לא נמצא דוח - חזור ל-pending לניסיון הבא
+  stock.status = "pending";
+}
 
       } catch (error: any) {
         logger.error(`❌ Error processing ${stock.symbol}: ${error.message}`);
