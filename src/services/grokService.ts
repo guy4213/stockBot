@@ -35,6 +35,8 @@ const CHECK_INTERVAL_MS = 30 * 60 * 1000; // 10 minutes between iterations
 const DELAY_BETWEEN_STOCKS_MS = 5000; // 5 seconds between individual stock checks
 const MAX_CHECK_ATTEMPTS = 10; // Stop checking after 10 failed attempts
 const WINDOW_BUFFER_HOURS = 3; // Check stocks ±3 hours from their window
+const MIN_MARKET_CAP = 300_000_000; 
+const MIN_VOLUME = 3_000_000; 
 interface ExtendedStock extends Stock {
     quarter?: number;
     fiscalYear?: number;
@@ -310,7 +312,7 @@ async function callGrokAPI(
       return contentStr;
 
     } catch (error) {
-      logger.error(`\n❌ API Call Failed (Attempt ${attempt + 1}/${MAX_API_RETRIES + 1}):`);
+      logger.error(`\n❌ API Call Failed (Attempt ${attempt + 1}/${MAX_API_RETRIES}):`);
       
       if (axios.isAxiosError(error)) {
         logger.error(`   Error Type: Axios Error`);
@@ -474,8 +476,6 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
   logger.info(`✅ Finnhub returned ${rawList.length} raw entries.`);
 
   const validatedStocks: ExtendedStock[] = [];
-  const MIN_MARKET_CAP = 300_000_000; 
-  const MIN_VOLUME = 1_000_000; 
   const processedSymbols = new Set<string>();
 
   for (const entry of rawList) {

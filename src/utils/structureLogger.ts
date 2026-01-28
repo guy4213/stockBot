@@ -3,7 +3,21 @@ import path from 'path';
 
 const logDir = path.join(__dirname, '../logs');
 
-// ✅ Winston logger עם קבצים + console
+// ✅ פורמט מותאם אישית - קריא וצבעוני
+const customConsoleFormat = winston.format.printf(({ level, message, timestamp, ...metadata }) => {
+  let msg = `${message}`;
+  
+  // אם יש מטאדאטה נוספת, הוסף אותה בצורה קריאה
+  if (Object.keys(metadata).length > 0 && metadata.stack) {
+    msg += `\n${metadata.stack}`;
+  } else if (Object.keys(metadata).length > 0) {
+    msg += ` ${JSON.stringify(metadata, null, 2)}`;
+  }
+  
+  return msg;
+});
+
+// ✅ Winston logger עם קבצים + console משופר
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(
@@ -12,7 +26,7 @@ const logger = winston.createLogger({
     winston.format.json()
   ),
   transports: [
-    // ✅ קובץ לכל הלוגים
+    // ✅ קובץ לכל הלוגים - עם timestamps
     new winston.transports.File({ 
       filename: path.join(logDir, 'app.log'),
       maxsize: 10 * 1024 * 1024, // 10MB
@@ -26,11 +40,11 @@ const logger = winston.createLogger({
       maxsize: 5 * 1024 * 1024,
       maxFiles: 3
     }),
-    // ✅ Console עם צבעים
+    // ✅ Console - ללא timestamps, עם צבעים וקריאות
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
-        winston.format.simple()
+        customConsoleFormat
       )
     })
   ]
@@ -52,7 +66,7 @@ export const stockLog = {
   },
 
   extractionData: (symbol: string, data: any) => {
-    logger.info(`📊 [${symbol}] Extraction results:`, JSON.stringify(data, null, 2));
+    logger.info(`📊 [${symbol}] Extraction results:\n${JSON.stringify(data, null, 2)}`);
   },
 
   sent: (symbol: string) => {
@@ -61,6 +75,23 @@ export const stockLog = {
 
   error: (symbol: string, error: string, stage: string) => {
     logger.error(`❌ [${symbol}] Error at ${stage}: ${error}`);
+  },
+
+  // ✅ פונקציות נוספות שימושיות
+  processing: (symbol: string, stage: string) => {
+    logger.info(`⚙️  [${symbol}] Processing: ${stage}`);
+  },
+
+  skip: (symbol: string, reason: string) => {
+    logger.info(`⏭️  [${symbol}] Skipped: ${reason}`);
+  },
+
+  debug: (symbol: string, message: string, data?: any) => {
+    if (data) {
+      logger.debug(`🔍 [${symbol}] ${message}\n${JSON.stringify(data, null, 2)}`);
+    } else {
+      logger.debug(`🔍 [${symbol}] ${message}`);
+    }
   }
 };
 

@@ -49,7 +49,11 @@ bot.onText(/\/status/, async (msg) => {
     // בנה הודעה
     const total = data.stocks.length;
     const sent = data.stocks.filter((s: any) => s.sentToTelegram).length;
-    const pending = total - sent; // כל מה שלא נשלח
+    const pending = total - sent;
+    
+    // ✅ חלק לפי BMO ו-AMC
+    const bmoStocks = data.stocks.filter((s: any) => s.reportType === 'BMO');
+    const amcStocks = data.stocks.filter((s: any) => s.reportType === 'AMC');
     
     let message = `📊 *Earnings Bot Status*\n\n`;
     message += `📅 Date: ${data.date}\n`;
@@ -57,13 +61,26 @@ bot.onText(/\/status/, async (msg) => {
     message += `✅ Sent: ${sent}\n`;
     message += `⏳ Pending: ${pending}\n\n`;
     
-    // רשימת מניות
-    message += `*Stocks:*\n`;
-    data.stocks.forEach((s: any) => {
-      const emoji = s.sentToTelegram ? '✅' : '⏳';
-      const status = s.sentToTelegram ? 'sent' : 'pending';
-      message += `${emoji} ${s.symbol} - ${status}\n`;
-    });
+    // ✅ רשימת מניות BMO (Before Market Open)
+    if (bmoStocks.length > 0) {
+      message += `*📈 BMO (Before Market Open):*\n`;
+      bmoStocks.forEach((s: any) => {
+        const emoji = s.sentToTelegram ? '✅' : '⏳';
+        const status = s.sentToTelegram ? 'sent' : 'pending';
+        message += `${emoji} ${s.symbol} - ${status} (${s.windowStart}-${s.windowEnd})\n`;
+      });
+      message += `\n`;
+    }
+    
+    // ✅ רשימת מניות AMC (After Market Close)
+    if (amcStocks.length > 0) {
+      message += `*📉 AMC (After Market Close):*\n`;
+      amcStocks.forEach((s: any) => {
+        const emoji = s.sentToTelegram ? '✅' : '⏳';
+        const status = s.sentToTelegram ? 'sent' : 'pending';
+        message += `${emoji} ${s.symbol} - ${status} (${s.windowStart}-${s.windowEnd})\n`;
+      });
+    }
     
     await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
     
