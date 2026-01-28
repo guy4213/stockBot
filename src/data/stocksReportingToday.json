@@ -1,0 +1,649 @@
+{
+  "date": "2026-01-28",
+  "stocks": [
+    {
+      "symbol": "MSFT",
+      "companyName": "Microsoft Corporation",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 3567102116200.9995,
+      "volume": 17981150,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 2,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 4.0478,
+        "revenueActual": null,
+        "revenueEstimate": 81871502182
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "META",
+      "companyName": "Meta Platforms, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 1693908815505,
+      "volume": 10599016,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 8.3946,
+        "revenueActual": null,
+        "revenueEstimate": 59764422828
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "TSLA",
+      "companyName": "Tesla, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 1442108400285,
+      "volume": 40408219,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.4557,
+        "revenueActual": null,
+        "revenueEstimate": 25284526315
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "LRCX",
+      "companyName": "Lam Research Corporation",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 301076671150,
+      "volume": 11137509,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 2,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 1.1943,
+        "revenueActual": null,
+        "revenueEstimate": 5344575691
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "IBM",
+      "companyName": "International Business Machines Corporation",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 275270170815,
+      "volume": 3729063,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 4.3628,
+        "revenueActual": null,
+        "revenueEstimate": 19418617610
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "GEV",
+      "companyName": "GE Vernova Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 193516604177,
+      "volume": 5062757,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 13.39,
+        "epsEstimate": 3.0007,
+        "revenueActual": 10956000000,
+        "revenueEstimate": 10315189064
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "APH",
+      "companyName": "Amphenol Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 179715829685,
+      "volume": 34736098,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.97,
+        "epsEstimate": 0.9431,
+        "revenueActual": 6439000000,
+        "revenueEstimate": 6249533206
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "T",
+      "companyName": "AT&T Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 170359471365,
+      "volume": 64753092,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.52,
+        "epsEstimate": 0.4719,
+        "revenueActual": 33466000000,
+        "revenueEstimate": 33524559412
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "DHR",
+      "companyName": "Danaher Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 160434942582,
+      "volume": 5682473,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 2.23,
+        "epsEstimate": 2.1743,
+        "revenueActual": 6838000000,
+        "revenueEstimate": 6874320933
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "NOW",
+      "companyName": "ServiceNow, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 134616879600,
+      "volume": 12130090,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.8917,
+        "revenueActual": null,
+        "revenueEstimate": 3561678887
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "SBUX",
+      "companyName": "Starbucks Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 108956922000,
+      "volume": 22225359,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 1,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": 0.56,
+        "epsEstimate": 0.5978,
+        "revenueActual": 9915100000,
+        "revenueEstimate": 9865256767
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "ADP",
+      "companyName": "Automatic Data Processing, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 101582664632,
+      "volume": 3199377,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 2,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": 2.62,
+        "epsEstimate": 2.5987,
+        "revenueActual": 5359300000,
+        "revenueEstimate": 5390527560
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "GLW",
+      "companyName": "Corning Incorporated",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 89302658847,
+      "volume": 15770337,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.72,
+        "epsEstimate": 0.7125,
+        "revenueActual": 4412000000,
+        "revenueEstimate": 4395791124
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "ELV",
+      "companyName": "Elevance Health Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 76325680765,
+      "volume": 3708492,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 3.33,
+        "epsEstimate": 3.128,
+        "revenueActual": 49311000000,
+        "revenueEstimate": 50314506864
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "BKR",
+      "companyName": "Baker Hughes Company",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 55900740415,
+      "volume": 8626413,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.7694,
+        "revenueActual": null,
+        "revenueEstimate": 7772497420
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "LVS",
+      "companyName": "Las Vegas Sands Corp.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 41494373467,
+      "volume": 8071485,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.7663,
+        "revenueActual": null,
+        "revenueEstimate": 3373955429
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "OTIS",
+      "companyName": "Otis Worldwide Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 34529970296,
+      "volume": 5131175,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 1.03,
+        "epsEstimate": 1.0559,
+        "revenueActual": 3796000000,
+        "revenueEstimate": 3957670125
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "LUV",
+      "companyName": "Southwest Airlines Co.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 21268002665,
+      "volume": 6973144,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.5837,
+        "revenueActual": null,
+        "revenueEstimate": 7588759108
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "NLY",
+      "companyName": "Annaly Capital Management, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 16566916905,
+      "volume": 4075957,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.7388,
+        "revenueActual": null,
+        "revenueEstimate": 1485689800
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "TXT",
+      "companyName": "Textron Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 15299773183,
+      "volume": 5432178,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 1.73,
+        "epsEstimate": 1.7215,
+        "revenueActual": 4175000000,
+        "revenueEstimate": 4138786504
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "X",
+      "companyName": "United States Steel Corporation",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 12416817960,
+      "volume": 14511087,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.7268,
+        "revenueActual": null,
+        "revenueEstimate": 4342495725
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "VFC",
+      "companyName": "V.F. Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 7414002283,
+      "volume": 16398482,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 3,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": 0.58,
+        "epsEstimate": 0.4557,
+        "revenueActual": 2875800000,
+        "revenueEstimate": 2790525222
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "PB",
+      "companyName": "Prosperity Bancshares, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 6417646008,
+      "volume": 4230207,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 1.46,
+        "epsEstimate": 1.4954,
+        "revenueActual": 317730000,
+        "revenueEstimate": 327536539
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "AVT",
+      "companyName": "Avnet, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 4900102375,
+      "volume": 3315756,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 2,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": 1.05,
+        "epsEstimate": 0.962,
+        "revenueActual": 6318960000,
+        "revenueEstimate": 6091496850
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "VIAV",
+      "companyName": "Viavi Solutions Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 4698335940,
+      "volume": 7084377,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 2,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.1903,
+        "revenueActual": null,
+        "revenueEstimate": 372556458
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "LBRT",
+      "companyName": "Liberty Energy Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:05",
+      "windowEnd": "20:00",
+      "marketCap": 3492817320,
+      "volume": 3238882,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.1575,
+        "revenueActual": null,
+        "revenueEstimate": 900181844
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "EXTR",
+      "companyName": "Extreme Networks, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 2049896914,
+      "volume": 3003858,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 2,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": 0.26,
+        "epsEstimate": 0.2456,
+        "revenueActual": 317930000,
+        "revenueEstimate": 318571122
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "SRDX",
+      "companyName": "Surmodics, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 614511837,
+      "volume": 5342690,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 1,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.1316,
+        "revenueActual": null,
+        "revenueEstimate": 30612240
+      },
+      "sentToTelegram": false
+    }
+  ]
+}
