@@ -2,7 +2,8 @@ import TelegramBot from "node-telegram-bot-api";
 import dotenv from "dotenv";
 import logger from "../utils/logger";
 import { StockData } from "../types";
-
+import fs from "fs";
+import path from "path";
 dotenv.config({ quiet: true });
 
 const token = process.env.TELEGRAM_BOT_TOKEN as string;
@@ -37,7 +38,39 @@ TELEGRAM_CHAT_ID=${msg.chat.id}
   bot.sendMessage(msg.chat.id, chatInfo);
   logger.info(`📞 Chat ID requested: ${msg.chat.id}`);
 });
-
+bot.onText(/\/status/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  try {
+    // קרא את הקובץ
+    const filePath = path.join(__dirname, "../data/stocksReportingToday.json");
+    const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    
+    // בנה הודעה
+    const total = data.stocks.length;
+    const sent = data.stocks.filter((s: any) => s.sentToTelegram).length;
+    const pending = total - sent; // כל מה שלא נשלח
+    
+    let message = `📊 *Earnings Bot Status*\n\n`;
+    message += `📅 Date: ${data.date}\n`;
+    message += `📈 Total: ${total}\n`;
+    message += `✅ Sent: ${sent}\n`;
+    message += `⏳ Pending: ${pending}\n\n`;
+    
+    // רשימת מניות
+    message += `*Stocks:*\n`;
+    data.stocks.forEach((s: any) => {
+      const emoji = s.sentToTelegram ? '✅' : '⏳';
+      const status = s.sentToTelegram ? 'sent' : 'pending';
+      message += `${emoji} ${s.symbol} - ${status}\n`;
+    });
+    
+    await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    
+  } catch (error: any) {
+    await bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+  }
+});
 export async function sendTelegramMessage(
   stockData: StockData | any
 ): Promise<void> {

@@ -1,7 +1,9 @@
 import axios, { AxiosError } from "axios";
 import dotenv from "dotenv";
-import logger from "../utils/logger";
+import logger, { stockLog } from '../utils/structureLogger';
 // ✅ שימוש ב-FMP ו-Finnhub לקבלת נתונים מדויקים במקום AI
+
+
 import {
   getEarnings,
   getQuote,
@@ -22,69 +24,380 @@ import {
   ProcessingStatus,
   Stock,
 } from "../types/grok.types";
-
+import fs from "fs";
+import path from "path";
 dotenv.config({ quiet: true });
 
-const GROK_API_URL = "https://api.x.ai/v1/chat/completions";
 const GROK_API_KEY = process.env.GROK_API_KEY;
-const GROK_MODEL = "grok-3-mini"; 
+const GROK_MODEL = "grok-3"; 
 const MAX_API_RETRIES = 3;
-const CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes between iterations
+const CHECK_INTERVAL_MS = 30 * 60 * 1000; // 10 minutes between iterations
 const DELAY_BETWEEN_STOCKS_MS = 5000; // 5 seconds between individual stock checks
 const MAX_CHECK_ATTEMPTS = 10; // Stop checking after 10 failed attempts
-const WINDOW_BUFFER_HOURS = 3; // Check stocks ±2 hours from their window
+const WINDOW_BUFFER_HOURS = 3; // Check stocks ±3 hours from their window
 interface ExtendedStock extends Stock {
     quarter?: number;
     fiscalYear?: number;
 }
 
+interface GrokResponseNew {
+  id: string;
+  object: string;
+  created: number;
+  model: string;
+  choices: Array<{
+    index: number;
+    message: {
+      role: string;
+      content: string;
+      tool_calls?: any[];
+    };
+    finish_reason: string;
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}
 // ✅ הוסף את זה:
 interface StockProcessingStateExtended extends StockProcessingState {
+  isProcessing?: boolean;  // ⬅️ הוסף את זה!
   extractionAttempts?: number;
   lastExtractionFailure?: string;
-  nextRetryTime?: string;
+  nextRetryTime?: string|null;
+  
+  // ✅ חדש: Cache של IR Portal - now matches IRPortal interface
+  cachedIRPortal?: IRPortal | null;
+    fiscalYear?: number; // <-- Add this line
+quarter: number | undefined;
 }
 
-// ============================================
-// HELPER: Call Grok API
-// ============================================
+interface IRPortal {
+  url: string;
+  domain: string;
+  confidence: number;
+  reason: string;
+  verifiedAt?: string;  // ✅ Add optional timestamp for cache
+}
+
+interface IRCandidate {
+  url: string;
+  title: string;
+  snippet: string;
+}
+
+interface EarningsDocument {
+  url: string;
+  type: 'press_release' | 'presentation' | '10q' | '10k' | 'unknown';
+  title: string;
+  publishDate?: string;
+  verified: boolean;
+}
+
+
+/**
+ * ✅ UPDATED: Call Grok API with new Responses API format
+ * @param messages - Array of messages (system, user, assistant)
+ * @param temperature - Randomness (0.0-2.0)
+ * @param maxTokens - Max response length
+ * @param enableWebSearch - Enable web_search tool (replaces old search_parameters)
+ */
+// ═══════════════════════════════════════════════════════════════
+// Grok API Calls - עדכון להתאים לחתימה הקיימת
+// ═══════════════════════════════════════════════════════════════
+
 async function callGrokAPI(
   messages: GrokMessage[],
-  temperature: number = 0.2,
-  maxTokens: number = 6000,
+  temperature: number = 0.3,
+  maxTokens: number = 4000,
   enableWebSearch: boolean = false
 ): Promise<string> {
   if (!GROK_API_KEY) throw new Error("GROK_API_KEY missing");
 
+  const GROK_API_URL = "https://api.x.ai/v1/responses";
+  
   const requestBody: any = {
-    model: GROK_MODEL,
-    messages,
+    model: "grok-4-fast-reasoning",
+    input: messages,
     temperature,
     max_tokens: maxTokens,
     stream: false,
   };
 
   if (enableWebSearch) {
-    requestBody.search_parameters = { mode: "auto", return_citations: true, max_search_results: 20 };
+    requestBody.tools = [
+      {
+        type: "web_search"
+      }
+    ];
+  }
+
+  logger.info(`\n🔹 Grok API Request:`);
+  logger.info(`   Model: ${requestBody.model}`);
+  logger.info(`   Temperature: ${temperature}`);
+  logger.info(`   Max Tokens: ${maxTokens}`);
+  logger.info(`   Web Search: ${enableWebSearch ? 'ENABLED' : 'DISABLED'}`);
+  logger.info(`   Messages: ${messages.length} message(s)`);
+  if (messages[0]?.content) {
+    logger.info(`   First message preview: ${messages[0].content.substring(0, 150)}...`);
   }
 
   for (let attempt = 0; attempt <= MAX_API_RETRIES; attempt++) {
     try {
-      const response = await axios.post<GrokResponse>(GROK_API_URL, requestBody, {
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${GROK_API_KEY}` },
-          timeout: 600000, 
-      });
-      return response.data.choices[0].message.content;
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 429 && attempt < MAX_API_RETRIES) {
-          await new Promise(r => setTimeout(r, 60000 * (attempt + 1)));
-          continue;
+      logger.info(`\n🔄 API Call Attempt ${attempt + 1}/${MAX_API_RETRIES + 1}...`);
+      
+      const response = await axios.post(
+        GROK_API_URL,
+        requestBody,
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${GROK_API_KEY}`
+          },
+          timeout: enableWebSearch ? 90000 : 60000,
+        }
+      );
+
+      logger.info(`\n📥 Raw API Response:`);
+      logger.info(`   Status: ${response.status}`);
+      logger.info(`   Response keys: ${Object.keys(response.data).join(', ')}`);
+      
+      let content = null;
+      
+      // נסיון 1: response.content (Responses API)
+      if (response.data.response?.content) {
+        content = response.data.response.content;
+        logger.info(`   ✅ Found content via response.content`);
       }
-      if (attempt >= MAX_API_RETRIES) throw error;
+      // נסיון 2: choices[0].message.content (Chat API)
+      else if (response.data.choices?.[0]?.message?.content) {
+        content = response.data.choices[0].message.content;
+        logger.info(`   ✅ Found content via choices[0].message.content`);
+      }
+      // נסיון 3: output
+      else if (response.data.output) {
+        content = response.data.output;
+        logger.info(`   ✅ Found content via output`);
+      }
+      // נסיון 4: text
+      else if (response.data.text) {
+        content = response.data.text;
+        logger.info(`   ✅ Found content via text`);
+      }
+      else {
+        logger.error(`\n❌ Could not find content in response!`);
+        logger.error(`   Full response data: ${JSON.stringify(response.data, null, 2)}`);
+        throw new Error("Content not found in response structure");
+      }
+      
+      // ✅ FIX: Convert content to string if it's not already
+      let contentStr: string|null=null;
+      
+      // First, check if content is a JSON string that needs parsing
+      if (typeof content === 'string' && (content.startsWith('[{') || content.startsWith('{'))) {
+        try {
+          const parsed = JSON.parse(content);
+          content = parsed; // Use parsed version
+          logger.info(`   ℹ️  Content was JSON string, parsed it`);
+        } catch (e) {
+          // Not valid JSON, use as-is
+          contentStr = content;
+          logger.info(`   ℹ️  Content is string (not JSON)`);
+        }
+      }
+      
+      if (typeof content === 'string' && contentStr) {
+        // Already set above
+      } else if (typeof content === 'string') {
+        contentStr = content;
+      } else if (Array.isArray(content)) {
+        // Handle array of content blocks (Grok Responses API format)
+        logger.info(`   ℹ️  Content is array with ${content.length} items`);
+        
+        // Log first item structure for debugging
+        if (content.length > 0) {
+          logger.info(`   🔍 First item type: ${content[0].type}, keys: ${Object.keys(content[0]).join(', ')}`);
+        }
+        
+        // Try to find text in the array
+        for (const item of content) {
+          // Check for direct text fields
+          if (item.type === 'output_text' && item.text) {
+            contentStr = item.text;
+            logger.info(`   ✅ Extracted text from output_text block`);
+            break;
+          } else if (item.type === 'text' && item.text) {
+            contentStr = item.text;
+            logger.info(`   ✅ Extracted text from text block`);
+            break;
+          } else if (item.type === 'message' && item.content) {
+            // Handle message type with nested content
+            if (Array.isArray(item.content)) {
+              const textContent = item.content.find((c: any) => 
+                (c.type === 'output_text' || c.type === 'text') && c.text
+              );
+              if (textContent) {
+                contentStr = textContent.text;
+                logger.info(`   ✅ Extracted text from message.content array`);
+                break;
+              }
+            } else if (typeof item.content === 'string') {
+              contentStr = item.content;
+              logger.info(`   ✅ Extracted string from message.content`);
+              break;
+            }
+          } else if (item.content && Array.isArray(item.content)) {
+            // Nested content array (any type)
+            const nestedText = item.content.find((c: any) => 
+              (c.type === 'output_text' || c.type === 'text') && c.text
+            );
+            if (nestedText) {
+              contentStr = nestedText.text;
+              logger.info(`   ✅ Extracted text from nested content in array item`);
+              break;
+            }
+          } else if (typeof item === 'string') {
+            contentStr = item;
+            logger.info(`   ✅ Found string in array`);
+            break;
+          }
+        }
+        
+        // If still no text found, stringify the whole thing
+        if (!contentStr) {
+          logger.warn(`   ⚠️ Could not extract text from array`);
+          logger.warn(`   💡 Array structure: ${JSON.stringify(content.slice(0, 1), null, 2)}`);
+          contentStr = JSON.stringify(content);
+        }
+      } else if (typeof content === 'object') {
+        // Handle object with nested content
+        if (content.content && Array.isArray(content.content)) {
+          // Recursive case: content has a content array
+          logger.info(`   ℹ️  Content object has nested content array`);
+          const nestedItem = content.content.find((item: any) => 
+            (item.type === 'output_text' || item.type === 'text') && item.text
+          );
+          if (nestedItem) {
+            contentStr = nestedItem.text;
+            logger.info(`   ✅ Extracted text from nested content`);
+          } else {
+            contentStr = JSON.stringify(content);
+            logger.warn(`   ⚠️ No text in nested content, stringifying`);
+          }
+        } else if (content.text) {
+          contentStr = content.text;
+          logger.info(`   ✅ Extracted from content.text`);
+        } else {
+          // Last resort: stringify
+          contentStr = JSON.stringify(content);
+          logger.info(`   ℹ️  Content was object, converted to JSON string`);
+        }
+      } else {
+        // Convert any other type to string
+        contentStr = String(content);
+        logger.info(`   ℹ️  Content was ${typeof content}, converted to string`);
+      }
+      
+      if (!contentStr || contentStr.trim().length === 0) {
+        logger.error(`   ❌ Content is empty or null`);
+        throw new Error("Grok returned empty response");
+      }
+
+      logger.info(`   ✅ Content length: ${contentStr.length} chars`);
+      logger.info(`   Preview: ${contentStr.substring(0, 200)}...`);
+
+      return contentStr;
+
+    } catch (error) {
+      logger.error(`\n❌ API Call Failed (Attempt ${attempt + 1}/${MAX_API_RETRIES + 1}):`);
+      
+      if (axios.isAxiosError(error)) {
+        logger.error(`   Error Type: Axios Error`);
+        logger.error(`   Status: ${error.response?.status || 'N/A'}`);
+        logger.error(`   Status Text: ${error.response?.statusText || 'N/A'}`);
+        
+        if (error.response?.data) {
+          logger.error(`   Response Data: ${JSON.stringify(error.response.data, null, 2)}`);
+        }
+        
+        // Rate limit
+        if (error.response?.status === 429 && attempt < MAX_API_RETRIES) {
+          const waitTime = 60000 * (attempt + 1);
+          logger.warn(`   ⏳ Rate limit hit, waiting ${waitTime / 1000}s...`);
+          await new Promise(r => setTimeout(r, waitTime));
+          continue;
+        }
+
+        // Model not found
+        if (error.response?.status === 404) {
+          logger.error(`   ❌ Model '${requestBody.model}' not found!`);
+          throw new Error(`Model '${requestBody.model}' not found. Try: grok-2-1212, grok-beta, or grok-2-latest`);
+        }
+
+        // Bad request
+        if (error.response?.status === 400) {
+          const errorData = JSON.stringify(error.response?.data);
+          logger.error(`   ❌ Bad Request Details: ${errorData}`);
+          throw new Error(`Bad Request: ${errorData}`);
+        }
+      } else {
+        const err = error as Error;
+        logger.error(`   Error Type: ${err.constructor.name}`);
+        logger.error(`   Message: ${err.message}`);
+        if (err.stack) {
+          logger.error(`   Stack: ${err.stack.split('\n').slice(0, 3).join('\n')}`);
+        }
+      }
+
+      if (attempt >= MAX_API_RETRIES) {
+        logger.error(`\n🚫 MAX RETRIES EXCEEDED (${MAX_API_RETRIES})`);
+        throw error;
+      }
+
+      logger.warn(`   ⏳ Waiting 5s before retry...`);
+      await new Promise(r => setTimeout(r, 5000));
     }
   }
+  
   throw new Error("Max retries exceeded");
 }
+// async function callGrokWithWebSearch(prompt: string): Promise<string> {
+//   const GROK_API_KEY = process.env.GROK_API_KEY;
+//   if (!GROK_API_KEY) {
+//     throw new Error("GROK_API_KEY missing");
+//   }
+  
+//   const response = await axios.post(
+//     'https://api.x.ai/v1/chat/completions',
+//     {
+//       model: 'grok-3',  // ✅ מודל זמין
+//       messages: [
+//         {
+//           role: 'user',
+//           content: prompt
+//         }
+//       ],
+//       temperature: 0.1,
+//       max_tokens: 2000,
+//       stream: false,
+//       search_parameters: {  // ✅ פורמט נכון
+//         mode: "auto",
+//         return_citations: true,
+//         max_search_results: 10
+//       }
+//     },
+//     {
+//       headers: {
+//         'Authorization': `Bearer ${GROK_API_KEY}`,
+//         'Content-Type': 'application/json'
+//       },
+//       timeout: 90000
+//     }
+//   );
+  
+//   return response.data.choices[0].message.content;
+// }
 
 function delay(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
@@ -108,10 +421,10 @@ interface FinnhubEarningsEntry {
     epsActual?: number | null|undefined;
     revenueActual?: number | null;
 }
-    const now = new Date();
-    const threeDaysAgo = new Date(now);
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    const dateString = threeDaysAgo.toISOString().split("T")[0];
+    // const now = new Date();
+    // const threeDaysAgo = new Date(now);
+    // threeDaysAgo.setDate(threeDaysAgo.getDate());
+    // const dateString = threeDaysAgo.toISOString().split("T")[0];
 async function checkFinnhubUpdates(symbol: string, date: string): Promise<boolean> {
     const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
     if (!FINNHUB_API_KEY) return false;
@@ -288,7 +601,9 @@ async function verifyEarningsDate(symbol: string, expectedDate: string): Promise
 // 2. MINI-CHECK
 // ============================================
 export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {
-  const now = new Date().toISOString();
+const dateObj = new Date();
+  dateObj.setDate(dateObj.getDate()); 
+  const now = dateObj.toISOString();
   const today = now.split("T")[0];
   const specificTerm = (quarter && fiscalYear) ? `Q${quarter} ${fiscalYear}` : "Quarterly";
   
@@ -309,6 +624,7 @@ export async function miniCheck(symbol: string, companyName: string, quarter?: n
     else if (cleanRes.includes("NO")) finalResult = "NO";
     else if (cleanRes.includes("REPORTS") || cleanRes.includes("RELEASED")) finalResult = "YES";
 
+    stockLog.miniCheck(symbol, finalResult);
     return { symbol, checkTime: now, result: finalResult };
   } catch (e: any) { 
       return { symbol, checkTime: now, result: "UNSURE" }; 
@@ -525,30 +841,1916 @@ function calculateTradeParams(price: number, classification: string) {
     };
 }
 
+// ============================================
+// PDF DISCOVERY SYSTEM (Serper.dev + Grok)
+// ============================================
 
 
-async function findEarningsPDF(symbol: string, companyName: string, q: number, yr: number): Promise<string | null> {
-  const searches = [
-    `${companyName} Q${q} ${yr} earnings presentation PDF`,
-    `${companyName} investor relations Q${q} ${yr}`,
-    `${symbol} quarterly results Q${q} ${yr} PDF`,
-    `site:investors.${companyName.toLowerCase().replace(/\s+/g, '')}.com Q${q} ${yr}`
-  ];
 
-  for (const search of searches) {
-    // חפש ואמת שה-PDF קיים
-    const result = await callGrokAPI([{
-      role: "user",
-      content: `Search for: "${search}". Return ONLY the direct PDF URL if found, or "NOT_FOUND" if no PDF exists.`
-    }], 0.1, 200, true);
+// async function searchEarningsPdf(
+//   symbol: string,
+//   companyName: string,
+//   quarter: number,
+//   year: number,
+//   reportDate: string
+// ): Promise<string[]> {
+//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
+//   if (!SERPER_API_KEY) {
+//     throw new Error("SERPER_API_KEY is not configured");
+//   }
 
-    if (result && !result.includes("NOT_FOUND") && result.includes("pdf")) {
-      return result.trim();
+//   const reportDateTime = new Date(reportDate);
+//   const reportMonth = reportDateTime.getMonth() + 1;
+//   const reportYear = reportDateTime.getFullYear();
+
+//   const cleanCompanyName = companyName
+//     .replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC|Co\.?)$/i, '')
+//     .trim();
+
+//   // ============================================
+//   // 🔍 BUILD COMPANY IDENTIFIERS FOR MATCHING
+//   // ============================================
+//   const companyIdentifiers = [
+//     symbol.toLowerCase(),
+//     cleanCompanyName.toLowerCase(),
+//     // Also try first word of company name (e.g., "Abbott" from "Abbott Laboratories")
+//     cleanCompanyName.split(' ')[0].toLowerCase(),
+//   ].filter(id => id.length >= 2); // Avoid single-letter matches
+
+//   logger.info(`🔍 Company identifiers: ${companyIdentifiers.join(', ')}`);
+
+//   // ============================================
+//   // 🔍 SEARCH QUERIES
+//   // ============================================
+//   const searchQueries = [
+//     `"${cleanCompanyName}" Q${quarter} ${year} earnings "press release" filetype:pdf`,
+//     `"${cleanCompanyName}" Q${quarter} ${year} earnings results filetype:pdf`,
+//     `${symbol} Q${quarter} ${year} earnings filetype:pdf`,
+//   ];
+
+//   // ============================================
+//   // ✅ VALID DOMAIN/PATH PATTERNS
+//   // ============================================
+//   const validDomainPatterns = [
+//     'investor.',
+//     'investors.',
+//     'ir.',
+//     'investor-relations.',
+//     'investorrelations.',
+      
+    
+//   ];
+
+//   // ============================================
+//   // ❌ WRONG QUARTERS - Must reject these!
+//   // ============================================
+//   const wrongQuarters = [1, 2, 3, 4].filter(q => q !== quarter);
+//   const wrongQuarterPatterns = wrongQuarters.flatMap(q => [
+//     `q${q}-`,    // q1-, q2-, q3-
+//     `q${q}_`,    // q1_, q2_, q3_
+//     `q${q}/`,    // q1/, q2/, q3/
+//     `-q${q}`,    // -q1, -q2, -q3
+//     `_q${q}`,    // _q1, _q2, _q3
+//     `${q}q-`,    // 1q-, 2q-, 3q-
+//     `${q}q_`,    // 1q_, 2q_, 3q_
+//     `${q}q20`,   // 1q2025, 2q2025
+//     `/q${q}/`,   // /q1/, /q2/, /q3/
+//   ]);
+
+//   // ============================================
+//   // ✅ CORRECT QUARTER PATTERNS
+//   // ============================================
+//   const correctQuarterPatterns = [
+//     `q${quarter}-`,
+//     `q${quarter}_`,
+//     `q${quarter}/`,
+//     `-q${quarter}`,
+//     `_q${quarter}`,
+//     `${quarter}q-`,
+//     `${quarter}q_`,
+//     `${quarter}q20`,
+//     `/q${quarter}/`,
+//     `q${quarter}%20`,     // URL encoded space
+//     `q${quarter} `,
+//     `-${quarter}q-`,
+//     `_${quarter}q_`,
+//   ];
+
+//   const urls: string[] = [];
+//   const rejectedUrls: { url: string; reason: string }[] = [];
+
+//   for (const query of searchQueries) {
+//     if (urls.length >= 5) break;
+    
+//     logger.info(`🔍 Searching: ${query}`);
+
+//     try {
+//       const response = await axios.post(
+//         'https://google.serper.dev/search',
+//         { q: query, num: 20 },
+//         {
+//           headers: {
+//             'X-API-KEY': SERPER_API_KEY,
+//             'Content-Type': 'application/json'
+//           },
+//           timeout: 10000
+//         }
+//       );
+
+//       if (!response.data.organic) continue;
+
+//       for (const result of response.data.organic) {
+//         if (!result.link) continue;
+        
+//         const url = result.link.toLowerCase();
+//         const originalUrl = result.link;
+
+//         // ============================================
+//         // CHECK 1: Must be PDF
+//         // ============================================
+//         if (!url.endsWith('.pdf')) continue;
+
+//         // ============================================
+//         // CHECK 2: Must contain company identifier!
+//         // ============================================
+//         const hasCompanyId = companyIdentifiers.some(id => url.includes(id));
+//         if (!hasCompanyId) {
+//           rejectedUrls.push({ url: originalUrl, reason: `no company match (need: ${symbol})` });
+//           continue;
+//         }
+
+//         // ============================================
+//         // CHECK 3: Valid domain/path
+//         // ============================================
+//         const isValidSource = validDomainPatterns.some(pattern => url.includes(pattern));
+//         if (!isValidSource) {
+//           rejectedUrls.push({ url: originalUrl, reason: 'invalid domain/path' });
+//           continue;
+//         }
+
+//         // ============================================
+//         // CHECK 4: Must NOT have wrong quarter!
+//         // ============================================
+//         const hasWrongQuarter = wrongQuarterPatterns.some(p => url.includes(p));
+//         if (hasWrongQuarter) {
+//           rejectedUrls.push({ url: originalUrl, reason: `wrong quarter (not Q${quarter})` });
+//           continue;
+//         }
+
+//         // ============================================
+//         // CHECK 5: Contains relevant year
+//         // ============================================
+//         const fiscalYear = quarter === 4 ? year : year; // Q4 2025 reports in Jan 2026
+//         const hasRelevantYear = url.includes(String(fiscalYear)) || 
+//                                 url.includes(String(fiscalYear).slice(2));
+        
+//         if (!hasRelevantYear) {
+//           rejectedUrls.push({ url: originalUrl, reason: `no year ${fiscalYear}` });
+//           continue;
+//         }
+
+//         // ============================================
+//         // CHECK 6: Exclude very old years
+//         // ============================================
+//         const oldYears = ['2018', '2019', '2020', '2021', '2022', '2023'];
+//         const containsOnlyOldYear = oldYears.some(y => url.includes(y)) && 
+//                                     !url.includes(String(fiscalYear));
+//         if (containsOnlyOldYear) {
+//           rejectedUrls.push({ url: originalUrl, reason: 'old year only' });
+//           continue;
+//         }
+
+//         // ============================================
+//         // CHECK 7: Exclude wrong document types
+//         // ============================================
+//         const excludePatterns = [
+//           'slide', 'presentation', 'transcript', 'proxy', 
+//           'annual-report', '10-k', '10-q', 'supplement', 'deck'
+//         ];
+//         const isExcluded = excludePatterns.some(p => url.includes(p));
+//         if (isExcluded) {
+//           rejectedUrls.push({ url: originalUrl, reason: 'wrong doc type' });
+//           continue;
+//         }
+
+//         // ============================================
+//         // ✅ PASSED ALL CHECKS!
+//         // ============================================
+//         if (!urls.includes(originalUrl)) {
+//           urls.push(originalUrl);
+//           logger.info(`   ✅ Accepted: ${originalUrl}`);
+//         }
+//       }
+//     } catch (error: any) {
+//       logger.warn(`   ⚠️ Search failed: ${error.message}`);
+//     }
+//   }
+
+//   // ============================================
+//   // LOG SUMMARY
+//   // ============================================
+//   logger.info(`\n📊 Filtering Results:`);
+//   logger.info(`   ✅ Accepted: ${urls.length}`);
+//   logger.info(`   ❌ Rejected: ${rejectedUrls.length}`);
+  
+//   if (urls.length === 0 && rejectedUrls.length > 0) {
+//     logger.warn(`\n⚠️ All URLs rejected! Reasons:`);
+//     rejectedUrls.slice(0, 10).forEach(({ url, reason }) => {
+//       logger.warn(`   - ${url.substring(0, 60)}... → ${reason}`);
+//     });
+//   }
+
+//   return urls;
+// }
+
+
+// async function searchEarningsPdf(
+//   symbol: string,
+//   companyName: string,
+//   quarter: number,
+//   year: number,
+//   reportDate: string
+// ): Promise<string[]> {
+//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
+//   if (!SERPER_API_KEY) throw new Error("SERPER_API_KEY missing");
+
+//   // ניקוי בסיסי של השם (כדי לא לבלבל את גוגל עם פסיקים מיותרים)
+//   const cleanName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '').trim();
+  
+//   // בניית תאריך לחיפוש (למשל "January 22, 2026")
+//   const dateStr = new Date(reportDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+//   // השאילתה המנצחת (שילוב של שם חברה, IR, תאריך מדויק ודרישה ל-PDF)
+//   const query = `${cleanName} "Investor Relations" Q${quarter} ${year} earnings ${dateStr} pdf`;
+
+//   logger.info(`🔍 Simple Search: "${query}"`);
+
+//   try {
+//     const response = await axios.post(
+//       'https://google.serper.dev/search',
+//       { 
+//         q: query, 
+//         num: 3,        // מבקשים 3 רק ליתר ביטחון, אבל ניקח את הראשון
+//         tbs: "qdr:m"   // פילטר חובה: רק מהחודש האחרון (כדי לא לקבל דוחות משנה שעברה)
+//       },
+//       { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' } }
+//     );
+
+//     const results = response.data.organic || [];
+
+//     if (results.length > 0) {
+//       // 🎯 לוקחים את התוצאה הראשונה וזהו!
+//       const topResult = results[0];
+      
+//       logger.info(`✅ Taking Top Result: ${topResult.link}`);
+//       logger.info(`   Title: "${topResult.title}"`);
+      
+//       // מחזירים מערך עם התוצאה הזו בלבד
+//       return [topResult.link];
+//     }
+
+//     logger.warn(`⚠️ Google returned no results for this query.`);
+//     return [];
+
+//   } catch (error: any) {
+//     logger.error(`❌ Search failed: ${error.message}`);
+//     return [];
+//   }
+// }
+
+
+  //last versia IMPORTANT
+// async function searchEarningsPdf(
+//   symbol: string,
+//   companyName: string,
+//   quarter: number,
+//   year: number,
+//   reportDate: string
+// ): Promise<string[]> {
+//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
+//   if (!SERPER_API_KEY) throw new Error("SERPER_API_KEY missing");
+
+//   const cleanName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '').trim();
+  
+//   // ═══════════════════════════════════════════════════════════════
+//   // 1. בניית מזהים - רק שם החברה
+//   // ═══════════════════════════════════════════════════════════════
+//   const identifiers: string[] = [];
+//   identifiers.push(cleanName.toLowerCase());
+  
+//   const firstName = cleanName.split(' ')[0].toLowerCase();
+//   if (firstName.length > 3) {
+//     identifiers.push(firstName);
+//   }
+  
+//   logger.info(`\n🔍 Strict-Search for ${symbol} (${cleanName})...`);
+//   logger.info(`📋 Identifiers: ${identifiers.join(', ')}`);
+//   logger.info(`📅 Looking for: Q${quarter} ${year}`);
+
+//   // ═══════════════════════════════════════════════════════════════
+//   // 2. מפל שאילתות
+//   // ═══════════════════════════════════════════════════════════════
+//   const queries = [
+//     `${cleanName} Investor Relations website`,
+//     `${symbol} investor relations site`,  // ⬅️ נוסיף גם את הסימול!
+
+ 
+//   ];
+
+//   let allCandidates: Array<{
+//     url: string;
+//     title: string;
+//     snippet: string;
+//     score: number;
+//     reasons: string[];
+//   }> = [];
+
+//   // ═══════════════════════════════════════════════════════════════
+//   // 3. חיפוש ואיסוף מועמדים
+//   // ═══════════════════════════════════════════════════════════════
+//   for (const query of queries) {
+//     logger.info(`\n👉 Query: '${query}'`);
+
+//     try {
+//       const response = await axios.post(
+//         'https://google.serper.dev/search',
+//         { 
+//           q: query, 
+//           num: 10, 
+//           tbs: "qdr:m",
+//           gl: "us",
+//           hl: "en"
+//         },
+//         { 
+//           headers: { 
+//             'X-API-KEY': SERPER_API_KEY, 
+//             'Content-Type': 'application/json' 
+//           } 
+//         }
+//       );
+
+//       const results = response.data.organic || [];
+//       logger.info(`📊 Serper returned ${results.length} results`);
+
+//       for (let i = 0; i < results.length; i++) {
+//         const result = results[i];
+//         const link = result.link.toLowerCase();
+//         const title = result.title.toLowerCase();
+//         const snippet = (result.snippet || "").toLowerCase();
+//         const combinedText = link + " " + title + " " + snippet;
+
+//         logger.info(`\n━━━ Result #${i + 1} ━━━`);
+//         logger.info(`🔗 Link: ${result.link}`);
+//         logger.info(`📰 Title: ${result.title}`);
+//         logger.info(`📝 Snippet: ${(result.snippet || '').substring(0, 100)}...`);
+
+//         let score = 0;
+//         let reasons: string[] = [];
+//         let rejected = false;
+//         let rejectionReason = '';
+
+//         // ════════════════════════════════════════════════════════════
+//         // בדיקה 1: זיהוי חברה
+//         // ════════════════════════════════════════════════════════════
+//         const companyMatch = identifiers.some(id => {
+//           return title.includes(id) || snippet.includes(id) || link.includes(id);
+//         });
+
+//         if (!companyMatch) {
+//           rejected = true;
+//           rejectionReason = 'No company name match';
+//           logger.info(`   ❌ REJECTED: ${rejectionReason}`);
+//           continue;
+//         }
+
+//         logger.info(`   ✅ Company Match: Found company name`);
+
+//         // ════════════════════════════════════════════════════════════
+//         // בדיקה 2: דחייה קשה - זבל וטרנסקריפטים
+//         // ════════════════════════════════════════════════════════════
+//         const hardRejectPatterns = [
+//           { pattern: 'gov.nt.ca', reason: 'Government site (NWT)' },
+//           { pattern: 'sec.gov/cgi-bin', reason: 'SEC search results' },
+//           { pattern: 'list', reason: 'Generic list document' },
+//           { pattern: 'checklist', reason: 'Checklist document' },
+//           { pattern: 'transcript', reason: 'Earnings call transcript' },
+//           { pattern: 'call transcript', reason: 'Call transcript' },
+//           { pattern: 'call highlights', reason: 'Call highlights summary' },
+//           { pattern: 'call summary', reason: 'Call summary' },
+//           { pattern: 'conference call', reason: 'Conference call' },
+//           { pattern: 'earnings preview', reason: 'Preview (not actual results)' },
+//           { pattern: 'earnings outlook', reason: 'Outlook (not actual results)' },
+//           { pattern: 'earnings expectations', reason: 'Expectations (not results)' }
+//         ];
+
+//         for (const { pattern, reason } of hardRejectPatterns) {
+//           if (title.includes(pattern) || link.includes(pattern)) {
+//             rejected = true;
+//             rejectionReason = reason;
+//             logger.info(`   ❌ REJECTED: ${rejectionReason}`);
+//             break;
+//           }
+//         }
+
+//         if (rejected) continue;
+
+//         // ════════════════════════════════════════════════════════════
+//         // בדיקה 3: דחייה קשה של דפי נחיתה כלליים
+//         // ════════════════════════════════════════════════════════════
+//         const genericLandingPages = [
+//           '/news/default.aspx',
+//           '/overview/default.aspx',
+//           '/investor-relations$',
+//           '/press-releases$'
+//         ];
+
+//         let isGenericLanding = false;
+//         for (const pattern of genericLandingPages) {
+//           const regex = new RegExp(pattern, 'i');
+//           if (regex.test(link)) {
+//             isGenericLanding = true;
+//             break;
+//           }
+//         }
+
+//         if (isGenericLanding) {
+//           // חריגות: indicators של תוכן ספציפי
+//           const specificIndicators = [
+//             '/press-release/',
+//             '/news-details/',
+//             '/article/',
+//             '.pdf',
+//             reportDate,
+//             reportDate.replace(/-/g, ''),
+//             reportDate.replace(/-/g, '/')
+//           ];
+          
+//           const hasSpecificIndicator = specificIndicators.some(indicator => 
+//             link.includes(indicator.toLowerCase())
+//           );
+          
+//           if (!hasSpecificIndicator) {
+//             rejected = true;
+//             rejectionReason = 'Generic landing page without specific content';
+//             logger.info(`   ❌ REJECTED: ${rejectionReason}`);
+//             continue;
+//           } else {
+//             logger.info(`   ✅ Landing page has specific indicator - allowed`);
+//           }
+//         }
+
+//         // ════════════════════════════════════════════════════════════
+//         // בדיקה 4: דפוסי URL בעייתיים (עונש רך)
+//         // ════════════════════════════════════════════════════════════
+//         const indexPagePatterns = [
+//           '/sec-filings/',
+//           '/earnings/',
+//           'default.aspx',
+//           'overview/default'
+//         ];
+
+//         for (const pattern of indexPagePatterns) {
+//           if (link.includes(pattern)) {
+//             const hasDate = link.includes(reportDate.replace(/-/g, '')) || 
+//                           link.includes(reportDate) ||
+//                           link.includes('.pdf');
+            
+//             if (!hasDate) {
+//               logger.info(`   ⚠️ WARNING: Looks like index page (${pattern})`);
+//               score -= 50;
+//               reasons.push(`Index page penalty (-50)`);
+//               break;
+//             }
+//           }
+//         }
+
+//         // ════════════════════════════════════════════════════════════
+//         // בדיקה 5: רלוונטיות - חייב להיות על רווח
+//         // ════════════════════════════════════════════════════════════
+//         const relevanceTerms = [
+//           'earnings', 
+//           'results', 
+//           'financial', 
+//           'quarter', 
+//           `q${quarter}`,
+//           'release',
+//           'announces',
+//           'reports',
+//           'statement'
+//         ];
+
+//         const matchedTerms = relevanceTerms.filter(term => 
+//           title.includes(term) || snippet.includes(term)
+//         );
+
+//         if (matchedTerms.length === 0) {
+//           rejected = true;
+//           rejectionReason = 'No earnings-related terms found';
+//           logger.info(`   ❌ REJECTED: ${rejectionReason}`);
+//           continue;
+//         }
+
+//         logger.info(`   ✅ Relevance: ${matchedTerms.join(', ')}`);
+//         score += matchedTerms.length * 5;
+//         reasons.push(`Relevance terms: ${matchedTerms.join(', ')}`);
+
+//         // ════════════════════════════════════════════════════════════
+//         // ניקוד 1: איכות מקור - הכי חשוב!
+//         // ════════════════════════════════════════════════════════════
+//         const domain = link.split('/')[2] || '';
+        
+//         // מקורות מעולים - NEWSWIRES (תמיד תוכן מלא!)
+//         if (domain.includes('businesswire') || 
+//             domain.includes('globenewswire') || 
+//             domain.includes('prnewswire') ||
+//             domain.includes('accesswire')) {
+//           score += 150;
+//           reasons.push('Official newswire (+150) 🔥');
+//           logger.info(`   ⭐⭐⭐ EXCELLENT: Official newswire - FULL CONTENT (+150)`);
+//         }
+
+//         else if (domain.includes('seekingalpha') && link.includes('/pr/')) {
+//         score += 140;
+//         reasons.push('SeekingAlpha PR (+140) 🔥');
+//         logger.info(`   ⭐⭐⭐ EXCELLENT: SeekingAlpha Press Release (+140)`);
+//       }
+//         // אתר IR רשמי
+//         else if (domain.includes(firstName) || domain.includes('ir.')) {
+//           score += 120;
+//           reasons.push('Official IR site (+120)');
+//           logger.info(`   ⭐⭐ GREAT: Official IR site (+120)`);
+//         }
+//         // SEC Edgar + Fortune/Quartr SEC mirror
+//         else if ((domain.includes('sec.gov') && link.includes('/archives/')) ||
+//                  (domain.includes('fortune.com') && link.includes('/company-assets/')) ||
+//                  (domain.includes('quartr.com'))) {
+//           score += 100;
+//           reasons.push('SEC filing source (+100)');
+//           logger.info(`   ⭐ GOOD: SEC filing source (+100)`);
+//         }
+//         // צד שלישי של SEC (אינדקסים)
+//         else if (domain.includes('stocktitan') || 
+//                  domain.includes('secfilings')) {
+//           score += 40;
+//           reasons.push('SEC third-party (+40)');
+//           logger.info(`   ⚠️ CAUTION: SEC third-party - may be index (+40)`);
+//         }
+//         // אתרי חדשות/ניתוח
+//         else if (domain.includes('seekingalpha') || 
+//                  domain.includes('zacks') ||
+//                  domain.includes('marketbeat') ||
+//                  domain.includes('investing.com') ||
+//                  domain.includes('yahoo')) {
+//           score += 10;
+//           reasons.push('News/Analysis site (+10)');
+//           logger.info(`   ⚠️ OK: News site (+10)`);
+//         }
+//         // לא מזוהה
+//         else {
+//           score += 30;
+//           reasons.push('Unknown source (+30)');
+//           logger.info(`   ❓ UNKNOWN: ${domain} (+30)`);
+//         }
+
+//         // ════════════════════════════════════════════════════════════
+//         // ניקוד 2: מילות מפתח חיוביות
+//         // ════════════════════════════════════════════════════════════
+//         const positiveKeywords = [
+//           { word: 'announces', points: 15 },
+//           { word: 'reports', points: 15 },
+//           { word: 'release', points: 12 },
+//           { word: 'results', points: 10 },
+//           { word: 'earnings', points: 8 },
+//           { word: `q${quarter}`, points: 10 },
+//           { word: year.toString(), points: 5 }
+//         ];
+
+//         for (const { word, points } of positiveKeywords) {
+//           if (title.includes(word)) {
+//             score += points;
+//             reasons.push(`"${word}" in title (+${points})`);
+//           }
+//         }
+
+//         // ════════════════════════════════════════════════════════════
+//         // ניקוד 3: PDF = בונוס גדול!
+//         // ════════════════════════════════════════════════════════════
+//         if (link.includes('.pdf')) {
+//           score += 30;
+//           reasons.push('PDF file (+30)');
+//           logger.info(`   📄 PDF detected - FULL CONTENT (+30)`);
+//         }
+
+//         // ════════════════════════════════════════════════════════════
+//         // ניקוד 4: תאריך מדויק ב-URL
+//         // ════════════════════════════════════════════════════════════
+//         const exactDatePatterns = [
+//           reportDate,
+//           reportDate.replace(/-/g, '')
+//         ];
+
+//         let dateBonus = 0;
+//         for (const pattern of exactDatePatterns) {
+//           if (link.includes(pattern)) {
+//             dateBonus = 40;
+//             reasons.push('Exact date in URL (+40)');
+//             logger.info(`   📅 EXACT date match in URL (+40)`);
+//             break;
+//           }
+//         }
+
+//         if (dateBonus === 0) {
+//           const partialDatePattern = reportDate.replace(/-/g, '/');
+//           if (link.includes(partialDatePattern)) {
+//             dateBonus = 20;
+//             reasons.push('Date in URL (+20)');
+//             logger.info(`   📅 Date match in URL (+20)`);
+//           }
+//         }
+
+//         score += dateBonus;
+
+//         logger.info(`   🎯 TOTAL SCORE: ${score}`);
+//         logger.info(`   📝 Reasons: ${reasons.join('; ')}`);
+
+//         allCandidates.push({
+//           url: result.link,
+//           title: result.title,
+//           snippet: result.snippet || '',
+//           score,
+//           reasons
+//         });
+//       }
+      
+//     } catch (e: any) {
+//       logger.warn(`⚠️ Serper API Error: ${e.message}`);
+//     }
+//   }
+
+//   // ═══════════════════════════════════════════════════════════════
+//   // 4. הסרת כפילויות + מיון
+//   // ═══════════════════════════════════════════════════════════════
+//   if (allCandidates.length === 0) {
+//     logger.warn(`\n❌ No valid candidates found for ${symbol}`);
+//     return [];
+//   }
+
+//   const uniqueCandidates = Array.from(
+//     new Map(
+//       allCandidates
+//         .sort((a, b) => b.score - a.score)
+//         .map(c => [c.url, c])
+//     ).values()
+//   );
+
+//   logger.info(`\n🔄 Removed ${allCandidates.length - uniqueCandidates.length} duplicate URLs`);
+//   logger.info(`📊 Unique candidates: ${uniqueCandidates.length}`);
+
+//   uniqueCandidates.sort((a, b) => b.score - a.score);
+
+//   logger.info(`\n╔════════════════════════════════════════════════════════════╗`);
+//   logger.info(`║ 🏆 TOP CANDIDATES FOR ${symbol}`);
+//   logger.info(`╚════════════════════════════════════════════════════════════╝`);
+
+//   for (let i = 0; i < Math.min(5, uniqueCandidates.length); i++) {
+//     const candidate = uniqueCandidates[i];
+//     const emoji = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '  ';
+//     logger.info(`\n${emoji} Rank ${i + 1}: Score ${candidate.score}`);
+//     logger.info(`   URL: ${candidate.url}`);
+//     logger.info(`   Title: ${candidate.title}`);
+//     logger.info(`   Reasons: ${candidate.reasons.join('; ')}`);
+//   }
+
+//   const winner = uniqueCandidates[0];
+  
+//   if (winner.score < 100) {
+//     logger.warn(`\n⚠️⚠️⚠️ WARNING: Best source has LOW score (${winner.score})`);
+//     logger.warn(`   This may be a news summary or index page, not the actual earnings release!`);
+//     logger.warn(`   Expected score for good sources: 150+ (newswire), 120+ (IR site), 100+ (SEC direct)`);
+//   } else {
+//     logger.info(`\n✅ HIGH CONFIDENCE: Winner has good score (${winner.score})`);
+//   }
+
+//   // ═══════════════════════════════════════════════════════════════
+//   // 5. ולידציה - עד 3 מועמדים
+//   // ═══════════════════════════════════════════════════════════════
+//   const maxAttempts = Math.min(3, uniqueCandidates.length);
+  
+//   for (let i = 0; i < maxAttempts; i++) {
+//     const candidate = uniqueCandidates[i];
+//     const candidateName = i === 0 ? 'Winner' : `Candidate #${i + 1}`;
+    
+//     logger.info(`\n${'═'.repeat(60)}`);
+//     logger.info(`🎯 Attempting ${candidateName}: ${candidate.url}`);
+//     logger.info(`   Score: ${candidate.score}`);
+//     logger.info(`${'═'.repeat(60)}`);
+    
+//     const isValid = await validateUrl(candidate.url, candidateName);
+    
+//     if (isValid) {
+//       logger.info(`\n✅✅✅ FINAL SELECTION: ${candidate.url}`);
+//       logger.info(`   Score: ${candidate.score}`);
+//       logger.info(`   Title: ${candidate.title}`);
+//       return [candidate.url];
+//     }
+    
+//     if (i < maxAttempts - 1) {
+//       logger.warn(`\n⏭️ Moving to next candidate...`);
+//     }
+//   }
+
+//   logger.error(`\n❌❌❌ ALL CANDIDATES FAILED VALIDATION`);
+//   logger.error(`   Tried ${maxAttempts} URLs - none are accessible`);
+//   logger.error(`   This may indicate:`);
+//   logger.error(`   - Report not published yet`);
+//   logger.error(`   - Network/firewall issues`);
+//   logger.error(`   - Company uses non-standard publishing method`);
+  
+//   return [];
+// }
+// async function searchEarningsPdf(
+//   symbol: string,
+//   companyName: string,
+//   quarter: number,
+//   year: number,
+//   reportDate: string
+// ): Promise<string[]> {
+//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
+//   if (!SERPER_API_KEY) throw new Error("SERPER_API_KEY missing");
+
+//   const cleanName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '').trim();
+  
+//   logger.info(`\n🔍 Two-Stage Search for ${symbol} (${cleanName})...`);
+//   logger.info(`📅 Looking for: Q${quarter} ${year}`);
+
+//   // ═══════════════════════════════════════════════════════════════
+//   // שלב 1: מצא את אתר ה-IR הרשמי
+//   // ═══════════════════════════════════════════════════════════════
+//   const irQueries = [
+//     `${symbol} investor relations website`,  // ⬅️ הסימבול יותר מדויק!
+//     `${cleanName} investor relations official site`,
+//   ];
+
+//   let irWebsite: string | null = null;
+
+//   for (const query of irQueries) {
+//     logger.info(`\n🔍 Stage 1: Finding IR website - Query: '${query}'`);
+
+//     try {
+//       const response = await axios.post(
+//         'https://google.serper.dev/search',
+//         { 
+//           q: query, 
+//           num: 5,  // רק 5 תוצאות ראשונות
+//           gl: "us",
+//           hl: "en"
+//         },
+//         { 
+//           headers: { 
+//             'X-API-KEY': SERPER_API_KEY, 
+//             'Content-Type': 'application/json' 
+//           } 
+//         }
+//       );
+
+//       const results = response.data.organic || [];
+      
+//       for (const result of results) {
+//         const link = result.link.toLowerCase();
+//         const title = result.title.toLowerCase();
+        
+//         // חפש אתר IR רשמי
+//         const isIRSite = 
+//           link.includes('/investor') || 
+//           link.includes('/ir/') ||
+//           link.includes('investor.') ||
+//           link.includes('ir.') ||
+//           title.includes('investor relations');
+
+//         // ודא שזה באמת של החברה הנכונה
+//         const companyMatch = 
+//           link.includes(cleanName.toLowerCase().replace(/\s+/g, '')) ||
+//           link.includes(symbol.toLowerCase()) ||
+//           title.includes(cleanName.toLowerCase());
+
+//         if (isIRSite && companyMatch) {
+//           irWebsite = result.link;
+//           logger.info(`\n✅ Found IR website: ${irWebsite}`);
+//           break;
+//         }
+//       }
+
+//       if (irWebsite) break;
+      
+//     } catch (e: any) {
+//       logger.warn(`⚠️ Serper API Error: ${e.message}`);
+//     }
+//   }
+
+//   if (!irWebsite) {
+//     logger.warn(`\n❌ Could not find IR website for ${symbol}`);
+//     return [];
+//   }
+
+//   // ═══════════════════════════════════════════════════════════════
+//   // שלב 2: חפש PDF בתוך אתר ה-IR
+//   // ═══════════════════════════════════════════════════════════════
+//   const irDomain = new URL(irWebsite).hostname;
+  
+//   const pdfQueries = [
+//     `site:${irDomain} Q${quarter} ${year} earnings report PDF`,
+//     `site:${irDomain} ${reportDate} earnings release`,
+//     `site:${irDomain} fourth quarter ${year} results`,
+//   ];
+
+//   logger.info(`\n🔍 Stage 2: Searching for PDF within ${irDomain}...`);
+
+//   let allCandidates: Array<{
+//     url: string;
+//     title: string;
+//     snippet: string;
+//     score: number;
+//     reasons: string[];
+//   }> = [];
+
+//   for (const query of pdfQueries) {
+//     logger.info(`\n👉 PDF Query: '${query}'`);
+
+//     try {
+//       const response = await axios.post(
+//         'https://google.serper.dev/search',
+//         { 
+//           q: query, 
+//           num: 10,
+//           tbs: "qdr:m",
+//           gl: "us",
+//           hl: "en"
+//         },
+//         { 
+//           headers: { 
+//             'X-API-KEY': SERPER_API_KEY, 
+//             'Content-Type': 'application/json' 
+//           } 
+//         }
+//       );
+
+//       const results = response.data.organic || [];
+//       logger.info(`📊 Found ${results.length} results`);
+
+//       for (const result of results) {
+//         const link = result.link.toLowerCase();
+//         const title = result.title.toLowerCase();
+//         const snippet = (result.snippet || "").toLowerCase();
+
+//         // דחה טרנסקריפטים ודוחות לא רלוונטיים
+//         if (link.includes('transcript') || 
+//             title.includes('transcript') ||
+//             title.includes('preview')) {
+//           continue;
+//         }
+
+//         let score = 0;
+//         let reasons: string[] = [];
+
+//         // ניקוד לפי סוג המסמך
+//         if (link.includes('.pdf')) {
+//           score += 50;
+//           reasons.push('PDF file (+50)');
+//         }
+
+//         // ניקוד לפי רלוונטיות
+//         const relevanceTerms = ['earnings', 'results', `q${quarter}`, year.toString()];
+//         const matches = relevanceTerms.filter(term => 
+//           title.includes(term) || snippet.includes(term)
+//         );
+        
+//         score += matches.length * 10;
+//         reasons.push(`Relevance: ${matches.join(', ')}`);
+
+//         // ניקוד לפי תאריך
+//         if (link.includes(reportDate.replace(/-/g, ''))) {
+//           score += 30;
+//           reasons.push('Exact date (+30)');
+//         }
+
+//         allCandidates.push({
+//           url: result.link,
+//           title: result.title,
+//           snippet: result.snippet || '',
+//           score,
+//           reasons
+//         });
+//       }
+
+//       // אם מצאנו תוצאות טובות, תפסיק
+//       if (allCandidates.some(c => c.score > 70)) break;
+      
+//     } catch (e: any) {
+//       logger.warn(`⚠️ Serper API Error: ${e.message}`);
+//     }
+//   }
+
+//   // מיון והחזרה
+//   if (allCandidates.length === 0) {
+//     logger.warn(`\n❌ No PDF found in ${irDomain}`);
+//     return [];
+//   }
+
+//   allCandidates.sort((a, b) => b.score - a.score);
+
+//   logger.info(`\n🏆 TOP CANDIDATES:`);
+//   for (let i = 0; i < Math.min(3, allCandidates.length); i++) {
+//     const c = allCandidates[i];
+//     logger.info(`\n${i + 1}. Score: ${c.score}`);
+//     logger.info(`   URL: ${c.url}`);
+//     logger.info(`   Reasons: ${c.reasons.join('; ')}`);
+//   }
+
+//   // ולידציה
+//   const winner = allCandidates[0];
+//   const isValid = await validateUrl(winner.url, 'Winner');
+  
+//   if (isValid) {
+//     logger.info(`\n✅ FINAL SELECTION: ${winner.url}`);
+//     return [winner.url];
+//   }
+
+//   logger.error(`\n❌ Winner failed validation`);
+//   return [];
+// }
+
+export async function findEarningsPdf(
+  symbol: string,
+  companyName: string,
+  quarter: number,
+  year: number,
+  reportDate: string,
+  cachedIRPortal?: IRPortal | null,
+  onIRPortalFound?: (portal: IRPortal) => void
+): Promise<string | null> {
+  
+  logger.info(`\n${'═'.repeat(70)}`);
+  logger.info(`🎯 Two-Phase Earnings Discovery: ${symbol}`);
+  logger.info(`${'═'.repeat(70)}`);
+  
+  let verifiedIR: IRPortal | null = null;
+  
+  // Phase 1: Cache or find IR portal
+  if (cachedIRPortal) {
+    logger.info(`\n💾 CACHE HIT: Using cached IR portal`);
+    verifiedIR = cachedIRPortal;
+  } else {
+    logger.info(`\n🔍 CACHE MISS: Need to find and verify IR portal`);
+    logger.info(`\n📍 PHASE 1: Finding IR Portal...`);
+    
+    const irCandidates = await findIRCandidates(symbol, companyName);
+    
+    if (irCandidates.length === 0) {
+      logger.error(`❌ No IR candidates found`);
+      return null;
+    }
+    
+    verifiedIR = await grokVerifyIR(symbol, companyName, irCandidates);
+    
+    if (!verifiedIR) {
+      logger.error(`❌ Could not verify IR portal`);
+      return null;
+    }
+    
+    verifiedIR.verifiedAt = new Date().toISOString();
+    logger.info(`✅ Verified IR: ${verifiedIR.url}`);
+    
+    if (onIRPortalFound) {
+      onIRPortalFound(verifiedIR);
     }
   }
-
-  return null;
+  
+  // Phase 2: Let Grok find the earnings document
+  logger.info(`\n📍 PHASE 2: Finding Earnings Document...`);
+  
+  const earningsPdf = await phase2_grokFindEarnings(
+    verifiedIR,
+    symbol,
+    companyName,
+    quarter,
+    year,
+    reportDate
+  );
+  
+  if (!earningsPdf) {
+    logger.error(`❌ Grok could not find earnings document`);
+    return null;
+  }
+  
+if (earningsPdf) {
+  stockLog.earningsDocFound(symbol, earningsPdf);
 }
+  return earningsPdf;
+}
+  async function phase1_findAndVerifyIR(
+  symbol: string,
+  companyName: string
+): Promise<IRPortal | null> {
+  
+  // Step 1.1: Serper Search for IR Candidates
+  logger.info(`\n📡 Step 1.1: Searching for IR portal candidates...`);
+  
+  const candidates = await findIRCandidates(symbol, companyName);
+  
+  if (candidates.length === 0) {
+    logger.error(`❌ No IR candidates found via Serper`);
+    return null;
+  }
+  
+  logger.info(`✅ Found ${candidates.length} IR candidates:`);
+  candidates.forEach((c, i) => {
+    logger.info(`   ${i + 1}. ${c.url}`);
+    logger.info(`      Title: ${c.title}`);
+  });
+  
+  // Step 1.2: Grok Verification
+  logger.info(`\n🤖 Step 1.2: Grok verification of IR portal...`);
+  
+  const verified = await grokVerifyIR(symbol, companyName, candidates);
+  
+  if (!verified) {
+    logger.error(`❌ Grok could not verify any IR portal`);
+    return null;
+  }
+  
+  return verified;
+}
+async function findIRCandidates(
+  symbol: string,
+  companyName: string
+): Promise<IRCandidate[]> {
+  
+  const SERPER_API_KEY = process.env.SERPER_API_KEY;
+  if (!SERPER_API_KEY) {
+    throw new Error("SERPER_API_KEY missing");
+  }
+  
+  const cleanName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '').trim();
+  
+  const queries = [
+    `${symbol} investor relations official site`,
+    `"${cleanName}" investor relations website`,
+    `${symbol} ${cleanName} IR site`,
+    `${symbol} earnings investor relations`,
+  ];
+  
+  const allCandidates: IRCandidate[] = [];
+  
+  const thirdPartyDomains = [
+    'seekingalpha.com',
+    'marketbeat.com',
+    'zacks.com',
+    'stocktitan.net',
+    'alphaspread.com',
+    'marketwatch.com',
+    'yahoo.com',
+    'finance.yahoo.com',
+    'investing.com',
+    'fool.com',
+    'benzinga.com',
+    'tipranks.com',
+    'macrotrends.net',
+    'stockanalysis.com',
+    'sec.gov',
+    'edgar',
+    'nasdaq.com',        // ✅ הוסף!
+    'morningstar.com',   // ✅ הוסף!
+    'annualreports.com', // ✅ הוסף!
+    'public.com',        // ✅ הוסף!
+    'financialmodelingprep.com', // ✅ הוסף!
+    'youtube.com',       // ✅ הוסף!
+  ];
+  
+  for (const query of queries) {
+    logger.info(`   🔍 Query: "${query}"`);
+    
+    try {
+      const response = await axios.post(
+        'https://google.serper.dev/search',
+        { 
+          q: query, 
+          num: 20,
+          gl: "us",
+          hl: "en"
+        },
+        { 
+          headers: { 
+            'X-API-KEY': SERPER_API_KEY, 
+            'Content-Type': 'application/json' 
+          } 
+        }
+      );
+      
+      const results = response.data.organic || [];
+      logger.info(`   📊 Serper returned ${results.length} results`);
+      
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        const url = result.link.toLowerCase();
+        const domain = new URL(result.link).hostname.toLowerCase();
+        
+     
+   
+        
+        // בדיקה 1: צד שלישי?
+        const isThirdParty = thirdPartyDomains.some(d => domain.includes(d));
+        if (isThirdParty) {
+         
+          continue;
+        }
+        
+        // ✅ בדיקה 2 - מתוקנת! בדוק גם את הדומיין!
+        const isIRUrl = 
+          // בדוק ב-URL:
+          url.includes('/investor') || 
+          url.includes('/ir/') ||
+          url.includes('/ir-') ||
+          // ✅ חדש! בדוק גם ב-DOMAIN:
+          domain.startsWith('ir.') ||           // ir.company.com
+          domain.startsWith('investor.') ||     // investor.company.com
+          domain.startsWith('investors.') ||    // investors.company.com
+          domain.includes('.ir.') ||            // www.ir.company.com
+          domain.includes('.investor.') ||      // www.investor.company.com
+          domain.includes('.investors.');       // www.investors.company.com
+        
+        if (!isIRUrl) {
+          logger.info(`      ❌ REJECTED: Not an IR URL/domain pattern`);
+          continue;
+        }
+        
+        // ✅ עבר את כל הבדיקות!
+        allCandidates.push({
+          url: result.link,
+          title: result.title,
+          snippet: result.snippet || ''
+        });
+      }
+      
+    } catch (e: any) {
+      logger.warn(`   ⚠️ Serper error: ${e.message}`);
+    }
+  }
+  
+  // Remove duplicates
+  const uniqueCandidates = Array.from(
+    new Map(allCandidates.map(c => [c.url.toLowerCase(), c])).values()
+  );
+  
+  logger.info(`\n📊 SUMMARY:`);
+  logger.info(`   Total results checked: ${allCandidates.length}`);
+  logger.info(`   Unique candidates: ${uniqueCandidates.length}`);
+  
+  if (uniqueCandidates.length > 0) {
+    logger.info(`\n   🎯 Final candidates:`);
+    uniqueCandidates.forEach((c, i) => {
+      logger.info(`   ${i + 1}. ${c.url}`);
+    });
+  } else {
+    logger.warn(`   ⚠️ No IR candidates found after filtering`);
+  }
+  
+  return uniqueCandidates.slice(0, 10);
+}
+
+async function grokVerifyIR(
+  symbol: string,
+  companyName: string,
+  candidates: IRCandidate[]
+): Promise<IRPortal | null> {
+  logger.info(`\n🔍 Grok IR Verification Starting...`);
+  logger.info(`   Company: ${companyName} (${symbol})`);
+  logger.info(`   Candidates: ${candidates.length}`);
+  
+  const prompt = `
+You are an expert at identifying official Investor Relations websites.
+
+CRITICAL TASK: Verify which URL is the OFFICIAL IR portal for this specific company.
+
+COMPANY INFORMATION:
+- Ticker Symbol: ${symbol}
+- Company Name: ${companyName}
+- Exchange: US (NYSE/NASDAQ)
+
+CANDIDATE URLs TO VERIFY:
+${candidates.map((c, i) => `
+${i + 1}. URL: ${c.url}
+   Title: ${c.title}
+   Snippet: ${c.snippet}
+`).join('\n')}
+
+VERIFICATION REQUIREMENTS:
+You MUST verify each URL by checking:
+
+1. ✅ Company Name Match
+   - Does the page title or content mention "${companyName}"?
+   - Are we talking about the SAME company?
+
+2. ✅ Ticker Symbol Match
+   - Does the page mention ticker "${symbol}"?
+   - Is this the correct stock symbol?
+
+3. ✅ Anti-Hallucination Check (CRITICAL!)
+   - Is this the CORRECT company for ticker ${symbol}?
+   - Example pitfalls:
+     * "SLM" = SLM Corporation (student loans) NOT Sanlam (South African insurance)
+     * "ALK" = Alaska Air Group NOT another regional airline
+   - Verify the domain makes sense for the company
+   - Verify the business description matches
+
+4. ✅ Official vs Third-Party
+   - Is this the company's OFFICIAL domain?
+   - Or is it a third-party aggregator (like gcs-web.com, q4cdn.com)?
+   - Prefer direct company domains
+
+SCORING GUIDELINES:
+- Perfect match (official domain, company name, ticker mentioned): 0.95-1.0
+- Good match (third-party but verified content): 0.75-0.85
+- Uncertain match: 0.5-0.7
+- Wrong company or can't verify: 0.0-0.3
+
+CRITICAL RULES:
+- If you're not 100% sure it's the RIGHT company, mark confidence LOW
+- Better to reject ALL candidates than pick the WRONG company
+- Domain should make logical sense for the company name
+
+OUTPUT FORMAT (JSON only, no other text):
+{
+  "verifiedUrl": "the best URL or null if none are good",
+  "domain": "just the hostname (e.g., salliemae.com)",
+  "confidence": 0.0-1.0,
+  "reason": "brief explanation of why you chose this or why all failed",
+  "rejectedUrls": ["url1", "url2"],
+  "rejectionReasons": ["why url1 rejected", "why url2 rejected"]
+}
+
+If NONE of the URLs can be verified with confidence >= 0.7, return:
+{
+  "verifiedUrl": null,
+  "domain": null,
+  "confidence": 0.0,
+  "reason": "explanation of why all candidates failed verification"
+}
+
+IMPORTANT: Output ONLY valid JSON, no markdown formatting, no code blocks.
+`;
+
+  logger.info(`   Sending ${candidates.length} candidates to Grok for verification...`);
+  
+  try {
+    const grokResponse = await callGrokAPI(
+      [{ role: 'user', content: prompt }],
+      0.1,      // temperature
+      1500,     // max tokens
+      true      // enable web search
+    );
+    
+    logger.info(`   📦 Raw Grok response received (${grokResponse.length} chars)`);
+    logger.info(`   📝 First 200 chars: ${grokResponse.substring(0, 200)}`);
+    
+    // ═══════════════════════════════════════════════════════════════
+    // 🔥 FIX: Handle Grok's web_search response format
+    // ═══════════════════════════════════════════════════════════════
+    let cleanResponse = grokResponse.trim();
+    
+    // Check if this is a tool call array (starts with [{)
+    if (cleanResponse.startsWith('[{')) {
+      logger.info(`   🔧 Detected tool call array format - extracting text response...`);
+      
+      try {
+        const toolCalls = JSON.parse(cleanResponse);
+        
+        // Log all tool call types for debugging
+        logger.info(`   📋 Tool calls found: ${toolCalls.map((t: any) => t.type).join(', ')}`);
+        
+        // Find the message/text response
+        const messageResponse = toolCalls.find((call: any) => 
+          call.type === 'message' || call.type === 'text'
+        );
+        
+        if (messageResponse) {
+          // Extract content from message object
+          if (messageResponse.content) {
+            cleanResponse = messageResponse.content;
+            logger.info(`   ✅ Extracted from 'message' content (${cleanResponse.length} chars)`);
+          } else if (messageResponse.text) {
+            cleanResponse = messageResponse.text;
+            logger.info(`   ✅ Extracted from 'text' field (${cleanResponse.length} chars)`);
+          } else if (messageResponse.message) {
+            cleanResponse = messageResponse.message;
+            logger.info(`   ✅ Extracted from 'message' field (${cleanResponse.length} chars)`);
+          } else {
+            logger.error(`   ❌ Message object has no content field!`);
+            logger.error(`   Message keys: ${Object.keys(messageResponse).join(', ')}`);
+            logger.error(`   Full message: ${JSON.stringify(messageResponse, null, 2)}`);
+            return null;
+          }
+          
+          // Ensure it's a string
+          if (typeof cleanResponse !== 'string') {
+            // If it's an array, try to find text in it
+            if (Array.isArray(cleanResponse)) {
+              const arr = cleanResponse as any[];
+              const textItem = arr.find((item: any) => 
+                typeof item === 'string' || item.text || item.content
+              );
+              if (textItem) {
+                cleanResponse = typeof textItem === 'string' ? textItem : (textItem.text || textItem.content);
+                logger.info(`   ⚠️ Extracted text from array`);
+              } else {
+                cleanResponse = JSON.stringify(cleanResponse);
+                logger.info(`   ⚠️ Converted array to JSON string`);
+              }
+            } else {
+              cleanResponse = JSON.stringify(cleanResponse);
+              logger.info(`   ⚠️ Converted object to JSON string`);
+            }
+          }
+          
+          logger.info(`   📝 Extracted preview: ${String(cleanResponse).substring(0, 150)}`);
+        } else {
+          logger.error(`   ❌ No 'message' or 'text' type found in tool calls!`);
+          logger.error(`   Available types: ${toolCalls.map((t: any) => t.type).join(', ')}`);
+          logger.error(`   Full response: ${JSON.stringify(toolCalls, null, 2)}`);
+          return null;
+        }
+      } catch (parseError: any) {
+        logger.error(`   ❌ Failed to parse tool call array: ${parseError.message}`);
+        return null;
+      }
+    }
+    
+    // Clean markdown if present
+    if (cleanResponse.startsWith('```json')) {
+      cleanResponse = cleanResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+    } else if (cleanResponse.startsWith('```')) {
+      cleanResponse = cleanResponse.replace(/```\n?/g, '');
+    }
+    
+    cleanResponse = cleanResponse.trim();
+    logger.info(`   📝 Clean response preview: ${cleanResponse.substring(0, 200)}`);
+
+    // Parse JSON
+    const result = JSON.parse(cleanResponse);
+    
+    logger.info(`\n🎯 Verification Result:`);
+    logger.info(`   Verified URL: ${result.verifiedUrl || 'NONE'}`);
+    logger.info(`   Confidence: ${result.confidence}`);
+   
+    
+    if (result.rejectedUrls && result.rejectedUrls.length > 0) {
+      logger.info(`\n   📋 Rejected URLs (${result.rejectedUrls.length}):`);
+      result.rejectedUrls.forEach((url: string, i: number) => {
+        logger.info(`     - ${url}`);
+        logger.info(`       Reason: ${result.rejectionReasons[i]}`);
+      });
+    }
+    
+    // Check confidence threshold
+    if (!result.verifiedUrl || result.confidence < 0.7) {
+      logger.warn(`\n   ⚠️ Verification FAILED: Confidence too low (${result.confidence})`);
+      return null;
+    }
+    
+    logger.info(`   ✅ VERIFICATION SUCCESSFUL`);
+    stockLog.irPortalSelected(symbol, result.verifiedUrl, result.confidence);
+
+    return {
+      url: result.verifiedUrl,
+      domain: result.domain,
+      confidence: result.confidence,
+      reason: result.reason
+    };
+    
+  } catch (e: any) {
+    logger.error(`\n❌ Grok verification error:`);
+    logger.error(`   Type: ${e.constructor.name}`);
+    logger.error(`   Message: ${e.message}`);
+    if (e.stack) {
+      logger.error(`   Stack: ${e.stack.split('\n').slice(0, 5).join('\n')}`);
+    }
+    return null;
+  }
+}
+
+
+// async function grokFindEarningsDocument(
+//   irUrl: string,
+//   irDomain: string,
+//   symbol: string,
+//   companyName: string,
+//   quarter: number,
+//   year: number,
+//   reportDate: string
+// ): Promise<string | null> {
+  
+//   const prompt = `
+// You are an expert at finding earnings documents on investor relations websites.
+
+// TASK: Find the OFFICIAL earnings press release for Q${quarter} ${year}.
+
+// COMPANY INFO:
+// - Ticker: ${symbol}
+// - Company Name: ${companyName}
+// - Quarter: Q${quarter} ${year}
+// - Expected Report Date: ${reportDate}
+
+// VERIFIED IR WEBSITE:
+// ${irUrl}
+// Domain: ${irDomain}
+
+// INSTRUCTIONS:
+// 1. Use your web_search tool to search for the earnings document
+// 2. Search ONLY within the domain: ${irDomain}
+// 3. Look for:
+//    - Earnings press release (preferred)
+//    - Earnings presentation (PDF)
+//    - 10-Q filing (backup)
+
+// 4. The document MUST:
+//    - Be from ${irDomain} (not third-party sites)
+//    - Mention Q${quarter} or "fourth quarter" and ${year}
+//    - Preferably mention ticker ${symbol}
+//    - Have a publish date near ${reportDate}
+
+// 5. AVOID:
+//    - Transcripts (call transcripts)
+//    - Earnings previews/outlooks
+//    - Old quarters (Q3, Q2, etc.)
+
+// SEARCH STRATEGY:
+// - Try: "site:${irDomain} Q${quarter} ${year} earnings press release"
+// - Try: "site:${irDomain} fourth quarter ${year} results"
+// - Try: "${irDomain}/investors news earnings"
+
+// OUTPUT:
+// Return ONLY the direct URL to the earnings document.
+// If you cannot find it, explain why.
+
+// Example output:
+// https://www.salliemae.com/investors/news/slm-reports-q4-2025-results.pdf
+// `;
+
+//   logger.info(`\n🤖 Calling Grok to search for earnings document...`);
+  
+//   const grokResponse = await callGrokWithWebSearch(prompt);
+  
+//   // Extract URL from response
+//   const urlMatch = grokResponse.match(/https?:\/\/[^\s]+/);
+  
+//   if (!urlMatch) {
+//     logger.warn(`⚠️ Grok did not return a URL`);
+//     logger.info(`Grok response: ${grokResponse}`);
+//     return null;
+//   }
+  
+//   const url = urlMatch[0].replace(/[.,;]$/, ''); // Clean trailing punctuation
+  
+//   // Verify it's from the correct domain
+//   if (!url.includes(irDomain)) {
+//     logger.warn(`⚠️ URL not from verified domain: ${url}`);
+//     return null;
+//   }
+  
+//   logger.info(`✅ Grok found: ${url}`);
+//   return url;
+// }
+
+async function phase2_grokFindEarnings(
+  irPortal: IRPortal,
+  symbol: string,
+  companyName: string,
+  quarter: number,
+  year: number,
+  reportDate: string
+): Promise<string | null> {
+  
+  logger.info(`\n🤖 Instructing Grok to search for earnings document...`);
+  logger.info(`   Verified IR: ${irPortal.url}`);
+  
+  const quarterName = quarter === 1 ? 'first' : 
+                     quarter === 2 ? 'second' : 
+                     quarter === 3 ? 'third' : 'fourth';
+  
+  const prompt = `
+You are an expert at finding quarterly earnings documents on investor relations websites.
+
+TASK: Find the OFFICIAL earnings press release or report for Q${quarter} ${year}.
+
+COMPANY INFORMATION:
+- Ticker Symbol: ${symbol}
+- Company Name: ${companyName}
+- Quarter: Q${quarter} ${year} (${quarterName} quarter)
+- Expected Report Date: ${reportDate}
+
+VERIFIED IR WEBSITE:
+${irPortal.url}
+Domain: ${irPortal.domain}
+
+🔥 CRITICAL INSTRUCTIONS - READ CAREFULLY:
+
+STEP 1: BROWSE THE IR WEBSITE DIRECTLY
+Use web_search with "open_page" action to load: ${irPortal.url}
+This will show you the actual page content!
+
+Common IR website structures:
+- ${irPortal.url}/news
+- ${irPortal.url}/press-releases
+- ${irPortal.url}/news-releases
+- ${irPortal.url}/financial-information/quarterly-results
+- ${irPortal.url}/investors/news
+- ${irPortal.url}/newsroom
+
+STEP 2: LOOK FOR RECENT NEWS/PRESS RELEASES SECTION
+Once you see the page, look for:
+- "News" or "Press Releases" link
+- "Latest News" section
+- "Recent Announcements"
+- "Quarterly Results" section
+
+STEP 3: FIND THE Q${quarter} ${year} EARNINGS RELEASE
+Look for titles containing:
+- "Reports ${quarterName} Quarter ${year} Results"
+- "Announces Q${quarter} ${year} Earnings"
+- "Q${quarter} ${year} Financial Results"
+- Date around ${reportDate}
+
+STEP 4: GET THE DIRECT URL
+Once you find the earnings release:
+- If it's an HTML page → return the full URL
+- If it's a PDF link → return the full PDF URL
+- Make sure it's from ${irPortal.domain}
+
+🎯 SEARCH STRATEGY (try these in order):
+
+1. Open the main IR page: ${irPortal.url}
+2. If that doesn't work, try: ${irPortal.url}/news
+3. If that doesn't work, search: "site:${irPortal.domain} Q${quarter} ${year} earnings"
+4. If that doesn't work, search: "${symbol} Q${quarter} ${year} earnings press release"
+
+⚠️ IMPORTANT:
+- Use open_page to VIEW the actual website content
+- Don't just rely on Google search results
+- Look at the page structure to find where earnings are posted
+- If you find a "News" or "Press Releases" page, browse it to see recent items
+
+THE DOCUMENT MUST:
+✅ Be from domain: ${irPortal.domain}
+✅ Mention Q${quarter} or "${quarterName} quarter" AND year ${year}
+✅ Be published around ${reportDate} (±7 days acceptable)
+
+AVOID:
+❌ Earnings call transcripts
+❌ Previous quarters (Q${quarter-1}, Q${quarter-2}, etc.)
+❌ Different years
+
+OUTPUT FORMAT:
+Return ONLY the direct URL to the earnings document.
+Just the URL, nothing else.
+
+If you cannot find it after thorough searching, return:
+NOT_FOUND: [brief explanation of what you tried]
+
+EXAMPLE GOOD OUTPUT:
+https://investors.agnc.com/news/news-details/2026/AGNC-Reports-Fourth-Quarter-2025-Results/default.aspx
+
+EXAMPLE BAD OUTPUT:
+NOT_FOUND: Could only find pre-announcement, no actual report.
+`;
+
+  logger.info(`   Calling Grok with web_search capability...`);
+  
+  try {
+    const grokResponse = await callGrokAPI(
+      [{ role: 'user', content: prompt }],
+      0.1,
+      3000,  // ⬅️ More tokens for browsing
+      true
+    );
+    
+    logger.info(`\n📄 Grok Response:`);
+    logger.info(`${grokResponse.substring(0, 500)}${grokResponse.length > 500 ? '...' : ''}`);
+    
+    if (grokResponse.includes('NOT_FOUND:')) {
+      const reason = grokResponse.replace('NOT_FOUND:', '').trim();
+      logger.warn(`   ⚠️ Grok could not find document:`);
+      logger.warn(`   ${reason}`);
+      return null;
+    }
+    
+    const urlMatch = grokResponse.match(/https?:\/\/[^\s<>"]+/);
+    
+    if (!urlMatch) {
+      logger.warn(`   ⚠️ No URL found in Grok response`);
+      return null;
+    }
+    
+    let url = urlMatch[0];
+    url = url.replace(/[.,;)\]]+$/, '');
+    
+    logger.info(`\n✅ Grok found URL: ${url}`);
+    
+    const urlDomain = new URL(url).hostname.toLowerCase();
+    const expectedDomain = irPortal.domain.toLowerCase();
+    
+    if (!urlDomain.includes(expectedDomain) && !expectedDomain.includes(urlDomain)) {
+      logger.warn(`   ⚠️ URL domain mismatch!`);
+      logger.warn(`   Expected: ${expectedDomain}`);
+      logger.warn(`   Got: ${urlDomain}`);
+      return null;
+    }
+    
+    logger.info(`   ✅ Domain verified: ${urlDomain}`);
+    
+    return url;
+    
+  } catch (e: any) {
+    logger.error(`   ❌ Grok search failed: ${e.message}`);
+    return null;
+  }
+}
+async function validateUrl(url: string): Promise<boolean> {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/pdf,text/html,application/xhtml+xml,*/*',
+    'Accept-Language': 'en-US,en;q=0.9',
+  };
+
+  logger.info(`   Testing URL accessibility...`);
+  
+  // Try HEAD request
+  try {
+    await axios.head(url, { 
+      timeout: 8000,
+      headers 
+    });
+    logger.info(`   ✅ HEAD request successful`);
+    return true;
+  } catch (e: any) {
+    logger.info(`   ⚠️ HEAD failed, trying GET...`);
+  }
+
+  // Try partial GET
+  try {
+    const response = await axios.get(url, { 
+      timeout: 12000,
+      maxContentLength: 10 * 1024,
+      headers,
+      responseType: 'stream'
+    });
+    
+    if (response.data && typeof response.data.destroy === 'function') {
+      response.data.destroy();
+    }
+    
+    logger.info(`   ✅ GET request successful`);
+    return true;
+  } catch (e: any) {
+    logger.error(`   ❌ URL not accessible: ${e.code || e.message}`);
+    return false;
+  }
+}
+// async function searchEarningsHtml(
+//   symbol: string,
+//   companyName: string,
+//   quarter: number,
+//   year: number,
+//   reportDate: string
+// ): Promise<string | null> {
+  
+//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
+//   const cleanCompanyName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC|Co\.?)$/i, '').trim();
+
+//   const searchQueries = [
+//     `"${cleanCompanyName}" Q${quarter} ${year} earnings press release`,
+//     `${symbol} Q${quarter} ${year} earnings results`,
+//     `site:ir.${cleanCompanyName.toLowerCase().replace(/\s+/g, '')}.com earnings Q${quarter} ${year}`,
+//   ];
+
+//   for (const query of searchQueries) {
+//     logger.info(`🔍 Searching HTML: ${query}`);
+
+//     try {
+//       const response = await axios.post(
+//         'https://google.serper.dev/search',
+//         { q: query, num: 10 },
+//         {
+//           headers: {
+//             'X-API-KEY': SERPER_API_KEY,
+//             'Content-Type': 'application/json'
+//           },
+//           timeout: 10000
+//         }
+//       );
+
+//       if (!response.data.organic) continue;
+
+//       for (const result of response.data.organic) {
+//         const url = result.link?.toLowerCase() || '';
+//         const title = result.title?.toLowerCase() || '';
+        
+//         // Must be from investor relations domain
+//         if (!url.includes('ir.') && !url.includes('investor')) continue;
+        
+//         // Must contain earnings indicators
+//         const hasEarnings = ['earnings', 'results', 'financial', 'press-release', 'news'].some(
+//           keyword => url.includes(keyword) || title.includes(keyword)
+//         );
+//         if (!hasEarnings) continue;
+
+//         // Must contain quarter
+//         const hasQuarter = [`q${quarter}`, `${quarter}q`, 'fourth-quarter', 'fourth quarter'].some(
+//           q => url.includes(q) || title.includes(q)
+//         );
+//         if (!hasQuarter) continue;
+
+//         // Must contain year
+//         if (!url.includes(String(year)) && !title.includes(String(year))) continue;
+
+//         logger.info(`   ✅ Found HTML press release: ${result.link}`);
+//         return result.link;
+//       }
+//     } catch (error: any) {
+//       logger.warn(`   ⚠️ HTML search failed: ${error.message}`);
+//     }
+//   }
+
+//   return null;
+// }
+
+// async function filterBestPdfWithGrok(
+//   urls: string[],
+//   symbol: string,
+//   companyName: string,
+//   quarter: number,
+//   year: number
+// ): Promise<string | null> {
+//   if (urls.length === 0) return null;
+
+//   // ============================================
+//   // ⚙️ SETUP MATCHING PATTERNS
+//   // ============================================
+//   const simplifiedName = companyName.toLowerCase().split(' ')[0].replace(/[^a-z]/g, '');
+//   const tickerLower = symbol.toLowerCase();
+  
+//   // הגדרת שנים רלוונטיות (השנה המבוקשת + שנה קדימה לדוחות ינואר)
+//   const targetYear = year.toString();
+//   const nextYear = (year + 1).toString();
+  
+//   // הגדרת הרבעון הנוכחי
+//   const currentQPatterns = [`q${quarter}`, `${quarter}q`, 'fourth', 'year-end', 'full-year']; 
+  
+//   // הגדרת רבעונים שגויים (שאסור שיופיעו!)
+//   const wrongQuarters = [1, 2, 3, 4].filter(q => q !== quarter);
+//   const wrongQPatterns = wrongQuarters.map(q => `q${q}`); // e.g., ["q1", "q2", "q3"]
+
+//   const highTrustDomains = ['q4cdn', 'shareholder', 'investor', 'ir.', 'cloudfront', 'amazonaws', 'sec.gov'];
+//   const blacklist = ['.vn', '.be', '.cn', '.ru', 'seekingalpha', 'motleyfool', 'debtagency', 'zacks'];
+
+//   logger.info(`🔍 Filtering logic: Must match Company AND Date (Year: ${targetYear}/${nextYear}, Quarter: Q${quarter})`);
+
+//   const validCandidates = urls.filter(url => {
+//     const lowerUrl = url.toLowerCase();
+
+//     // 🛑 1. Blacklist Check
+//     if (blacklist.some(bad => lowerUrl.includes(bad))) {
+//       logger.info(`   🗑️ Rejected (Blacklist): ${url}`);
+//       return false;
+//     }
+
+//     // 🛑 2. Company Identity Check
+//     const hasNameMatch = lowerUrl.includes(simplifiedName);
+//     const hasTickerMatch = (symbol.length >= 4) && lowerUrl.includes(tickerLower);
+//     const isHighTrust = highTrustDomains.some(d => lowerUrl.includes(d));
+
+//     // אם אין שם חברה ואין טיקר - זה מסוכן מדי, גם בשרת אמין
+//     if (!hasNameMatch && !hasTickerMatch && !isHighTrust) {
+//       logger.info(`   🗑️ Rejected (Identity mismatch): ${url}`);
+//       return false;
+//     }
+
+//     // =========================================================
+//     // 🛑 3. DATE & QUARTER VALIDATION (החלק שביקשת!)
+//     // =========================================================
+    
+//     // א. בדיקת שנה: האם הלינק מכיל את 2025 או 2026?
+//     // אם הלינק מכיל *רק* שנים ישנות (2023, 2024) - הוא נפסל
+//     const hasTargetYear = lowerUrl.includes(targetYear) || lowerUrl.includes(nextYear);
+//     const hasOldYearOnly = lowerUrl.includes((year - 1).toString()) && !hasTargetYear;
+    
+//     if (hasOldYearOnly) {
+//       logger.info(`   🗑️ Rejected (Old year detected): ${url}`);
+//       return false;
+//     }
+
+//     // ב. בדיקת רבעון שלילית ("Killer"): האם מופיע רבעון לא נכון?
+//     // למשל: אנחנו מחפשים Q4, אבל בלינק כתוב "Q3-Results" -> לפח.
+//     // אבל! צריך להיזהר ממצבים כמו "Q4-vs-Q3". לכן נבדוק בזהירות.
+    
+//     // נבדוק אם יש *במפורש* רבעון שגוי ואין את הרבעון הנכון
+//     const hasWrongQ = wrongQPatterns.some(wq => lowerUrl.includes(wq) || lowerUrl.includes(wq.replace('q', '') + 'q')); // checks q3 and 3q
+//     const hasCorrectQ = currentQPatterns.some(cq => lowerUrl.includes(cq));
+
+//     if (hasWrongQ && !hasCorrectQ) {
+//       logger.info(`   🗑️ Rejected (Wrong quarter): ${url}`);
+//       return false;
+//     }
+
+//     // ג. בדיקת רבעון חיובית: האם מופיע הרבעון הנכון או השנה הנכונה?
+//     if (!hasTargetYear && !hasCorrectQ) {
+//        // אם אין שום זכר לשנה או לרבעון - זה חשוד (אלא אם זה דף ראשי כמו /latest-results)
+//        // אבל ב-PDFים ישירים בדרך כלל התאריך בשם הקובץ.
+//        // נהיה קשוחים: אם אין שנה ואין רבעון - נפסול.
+//        logger.info(`   🗑️ Rejected (No date indicators): ${url}`);
+//        return false;
+//     }
+
+//     return true;
+//   });
+
+//   if (validCandidates.length === 0) {
+//     logger.warn(`   ⚠️ All URLs filtered out by Date/Company checks.`);
+//     return null;
+//   }
+
+//   // ============================================
+//   // שלב הבחירה (Grok) - נשאר זהה
+//   // ============================================
+//   if (validCandidates.length === 1) {
+//     logger.info(`   ✅ Only 1 valid candidate remains: ${validCandidates[0]}`);
+//     return validCandidates[0];
+//   }
+
+//   logger.info(`\n🤖 Asking Grok to choose from ${validCandidates.length} VALIDATED links...`);
+  
+//   const prompt = `
+// You are a strict validator.
+// TARGET: ${symbol} (${companyName})
+// QUARTER: Q${quarter} ${year}
+
+// VERIFIED CANDIDATES (Date & Name Checked):
+// ${validCandidates.map((url, i) => `${i + 1}. ${url}`).join('\n')}
+
+// INSTRUCTIONS:
+// 1. Select the URL that is the **Official Earnings Press Release**.
+// 2. Prefer domains like q4cdn.com, ir.${simplifiedName}.com.
+// 3. The URL MUST be for the correct timeframe (Q${quarter} ${year}).
+
+// OUTPUT:
+// Return ONLY the chosen URL.
+// `;
+
+//   try {
+//     const response = await callGrokAPI([{ role: "user", content: prompt }], 0.1, 250, false);
+//     const selected = response.trim().replace(/['"]/g, '');
+    
+//     if (selected.includes("NONE") || !selected.startsWith('http')) return null;
+//     if (!validCandidates.includes(selected)) return validCandidates[0];
+
+//     logger.info(`   ✅ Grok selected: ${selected}`);
+//     return selected;
+
+//   } catch (error: any) {
+//     logger.error(`❌ Grok filtering failed, using first safe candidate.`);
+//     return validCandidates[0];
+//   }
+// }
+/**
+ * Step 3: Validate that a PDF URL is actually accessible
+ */
+
+
+/**
+ * Step 4: Orchestrate the entire PDF discovery flow
+ */
+
+
+
+// async function findReliablePdfUrl(
+//   symbol: string,
+//   companyName: string,
+//   quarter: number,
+//   year: number,
+//   reportDate: string 
+// ): Promise<string | null> {
+//   // 1. קבל את התוצאה הראשונה מגוגל
+//   const urls = await searchEarningsPdf(symbol, companyName, quarter, year, reportDate);
+
+//   if (urls.length === 0) return null;
+
+//   const bestUrl = urls[0]; // זה הלינק הראשון והיחיד
+
+//   // 2. בדיקה טכנית קטנה (רק לוודא שהלינק חי ולא 404)
+//   logger.info(`🔍 Checking if link is alive: ${bestUrl}`);
+  
+ 
+//   return bestUrl;
+// }
+
 function validateAIResponse(aiData: any, symbol: string): { isValid: boolean; reason: string } {
   // Check if pdfMetrics has at least some data
   const hasMetrics = aiData.pdfMetrics &&
@@ -941,7 +3143,10 @@ export async function fullExtraction(
     revenueEstimate: number | null;
   },
   quarter?: number,
-  fiscalYear?: number
+  fiscalYear?: number,
+  cachedIRPortal?: IRPortal | null ,
+    onIRPortalFound?: (portal: IRPortal) => void  // ✅ הוסף את זה
+
 ): Promise<FullExtractionResponse> {
   logger.info(`\n${"=".repeat(70)}`);
   logger.info(`📊 FULL EXTRACTION: ${symbol} (${companyName})`);
@@ -951,6 +3156,37 @@ export async function fullExtraction(
 
   const q = quarter || Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
   const yr = fiscalYear || new Date(reportDate).getFullYear();
+
+  // ============================================
+  // 🔥 NEW: STEP 0 - RELIABLE PDF DISCOVERY WITH SERPER
+  // ============================================
+  logger.info(`\n🔍 Step 0: Finding earnings report PDF using Serper.dev...`);
+  
+const validatedPdfUrl = await findEarningsPdf(
+    symbol,
+    companyName,
+    q,
+    yr,
+    reportDate,
+    cachedIRPortal,
+    onIRPortalFound  // ✅ העבר את ה-callback
+  );
+
+if (!validatedPdfUrl) {
+  logger.error(`❌ CRITICAL: Could not find a valid earnings PDF for ${symbol} Q${q} ${yr}`);
+  logger.error(`   Possible reasons:`);
+  logger.error(`   1. Report not published yet`);
+  logger.error(`   2. PDF not indexed by Google yet`);
+  logger.error(`   3. Company uses non-standard URL patterns`);
+  logger.error(`   🚫 ABORTING EXTRACTION`);
+  
+  throw new Error(`Earnings PDF not found for ${symbol} Q${q} ${yr} - report may not be published`);
+}
+
+
+
+logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
+  logger.info(`   Proceeding with extraction...\n`);
 
   // ============================================
   // STEP 1: CHECK FINNHUB DATA
@@ -1078,140 +3314,1363 @@ export async function fullExtraction(
   }
 
   // ============================================
-  // STEP 3: AI SUPPLEMENT (Original Working Prompt!)
+  // STEP 3: AI SUPPLEMENT - NOW WITH VERIFIED PDF URL!
   // ============================================
-  logger.info(`\n🤖 Step 3: AI Supplement Extraction...`);
+  logger.info(`\n🤖 Step 3: AI Supplement Extraction from verified PDF...`);
 
-  const supplementPrompt = `
-You are a financial data analyst extracting information from official earnings reports.
+
+
+
+// Replace ONLY the first few lines of supplementPrompt:
+
+
+// const supplementPrompt = `
+// You are a financial data analyst extracting information from official earnings reports.
+
+// TARGET COMPANY: ${symbol} (${companyName})
+// REPORT DATE: ${reportDate}
+// QUARTER: Q${q} ${yr}
+
+// 🎯 VERIFIED EARNINGS DOCUMENT: ${validatedPdfUrl}
+// ⚠️ This document has been verified to exist. It may be an HTML page or a PDF!
+
+// **IMPORTANT**: 
+// - First, use web_search with "open_page" action to read the content from ${validatedPdfUrl}
+// - This might be an HTML earnings release page or a PDF document
+// - Extract data ONLY from this specific URL!
+
+// ${hasFinnhubData ? `
+// KNOWN DATA (Already extracted - DO NOT EXTRACT AGAIN):
+// - EPS: ${epsActual} vs estimate ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
+// - Revenue: ${(revenueActual! / 1e9).toFixed(2)}B vs estimate ${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
+// ` : `
+// ⚠️ CRITICAL: EPS and Revenue NOT yet extracted - you MUST extract them from the document!
+// `}
+
+// 🎯 YOUR PRIMARY MISSION: Extract quarterly metrics from this document: ${validatedPdfUrl}
+
+// CRITICAL INSTRUCTIONS:
+
+// **STEP 1: Extract Quarterly Metrics from Document**
+
+// // ... rest of the prompt stays EXACTLY the same ...
+
+// 🔴 CRITICAL RULE: Extract ONLY QUARTERLY data!
+// - Look for: "Q${q} ${yr}" and "Q${q} ${yr - 1}"
+// - IGNORE: "Full Year ${yr}", "FY ${yr}", "TTM", "Year to Date"
+
+// You MUST extract ALL of these metrics:
+
+// ${!hasFinnhubData ? `
+// 1. **EPS** (from document only!):
+//    - Actual: Q${q} ${yr} diluted EPS
+//    - Estimate: Wall Street consensus (might be mentioned in the release)
+//    - Calculate beatPercent: ((actual - estimate) / |estimate|) * 100
+
+// 2. **Revenue** (from document only!):
+//    - Actual: Q${q} ${yr} total revenue (in dollars, NOT billions!)
+//    - Estimate: Analyst consensus (might be mentioned)
+//    - Calculate beatPercent: ((actual - estimate) / estimate) * 100
+// ` : ''}
+
+// 3. **Revenue YoY Growth** (MANDATORY - QUARTERLY ONLY!):
+//    - Find: Q${q} ${yr} revenue vs Q${q} ${yr - 1} revenue
+//    - Calculate: ((current - prior) / prior) * 100
+//    - Return as number (e.g., 7.0 for +7%)
+
+// 4. **Net Margin Q${q}** (MANDATORY):
+//    - (Net Income / Revenue) * 100 for Q${q} ${yr}
+//    - Return as number (e.g., 17.5 for 17.5%)
+
+// 5. **Operating Margin OR Efficiency Ratio** (MANDATORY):
+//    🏦 FOR BANKS: Extract "Efficiency Ratio" if mentioned
+//    🏭 FOR NON-BANKS: Calculate (Operating Income / Revenue) * 100
+
+// 6. **Cash from Operations Q${q}** (MANDATORY - QUARTERLY ONLY):
+//    - Find: "Cash from operations" or "Operating cash flow" for Q${q} ${yr}
+//    - Return in MILLIONS (e.g., 1500 for $1.5B)
+
+// **STEP 3: Extract Qualitative Data**
+
+// 7. **Guidance**:
+//    - Status: "raised" | "lowered" | "maintained" | "unavailable"
+//    - Details: One sentence in HEBREW explaining what changed
+
+// 8. **Sentiment**:
+//    - Overall: "positive" | "neutral" | "negative"  
+//    - Reasoning: One sentence in HEBREW explaining why
+
+// 9. **Highlights**: Exactly 2 bullet points (specific achievements from the report)
+
+// 10. **Concerns**: Exactly 2 bullet points (specific risks/challenges mentioned)
+
+// OUTPUT FORMAT - Return ONLY this JSON:
+// {
+//   "pdfUrl": "${validatedPdfUrl}",
+//   ${!hasFinnhubData ? `
+//   "eps": {
+//     "actual": <number>,
+//     "estimate": <number>,
+//     "beatPercent": <number>
+//   },
+//   "revenue": {
+//     "actual": <number in dollars>,
+//     "estimate": <number in dollars>,
+//     "beatPercent": <number>
+//   },
+//   ` : ''}
+//   "guidance": {
+//     "status": "raised" | "lowered" | "maintained" | "unavailable",
+//     "details": "משפט בעברית" | null
+//   },
+//   "sentiment": {
+//     "overall": "positive" | "neutral" | "negative",
+//     "reasoning": "משפט בעברית" | null
+//   },
+//   "highlights": ["Achievement 1", "Achievement 2"],
+//   "concerns": ["Risk 1", "Risk 2"],
+//   "pdfMetrics": {
+//     "revenueYoY": 7.0 | null,
+//     "netMargin": 17.5 | null,
+//     "marginMetric": {
+//       "type": "efficiency_ratio" | "operating_margin",
+//       "value": 62.5,
+//       "source": "document section",
+//       "verified": true
+//     } | null,
+//     "cashFromOperations": 1500 | null
+//   }
+// }
+
+// ⚠️ CRITICAL RULES:
+// 1. MUST use web_search to read ${validatedPdfUrl} first!
+// 2. Extract ONLY quarterly metrics (not TTM, not annual)
+// 3. If you cannot find a metric → return null
+// 4. Return ONLY valid JSON - NO markdown, NO explanations
+
+// Return ONLY valid JSON.
+// `;
+
+// CLAUDE
+// const supplementPrompt = `
+// You are a professional financial data analyst extracting QUARTERLY earnings data from official reports.
+
+// ════════════════════════════════════════════════════════════════
+// 📊 EXTRACTION MISSION
+// ════════════════════════════════════════════════════════════════
+
+// TARGET COMPANY: ${symbol} (${companyName})
+// REPORT DATE: ${reportDate}
+// QUARTER: Q${q} ${yr}
+
+// 🎯 VERIFIED EARNINGS DOCUMENT: ${validatedPdfUrl}
+
+// 🚨🚨🚨 ABSOLUTE CRITICAL RULE - READ FIRST 🚨🚨🚨
+
+// THIS EXTRACTION IS FOR **QUARTERLY DATA ONLY** - Q${q} ${yr}
+
+// ❌ NEVER USE:
+// - Annual data (Full Year, FY, Fiscal Year)
+// - TTM (Trailing Twelve Months)
+// - Year-to-Date (YTD)
+// - Twelve months / Cumulative
+// - Any period other than Q${q} ${yr}
+
+// ✅ ONLY USE:
+// - Data explicitly labeled "Q${q} ${yr}" or "Fourth Quarter ${yr}"
+// - Data from quarterly comparison tables showing Q${q} ${yr} vs Q${q} ${yr-1}
+// - Data from section clearly titled "Three months ended [date]"
+
+// If you cannot find QUARTERLY data → return null
+// DO NOT convert annual to quarterly
+// DO NOT use TTM as substitute
+// DO NOT estimate from other periods
+
+// ════════════════════════════════════════════════════════════════
+// 🔴 FORBIDDEN KEYWORDS - AUTOMATIC DISQUALIFICATION
+// ════════════════════════════════════════════════════════════════
+
+// If ANY of these appear near a number you're extracting → DISQUALIFY IT:
+
+// ❌ FORBIDDEN PHRASES:
+// - "full year"
+// - "fiscal year"
+// - "FY"
+// - "trailing twelve months"
+// - "TTM"
+// - "year-to-date"
+// - "YTD"
+// - "twelve months"
+// - "cumulative"
+// - "annual"
+// - "annualized" (EXCEPT for spreads/ratios where explicitly allowed)
+
+// Example:
+// Document: "Full year 2025 net interest income: $850M"
+// → Contains "full year" → REJECT, return null
+
+// Document: "Fourth quarter net interest income: $206M"
+// → No forbidden keywords → ACCEPT
+
+// ════════════════════════════════════════════════════════════════
+// 🔴 DATA SOURCE RULES & PRIORITIES
+// ════════════════════════════════════════════════════════════════
+
+// **STEP 0: READ THE DOCUMENT**
+// - Use web_search with "open_page" action to read: ${validatedPdfUrl}
+// - This is an HTML earnings release or PDF document
+
+// **PRIORITY ORDER FOR FINDING DATA:**
+
+// 1️⃣ **TABLES** (HIGHEST PRIORITY)
+//    - Look for tables with headers containing "Q${q} ${yr}"
+//    - Look for tables with "Three months ended [date in ${yr}]"
+//    - Tables are most reliable - prefer over narrative text
+
+// 2️⃣ **HIGHLIGHTED FINANCIAL RESULTS SECTION**
+//    - Usually at top of document
+//    - "Financial Highlights" or "Summary Results"
+
+// 3️⃣ **FIRST PARAGRAPH**
+//    - Opening paragraph often has key metrics
+//    - Must mention "fourth quarter" or "Q${q}"
+
+// 4️⃣ **MD&A / MANAGEMENT DISCUSSION** (LOWEST PRIORITY)
+//    - Only if clearly labeled as quarterly
+//    - Verify period carefully
+
+// **CONFLICT RESOLUTION:**
+// If there is a conflict between narrative text and a numbered table:
+// → ALWAYS prefer the table (especially if headers explicitly show quarter)
+
+// **🚨 DATA SOURCE RULES:**
+
+// ✅ ALLOWED:
+// - Extract data directly from ${validatedPdfUrl}
+// - Quote exact numbers from the document
+// - Calculate ratios from numbers in the document (if both are quarterly)
+// - Search within same domain if estimate not in document
+// - Last resort: Search "${symbol} Q${q} ${yr} consensus estimate" via web_search
+
+// ❌ STRICTLY FORBIDDEN:
+// - Use your training data or knowledge base
+// - Estimate or guess any numbers
+// - Use approximate values ("around", "approximately")
+// - Interpolate missing data
+// - Use annual data when quarterly is missing
+// - Use TTM data when quarterly is missing
+// - Fill in estimates with actual values
+// - Assume anything not explicitly stated
+// - Use data from different quarters/years
+// - Convert annual to quarterly by dividing by 4
+// - Use TTM and claim it's quarterly
+
+// **🔒 IF QUARTERLY DATA NOT FOUND:**
+// - Set value to null immediately
+// - DO NOT fabricate, estimate, or guess
+// - DO NOT use placeholder values
+// - DO NOT use data from different periods
+// - DO NOT use annual/TTM as substitute
+
+// ════════════════════════════════════════════════════════════════
+// ⚖️ CHAIN OF VERIFICATION
+// ════════════════════════════════════════════════════════════════
+
+// For EVERY number you extract, follow this process:
+
+// **BEFORE EXTRACTING:**
+// 1. Scan entire document for mentions of "Q${q} ${yr}", "three months ended", "fourth quarter"
+// 2. List all locations where quarter is mentioned (table headers, section titles, paragraphs)
+// 3. Identify which location has the metric you need
+// 4. Verify no forbidden keywords appear near the number
+
+// **DURING EXTRACTION:**
+// 5. Quote the exact sentence/cell with the number
+// 6. Verify the period label is explicitly present
+// 7. Check units (millions, billions, dollars)
+// 8. Verify number is reasonable for the metric
+
+// **AFTER EXTRACTION:**
+// 9. Ask: "Is this number explicitly labeled Q${q} ${yr}?"
+// 10. Ask: "Did I avoid using annual/TTM/YTD?"
+// 11. Ask: "Can I quote the exact source with period label?"
+// 12. Ask: "Is this from a table or verified quarterly section?"
+
+// If ANY answer is NO → return null
+
+// ════════════════════════════════════════════════════════════════
+// 🔢 UNIT DETECTION RULES
+// ════════════════════════════════════════════════════════════════
+
+// **CRITICAL: Always verify and convert units correctly!**
+
+// **UNIT DETECTION:**
+// - "million", "M", "mil", "MM" → multiply by 1,000,000
+// - "billion", "B", "bil", "bn" → multiply by 1,000,000,000
+// - "thousand", "K" → multiply by 1,000
+
+// **CONTEXT CLUES:**
+// - If table header says "($ in millions)" → all numbers are millions
+// - If text says "amounts in millions" → multiply by 1,000,000
+// - If no unit but number seems small (e.g. revenue 500) → check context
+
+// **VALIDATION:**
+// - Revenue typically: $10M - $50B per quarter
+// - EPS typically: $0.05 - $20.00
+// - Cash flow typically: -$5B to +$10B
+// - If outside these ranges → verify unit conversion
+
+// **SAFETY CHECK:**
+// If number looks unrealistically small/large → suspect wrong unit:
+// - Revenue of 500 (should be 500M = 500,000,000)
+// - EPS of 50 (should be $0.50)
+// → If uncertain about unit → return null
+
+// ════════════════════════════════════════════════════════════════
+// 🏢 STEP 1: IDENTIFY COMPANY TYPE
+// ════════════════════════════════════════════════════════════════
+
+// Before extracting data, determine the company type:
+
+// 🏦 **REITs (Real Estate Investment Trusts):**
+// - Company name includes "REIT"
+// - Business: Real estate, mortgages, MBS (Mortgage-Backed Securities)
+// - Examples: AGNC, NLY, STWD, O, SPG
+// - Key indicator: Main revenue is "Net interest income" not "Revenue"
+
+// 🏦 **BANKS/FINANCIAL INSTITUTIONS:**
+// - Business: Banking, lending, financial services
+// - Examples: JPM, BAC, WFC, C
+// - Key indicator: Reports "Net interest income" and "Efficiency ratio"
+
+// 🏭 **REGULAR COMPANIES:**
+// - Any other company (tech, retail, manufacturing, etc.)
+// - Key indicator: Reports "Total revenue" or "Net revenues"
+
+// ════════════════════════════════════════════════════════════════
+// 📋 STEP 2: EXTRACT QUARTERLY DATA ONLY
+// ════════════════════════════════════════════════════════════════
+
+// ${!hasFinnhubData ? `
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 1️⃣ EPS - QUARTERLY Q${q} ${yr} ONLY
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// **CHAIN OF VERIFICATION - BEFORE EXTRACTING:**
+// 1. Scan document for "Q${q} ${yr}" or "fourth quarter ${yr}" mentions
+// 2. Check tables first - look for table headers with quarter labels
+// 3. Identify section with EPS data
+// 4. Verify no forbidden keywords (full year, TTM, annual)
+
+// **PRIORITY SEARCH:**
+// 1️⃣ Table with "Q${q} ${yr}" column header
+// 2️⃣ "Financial Highlights" section
+// 3️⃣ First paragraph with quarter mention
+// 4️⃣ Income statement with period label
+
+// **WHAT TO EXTRACT:**
+
+// A) EPS ACTUAL - QUARTERLY Q${q} ${yr}:
+
+// 🏦 **FOR REITs:**
+// Look for (MUST say Q${q} ${yr}):
+// - "Fourth quarter diluted earnings per share"
+// - "Q${q} ${yr} core earnings per share"
+// - "Q${q} ${yr} net spread & dollar roll income per share"
+// - "Earnings per common share for Q${q} ${yr}"
+
+// Example (REIT):
+// ✅ "Net spread & dollar roll income of $0.35 per common share for the fourth quarter"
+//    → actual: 0.35
+
+// ❌ "Full year earnings per share of $1.50" → Contains "full year" → REJECT
+// ❌ "Diluted EPS of $0.83" without quarter → verify from table header or context
+
+// 🏦 **FOR BANKS:**
+// 🏭 **FOR REGULAR COMPANIES:**
+// Look for (MUST say Q${q} ${yr}):
+// - "Fourth quarter diluted earnings per share"
+// - "Q${q} ${yr} diluted EPS"
+
+// **TABLE PRIORITY:**
+// If EPS appears in both text and table → use table value (more reliable)
+
+// 🔒 MUST QUOTE: Copy exact sentence including period reference.
+
+// Example:
+// ✅ Table:
+//    | Period | Diluted EPS |
+//    |Q4 2025 | $0.83      |
+//    → actual: 0.83, source: "Table - Q4 2025 column"
+
+// 🚨 VALIDATION:
+// - MUST explicitly mention Q${q}, "fourth quarter", or "three months ended"
+// - Check for forbidden keywords nearby
+// - Verify unit (should be dollars per share, typically $0.05-$20)
+// - If no quarter label → check table headers
+// - If still unclear → return null
+
+// B) EPS ESTIMATE (Consensus):
+
+// Look for phrases near the actual:
+// - "compared to consensus estimate of $X.XX"
+// - "vs. analyst expectations of $X.XX"
+// - "beat estimates of $X.XX"
+
+// ⚠️ IF ESTIMATE NOT IN DOCUMENT:
+// 1. Search within document thoroughly
+// 2. Search: "site:${validatedPdfUrl.split('/')[2]} ${symbol} Q${q} ${yr} EPS estimate consensus"
+// 3. Last resort: "${symbol} Q${q} ${yr} diluted EPS consensus estimate"
+// 4. If not found → estimate: null
+
+// C) CALCULATE BEAT PERCENT:
+
+// ONLY if you have both actual AND estimate:
+// beatPercent = ((actual - estimate) / |estimate|) * 100
+
+// If estimate is null → beatPercent: null
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 2️⃣ REVENUE - QUARTERLY Q${q} ${yr} ONLY
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// **CHAIN OF VERIFICATION - BEFORE EXTRACTING:**
+// 1. Scan for revenue metric tables
+// 2. Identify correct revenue type for company (NII vs Total Revenue)
+// 3. Locate Q${q} ${yr} column/row
+// 4. Verify units and period label
+
+// **PRIORITY SEARCH:**
+// 1️⃣ Income statement table with Q${q} ${yr} column
+// 2️⃣ Financial highlights section
+// 3️⃣ First paragraph with quarterly revenue
+// 4️⃣ Comparative table showing current vs prior quarter
+
+// **CRITICAL: Revenue definition depends on company type!**
+
+// A) REVENUE ACTUAL - QUARTERLY Q${q} ${yr}:
+
+// 🏦 **FOR REITs:**
+
+// USE "Net interest income" for Q${q} ${yr} ONLY
+
+// Look for in TABLES FIRST:
+// - Table row: "Net interest income" + column "Q${q} ${yr}"
+// - Table header: "($ in millions)" or "($ in thousands)"
+
+// Then in text (MUST say Q${q} ${yr}):
+// - "Fourth quarter net interest income: $XXX million"
+// - "Q${q} ${yr} net interest income of $XXX million"
+
+// Example (REIT):
+// ✅ Table showing:
+//    | Metric | Q4 2025 |
+//    |Net Interest Income | $206M |
+//    → actual: 206000000 (convert to dollars!)
+
+// ❌ "Full year net interest income: $850M" → Contains "full year" → REJECT
+// ❌ "TTM net interest income: $800M" → Contains "TTM" → REJECT
+
+// ⚠️ DO NOT USE for REITs:
+// - "Total comprehensive income" (includes unrealized gains)
+// - "Total revenue" (includes non-operating items)
+// - Any amount with "annual", "full year", "TTM"
+
+// **UNIT CONVERSION:**
+// Check table header or text context:
+// - "($ in millions)" → multiply by 1,000,000
+// - "($ in thousands)" → multiply by 1,000
+// - "$206 million" → 206000000
+// - "$0.206 billion" → 206000000
+
+// 🏦 **FOR BANKS:**
+// USE "Net interest income" for Q${q} ${yr}
+
+// 🏭 **FOR REGULAR COMPANIES:**
+// USE "Total revenue" or "Net revenues" for Q${q} ${yr}
+
+// Look in TABLES FIRST for:
+// - Row: "Total revenues" or "Net revenues"
+// - Column: "Q${q} ${yr}" or "Three months ended [date]"
+
+// 🔒 MUST QUOTE: Exact source with period.
+
+// 🚨 VALIDATION:
+// - MUST be quarterly (check forbidden keywords!)
+// - MUST have correct unit conversion
+// - Revenue range check:
+//   * REITs NII: typically $50M-$1B per quarter
+//   * Banks NII: typically $1B-$20B per quarter
+//   * Regular companies: typically $100M-$200B per quarter
+// - If outside range → verify unit conversion
+// - If still wrong → return null
+
+// B) REVENUE ESTIMATE (Consensus):
+
+// Look near actual for:
+// - "compared to consensus [metric] of $XXX million"
+// - "beat estimates of $XXX million"
+
+// ⚠️ Search if not found:
+// - REITs/Banks: "${symbol} Q${q} ${yr} net interest income estimate consensus"
+// - Regular: "${symbol} Q${q} ${yr} revenue estimate consensus"
+
+// Convert to same unit as actual!
+
+// If not found → estimate: null
+
+// C) CALCULATE BEAT PERCENT:
+
+// ONLY if both exist:
+// beatPercent = ((actual - estimate) / estimate) * 100
+
+// If estimate is null → beatPercent: null
+
+// ` : `
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ✅ EPS & REVENUE ALREADY PROVIDED
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Known Data (from Finnhub):
+// - EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
+// - Revenue: $${(revenueActual! / 1e9).toFixed(2)}B vs $${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
+
+// Skip EPS & Revenue extraction, proceed to other metrics.
+// `}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 3️⃣ REVENUE YoY GROWTH - QUARTERLY COMPARISON ONLY
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// 🚨🚨🚨 MOST CRITICAL METRIC - READ CAREFULLY 🚨🚨🚨
+
+// **CHAIN OF VERIFICATION - BEFORE EXTRACTING:**
+// 1. Scan for comparative tables showing Q${q} ${yr} vs Q${q} ${yr-1}
+// 2. Verify BOTH quarters are explicitly labeled
+// 3. Check for forbidden keywords (full year, annual, TTM)
+// 4. Confirm using correct revenue metric for company type
+
+// **PRIORITY SEARCH:**
+// 1️⃣ Year-over-year comparison table with Q${q} columns
+// 2️⃣ "Comparative Results" section
+// 3️⃣ Text explicitly comparing two quarters
+// 4️⃣ If not found in any of above → return null immediately
+
+// **WHAT TO EXTRACT:**
+
+// You MUST find BOTH values with EXPLICIT quarterly labels:
+
+// 🏦 **FOR REITs/BANKS:**
+
+// MUST find BOTH in table or text:
+// - Q${q} ${yr} net interest income: $XXX million
+// - Q${q} ${yr - 1} net interest income: $XXX million
+
+// **Examples of CORRECT sources:**
+
+// ✅ TABLE (BEST):
+//    | Period  | Net Interest Income |
+//    |---------|-------------------|
+//    | Q4 2025 | $206M            |
+//    | Q4 2024 | $222M            |
+//    → Q4 2025: 206, Q4 2024: 222
+
+// ✅ TEXT WITH EXPLICIT LABELS:
+//    "Fourth quarter 2025 net interest income was $206M compared to $222M in the fourth quarter of 2024"
+//    → Q4 2025: 206, Q4 2024: 222
+
+// ✅ SECTION WITH CLEAR HEADERS:
+//    "Q4 2025 Results: NII $206M"
+//    "Q4 2024 Results: NII $222M"
+//    → Q4 2025: 206, Q4 2024: 222
+
+// **Examples of WRONG sources - REJECT IMMEDIATELY:**
+
+// ❌ "Full-year 2025 net interest income: $1.5B vs $1.4B in 2024"
+//    → Contains "full-year" → REJECT
+
+// ❌ "TTM net interest income: $800M vs prior TTM $850M"
+//    → Contains "TTM" → REJECT
+
+// ❌ "Annual net interest income increased 7% year-over-year"
+//    → Contains "annual" → REJECT
+
+// ❌ "Net interest income for 2025: $1.5B"
+//    → No quarter label → REJECT
+
+// ❌ Table showing only one period or mixing annual with quarterly
+//    → REJECT
+
+// 🏭 **FOR REGULAR COMPANIES:**
+
+// MUST find BOTH (explicitly quarterly):
+// - Q${q} ${yr} total revenue: $XXX million
+// - Q${q} ${yr - 1} total revenue: $XXX million
+
+// Same validation rules!
+
+// 🔒 MUST QUOTE EXACT SOURCE:
+// "Source: [Table name/Text location] showing Q${q} ${yr}: $XXX, Q${q} ${yr - 1}: $XXX"
+
+// **CALCULATION:**
+// ((current - prior) / prior) * 100
+
+// Example:
+// ✅ Q4 2025 NII: $206M, Q4 2024 NII: $222M
+//    → ((206 - 222) / 222) * 100 = -7.21%
+//    → revenueYoY: -7.21
+
+// 🚨 ULTRA-CRITICAL VALIDATION:
+
+// BEFORE returning a value, answer these:
+// 1. ✅ Do BOTH numbers explicitly say Q${q} or "fourth quarter"?
+// 2. ✅ Are they in a comparison table with quarter column headers?
+// 3. ✅ Did I check for "full year", "annual", "FY", "TTM", "YTD" near numbers?
+// 4. ✅ Am I comparing same quarter (Q${q} ${yr} vs Q${q} ${yr-1})?
+// 5. ✅ Am I using correct metric (NII for REITs/Banks, Revenue for Regular)?
+// 6. ✅ Is result reasonable (-50% to +50%)?
+// 7. ✅ Did I verify units match for both numbers?
+
+// If ANY answer is NO → return null IMMEDIATELY
+
+// ⚠️ COMMON MISTAKES - DO NOT MAKE THESE:
+
+// ❌ MISTAKE 1: Using full-year data
+//    "2025: $1.5B, 2024: $1.4B → +7.1%"
+//    → This is ANNUAL not quarterly → REJECT
+
+// ❌ MISTAKE 2: Using TTM
+//    "TTM: $800M vs prior TTM: $850M → -5.9%"
+//    → This is TTM not quarterly → REJECT
+
+// ❌ MISTAKE 3: Estimating from annual
+//    "No quarterly data, so annual $1.2B / 4 = $300M per quarter"
+//    → Never estimate → REJECT, return null
+
+// ❌ MISTAKE 4: Missing quarter label
+//    "Current period: $206M, Prior period: $222M"
+//    → No explicit Q${q} label → REJECT, return null
+
+// ❌ MISTAKE 5: Mixing periods
+//    "Q4 2025: $206M vs Full Year 2024: $850M"
+//    → Different period types → REJECT
+
+// ⚠️ IF QUARTERLY COMPARISON NOT FOUND:
+// - DO NOT calculate from annual
+// - DO NOT use TTM
+// - DO NOT divide annual by 4
+// - DO NOT estimate or guess
+// - Return: null
+
+// **This is CRITICAL - better null than wrong data!**
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 4️⃣ NET MARGIN - QUARTERLY Q${q} ${yr} ONLY
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// **CHAIN OF VERIFICATION:**
+// 1. Find quarterly income statement table
+// 2. Locate Q${q} ${yr} column
+// 3. Find Net Income row
+// 4. Find Revenue row (use appropriate metric for company type)
+// 5. Verify BOTH are from same period
+// 6. Check units match
+
+// **WHAT TO EXTRACT:**
+
+// Find for Q${q} ${yr} ONLY (both must be from same period):
+// - Net Income: $XXX million (Q${q} ${yr})
+// - Revenue: $XXX million (Q${q} ${yr})
+
+// 🏦 **FOR REITs/BANKS:**
+// Calculate: (Q${q} ${yr} Net Income / Q${q} ${yr} Net Interest Income) * 100
+
+// ⚠️ NOTE: REITs can have >100% margins!
+// This is NORMAL due to:
+// - Unrealized gains on investments
+// - Mark-to-market accounting
+// - Comprehensive income including non-cash items
+
+// Acceptable range for REITs: -50% to 1000%
+
+// Example (REIT - Table):
+// | Metric | Q4 2025 |
+// |Net Income/Comprehensive Income | $955M |
+// |Net Interest Income | $206M |
+// → netMargin: (955 / 206) * 100 = 463.6%
+// This is HIGH but NORMAL for REITs!
+
+// 🏭 **FOR REGULAR COMPANIES:**
+// Calculate: (Q${q} ${yr} Net Income / Q${q} ${yr} Total Revenue) * 100
+
+// Acceptable range: -20% to 50%
+
+// 🔒 MUST QUOTE: "Q${q} ${yr} Net Income: $XXX, [Revenue metric]: $XXX, Source: [Table/Section name]"
+
+// 🚨 VALIDATION:
+// - BOTH numbers from Q${q} ${yr}
+// - NOT from annual/TTM
+// - Units converted correctly
+// - Result within acceptable range for company type
+// - If using comprehensive income (REITs) → >100% is OK
+
+// ⚠️ IF QUARTERLY DATA NOT FOUND:
+// - DO NOT use annual divided by 4
+// - DO NOT mix periods
+// - Return: null
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 5️⃣ OPERATING METRIC - QUARTERLY/ANNUALIZED
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// **DEPENDS ON COMPANY TYPE:**
+
+// 🏦 **FOR BANKS/FINANCIAL INSTITUTIONS:**
+
+// Look for "Efficiency Ratio" (may be quarterly or annualized):
+// - Check tables first for Q${q} ${yr} column
+// - Check financial highlights section
+// - Look for "efficiency ratio" or "adjusted efficiency ratio"
+
+// 🔒 MUST QUOTE with period if available:
+// "Fourth quarter efficiency ratio: XX.X%" or "Efficiency ratio: XX.X%"
+
+// If found → Return:
+// {
+//   "type": "efficiency_ratio",
+//   "value": XX.X,
+//   "source": "[exact quote]",
+//   "verified": true
+// }
+
+// Typical range: 45%-80% (lower is better)
+
+// 🏦 **FOR REITs:**
+
+// Look for "Net Interest Spread" (usually annualized rate):
+// - "Net interest spread: X.XX%"
+// - "Annualized net interest spread for Q${q}: X.XX%"
+// - "Economic return on tangible equity: XX.X%"
+
+// ⚠️ Net interest spread is typically ANNUALIZED - this is OK!
+// It's a rate/percentage, not an absolute amount.
+
+// Example (REIT):
+// ✅ "Annualized net interest spread of 1.81% for the fourth quarter"
+//    → type: "net_interest_spread", value: 1.81
+
+// If found → Return:
+// {
+//   "type": "net_interest_spread",
+//   "value": X.XX,
+//   "source": "[exact quote]",
+//   "verified": true
+// }
+
+// Typical range: 0.5%-3.5%
+
+// 🏭 **FOR REGULAR COMPANIES:**
+
+// Calculate Operating Margin from Q${q} ${yr} quarterly data:
+// - Find in table: Q${q} ${yr} Operating Income
+// - Find in table: Q${q} ${yr} Revenue
+// - Calculate: (Operating Income / Revenue) * 100
+
+// BOTH must be from Q${q} ${yr}!
+
+// 🔒 MUST QUOTE: "Q${q} ${yr} Operating Income: $XXX, Revenue: $XXX"
+
+// Return:
+// {
+//   "type": "operating_margin",
+//   "value": XX.X,
+//   "source": "Calculated from Q${q} ${yr} quarterly data",
+//   "verified": true
+// }
+
+// Typical range: -10% to 45%
+
+// ⚠️ IF DATA NOT FOUND:
+// - Return: null
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 6️⃣ CASH FROM OPERATIONS - QUARTERLY Q${q} ${yr} ONLY
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// **CHAIN OF VERIFICATION:**
+// 1. Look for cash flow statement
+// 2. Find Q${q} ${yr} column/section
+// 3. Locate "Operating Activities" section
+// 4. Find cash from operations line
+// 5. Verify it's quarterly (not annual)
+// 6. Check units
+
+// **WHAT TO EXTRACT:**
+
+// 🏦 **FOR REITs:**
+
+// ⚠️ REITs often do NOT report traditional "Cash from Operations"
+
+// Instead, look for REIT-specific metrics (if quarterly):
+// - "Q${q} ${yr} Distributable Earnings"
+// - "Q${q} ${yr} Core Earnings"
+// - "Q${q} ${yr} FFO" (Funds From Operations)
+// - "Q${q} ${yr} Adjusted Distributable Earnings"
+
+// If cash flow statement exists with quarterly data:
+// - "Q${q} ${yr} cash from operating activities"
+// - "Net cash provided by operating activities for the three months ended [date]"
+
+// Example:
+// ✅ "Fourth quarter distributable earnings: $604 million"
+// ✅ "Q4 2025 FFO: $604 million"
+
+// ❌ "Liquidity: $7.6B" → This is NOT cash flow!
+// ❌ "Capital raise: $356M" → This is financing, not operations!
+// ❌ "Annual FFO: $2.4B" → This is annual!
+
+// 🏦 **FOR BANKS:**
+// 🏭 **FOR REGULAR COMPANIES:**
+
+// Look in cash flow statement for Q${q} ${yr}:
+// - Table row: "Cash from operations" or "Net cash from operating activities"
+// - Column: "Q${q} ${yr}" or "Three months ended [date]"
+
+// 🔒 MUST QUOTE with period: "Q${q} ${yr} cash from operations: $XXX million, Source: Cash Flow Statement"
+
+// Return in MILLIONS:
+// - "$604 million" → 604
+// - "$0.604 billion" → 604
+
+// 🚨 VALIDATION:
+// - MUST be quarterly (Q${q} ${yr})
+// - MUST be from "operating activities" section
+// - NOT liquidity, NOT capital raise, NOT financing activities
+// - Units converted correctly
+// - Typical range: -$5,000M to +$10,000M per quarter
+
+// ⚠️ IF QUARTERLY DATA NOT FOUND:
+// - DO NOT use annual / 4
+// - DO NOT use liquidity as substitute
+// - DO NOT use financing activities
+// - Return: null
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 7️⃣ GUIDANCE - Future Outlook
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// **WHERE TO FIND:**
+// - "Outlook" section
+// - "2026 Guidance" or "Full Year 2026 Guidance"
+// - CEO/CFO commentary about future expectations
+
+// **WHAT TO EXTRACT:**
+
+// Look for phrases indicating guidance change:
+
+// **RAISED:**
+// - "raised guidance"
+// - "increased outlook"
+// - "upgraded forecast"
+// - "raising expectations"
+// → status: "raised"
+
+// **LOWERED:**
+// - "lowered guidance"
+// - "reduced outlook"
+// - "revised downward"
+// - "cutting expectations"
+// → status: "lowered"
+
+// **MAINTAINED:**
+// - "reaffirmed guidance"
+// - "maintaining outlook"
+// - "reiterating guidance"
+// - "unchanged expectations"
+// → status: "maintained"
+
+// **UNAVAILABLE:**
+// - No guidance section
+// - "not providing guidance"
+// - "suspending guidance"
+// → status: "unavailable"
+
+// 🔒 MUST QUOTE: Exact sentence mentioning guidance.
+
+// **Details in HEBREW - Rules:**
+// - Maximum 1 sentence
+// - Natural Hebrew (not Google Translate style)
+// - Include key numbers/dates if mentioned
+// - Be specific and concise
+
+// Example:
+// Document: "Company raised full-year 2026 revenue guidance from $3.8 billion to $4.1 billion due to strong customer demand"
+
+// → {
+//   "status": "raised",
+//   "details": "החברה העלתה את תחזית ההכנסות לשנת 2026 מ-3.8 ל-4.1 מיליארד דולר בשל ביקוש חזק"
+// }
+
+// ⚠️ Guidelines for Hebrew text:
+// ✅ "החברה העלתה תחזית מ-X ל-Y"
+// ✅ "תחזית ההכנסות הועלתה ב-15%"
+// ✅ "ההנהלה הורידה את התחזית ל-2026"
+
+// ❌ "החברה אמרה שהיא מעלה את ההשקפה שלה" (too literal translation)
+// ❌ Long explanations (keep to 1 sentence!)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 8️⃣ SENTIMENT - Management Tone
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// **WHERE TO FIND:**
+// - CEO/CFO quotes in press release
+// - "Management Commentary" section
+// - Opening or closing statements
+
+// **WHAT TO ANALYZE:**
+
+// 🔒 MUST QUOTE: 1-2 key sentences from management.
+
+// **POSITIVE INDICATORS:**
+// Words: "strong", "excellent", "robust", "optimistic", "excited", "confident", "pleased", "exceptional", "outstanding", "solid", "record"
+// → sentiment: "positive"
+
+// **NEGATIVE INDICATORS:**
+// Words: "challenging", "difficult", "weakness", "concerns", "headwinds", "pressure", "disappointing", "uncertain", "soft", "volatile"
+// → sentiment: "negative"
+
+// **NEUTRAL INDICATORS:**
+// Words: "stable", "in line", "as expected", "mixed", "balanced", "consistent", "steady"
+// → sentiment: "neutral"
+
+// **Reasoning in HEBREW - Rules:**
+// - Maximum 2 sentences
+// - Natural Hebrew language
+// - Based directly on quoted management statements
+// - Include key themes mentioned
+// - Be specific, not generic
+
+// Example:
+// Document quotes:
+// "We delivered exceptional results this quarter and remain optimistic about continued growth in 2026. Market conditions are favorable."
+
+// → {
+//   "overall": "positive",
+//   "reasoning": "ההנהלה מציינת תוצאות יוצאות דופן ומביעה אופטימיות לגבי המשך צמיחה ב-2026, תוך ציון תנאי שוק נוחים"
+// }
+
+// ⚠️ Guidelines for Hebrew reasoning:
+// ✅ Natural flow in Hebrew
+// ✅ Specific to actual quotes
+// ✅ Concise (max 2 sentences)
+// ✅ Include key themes/numbers if mentioned
+
+// ❌ Generic statements not tied to quotes
+// ❌ Long explanations
+// ❌ Literal word-by-word translations
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 9️⃣ HIGHLIGHTS - Key Achievements (2 items)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Extract EXACTLY 2 achievements MENTIONED IN DOCUMENT:
+
+// **Look for:**
+// - Product launches
+// - Market share gains
+// - Cost reductions/efficiency improvements
+// - Record revenues/profits
+// - Successful acquisitions/partnerships
+// - Geographic expansion
+// - New customer wins
+// - Operational milestones
+// - Technology achievements
+
+// Be SPECIFIC with numbers when available!
+
+// 🔒 MUST REFERENCE: Each highlight must cite something in document.
+
+// **In HEBREW:**
+// ✅ "השיקה מוצר חדש שהניב 50 מיליון דולר הכנסות ברבעון"
+// ✅ "הגדילה נתח שוק ב-15% בשוק האירופי"
+// ✅ "השלימה רכישה של חברת X ב-200 מיליון דולר"
+
+// ❌ DO NOT invent!
+// If only 1 highlight found → ["highlight", null]
+// If no highlights found → ["לא צוינו הישגים ספציפיים", null]
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🔟 CONCERNS - Key Risks (2 items)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Extract EXACTLY 2 risks/challenges MENTIONED IN DOCUMENT:
+
+// **Look for:**
+// - Margin pressure
+// - Increased competition
+// - Regulatory challenges
+// - Supply chain issues
+// - Market headwinds
+// - Rising costs (materials, labor)
+// - Currency headwinds
+// - Demand weakness
+// - Operational challenges
+// - Legal/compliance issues
+
+// Be SPECIFIC!
+
+// 🔒 MUST REFERENCE: Each concern must cite something in document.
+
+// **In HEBREW:**
+// ✅ "לחץ על שולי הרווח עקב עלייה של 12% במחירי חומרי גלם"
+// ✅ "תחרות מוגברת מיצרנים זרים בשוק האמריקאי"
+// ✅ "אי ודאות רגולטורית בשווקים מתעוררים"
+
+// ❌ DO NOT invent!
+// If only 1 concern found → ["concern", null]
+// If no concerns found → ["לא צוינו סיכונים ספציפיים", null]
+
+// ════════════════════════════════════════════════════════════════
+// 📤 OUTPUT FORMAT
+// ════════════════════════════════════════════════════════════════
+
+// Return ONLY this JSON structure:
+
+// {
+//   "pdfUrl": "${validatedPdfUrl}",
+//   "companyType": "REIT" | "Bank" | "Regular",
+//   ${!hasFinnhubData ? `
+//   "eps": {
+//     "actual": <number> | null,
+//     "estimate": <number> | null,
+//     "beatPercent": <number> | null
+//   },
+//   "revenue": {
+//     "actual": <number in dollars> | null,
+//     "estimate": <number in dollars> | null,
+//     "beatPercent": <number> | null,
+//     "revenueType": "net_interest_income" | "total_revenue"
+//   },
+//   ` : ''}
+//   "guidance": {
+//     "status": "raised" | "lowered" | "maintained" | "unavailable",
+//     "details": "משפט תמציתי בעברית" | null
+//   },
+//   "sentiment": {
+//     "overall": "positive" | "neutral" | "negative",
+//     "reasoning": "1-2 משפטים בעברית טבעית"
+//   },
+//   "highlights": [
+//     "הישג ספציפי ראשון בעברית (או null)",
+//     "הישג ספציפי שני בעברית (או null)"
+//   ],
+//   "concerns": [
+//     "סיכון ספציפי ראשון בעברית (או null)",
+//     "סיכון ספציפי שני בעברית (או null)"
+//   ],
+//   "pdfMetrics": {
+//     "revenueYoY": <number> | null,
+//     "netMargin": <number> | null,
+//     "marginMetric": {
+//       "type": "efficiency_ratio" | "net_interest_spread" | "operating_margin",
+//       "value": <number>,
+//       "source": "ציטוט מדויק או תיאור חישוב",
+//       "verified": true
+//     } | null,
+//     "cashFromOperations": <number in millions> | null
+//   }
+// }
+
+// ════════════════════════════════════════════════════════════════
+// 🚨 FINAL VALIDATION CHECKLIST
+// ════════════════════════════════════════════════════════════════
+
+// **BEFORE RETURNING JSON - CHECK EVERYTHING:**
+
+// **META-CHECK:**
+// ❓ Did I follow the Chain of Verification for each metric?
+// ❓ Did I prioritize tables over narrative text?
+// ❓ Did I check for forbidden keywords near every number?
+// ❓ Did I verify unit conversions?
+// ❓ Did I check for conflicts (table vs text) and prefer table?
+
+// **COMPANY TYPE:**
+// ❓ Did I correctly identify company type (REIT/Bank/Regular)?
+// ❓ Did I use correct revenue metric for this type?
+
+// ${!hasFinnhubData ? `
+// **EPS:**
+// ❓ Explicitly labeled Q${q} ${yr}?
+// ❓ Can quote source with period?
+// ❓ No forbidden keywords nearby?
+// ❓ Reasonable value ($0.05-$20)?
+// ❓ If estimate = actual exactly → verified it's true?
+
+// **REVENUE:**
+// ❓ Used correct metric (NII for REITs/Banks, Total Revenue for Regular)?
+// ❓ Explicitly labeled Q${q} ${yr}?
+// ❓ Converted to DOLLARS (not millions)?
+// ❓ Value has 7-10 digits (e.g. 206000000)?
+// ❓ Can quote source with period?
+// ❓ No forbidden keywords?
+// ` : ''}
+
+// **YoY REVENUE (MOST CRITICAL):**
+// ❓ Found comparison table with BOTH Q${q} ${yr} and Q${q} ${yr-1}?
+// ❓ BOTH periods explicitly labeled with quarter?
+// ❓ NO "full year", "annual", "TTM", "FY" near numbers?
+// ❓ Used correct metric (NII vs Total Revenue)?
+// ❓ Result is reasonable (-50% to +50%)?
+// ❓ If no quarterly comparison found → returned null?
+// ❓ Did NOT use annual data?
+// ❓ Did NOT estimate or divide by 4?
+
+// **NET MARGIN:**
+// ❓ BOTH numerator and denominator from Q${q} ${yr}?
+// ❓ Can quote source for each?
+// ❓ Used correct revenue metric?
+// ❓ Result reasonable for company type?
+// ❓ If REIT with >100% → accepted as normal?
+
+// **OPERATING METRIC:**
+// ❓ Identified correct type for company?
+// ❓ Quoted source?
+// ❓ Value reasonable for metric type?
+
+// **CASH FROM OPERATIONS:**
+// ❓ Quarterly value for Q${q} ${yr}?
+// ❓ From "operating activities" section?
+// ❓ NOT liquidity/capital raise?
+// ❓ For REITs: used appropriate metric (FFO/distributable)?
+// ❓ Value in MILLIONS?
+
+// **QUALITATIVE:**
+// ❓ Guidance: Quoted exact source?
+// ❓ Guidance details: Natural Hebrew, max 1 sentence, includes numbers/dates?
+// ❓ Sentiment: Quoted 1-2 management statements?
+// ❓ Sentiment reasoning: Natural Hebrew, max 2 sentences, specific to quotes?
+// ❓ Highlights: Both referenced in document? Natural Hebrew? Specific?
+// ❓ Concerns: Both referenced in document? Natural Hebrew? Specific?
+
+// **HEBREW TEXT QUALITY:**
+// ❓ All Hebrew text is natural (not Google Translate style)?
+// ❓ Concise (within sentence limits)?
+// ❓ Includes specific numbers/details when available?
+// ❓ No generic statements?
+
+// **SAFETY CHECKS:**
+// ❓ All null values are intentional (data truly not found)?
+// ❓ No fabricated or estimated data?
+// ❓ No use of TTM/Annual when quarterly needed?
+// ❓ All unit conversions correct?
+// ❓ All numbers are reasonable ranges?
+
+// **ULTRA-CRITICAL - IF YOU USED ANY OF THESE, GO BACK AND FIX:**
+// 🚨 Full year / Annual data for quarterly metrics
+// 🚨 TTM (Trailing Twelve Months) for quarterly metrics
+// 🚨 YTD (Year to Date) for quarterly metrics
+// 🚨 Annual divided by 4 to estimate quarterly
+// 🚨 Estimates or guesses for missing data
+// 🚨 Data without period labels
+// 🚨 Wrong revenue metric for company type
+// 🚨 Liquidity instead of cash from operations
+
+// ════════════════════════════════════════════════════════════════
+
+// Return ONLY valid JSON. No markdown, no explanations, no extra text.
+// `;
+
+
+const supplementPrompt = `
+You are a professional financial data analyst extracting QUARTERLY earnings data from official reports.
+
+════════════════════════════════════════════════════════════════
+📊 EXTRACTION MISSION
+════════════════════════════════════════════════════════════════
 
 TARGET COMPANY: ${symbol} (${companyName})
 REPORT DATE: ${reportDate}
 QUARTER: Q${q} ${yr}
 
-${hasFinnhubData ? `
-KNOWN DATA (Already extracted - DO NOT EXTRACT AGAIN):
-- EPS: ${epsActual} vs estimate ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
-- Revenue: $${(revenueActual! / 1e9).toFixed(2)}B vs estimate $${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
-` : `
-⚠️ CRITICAL: EPS and Revenue NOT yet extracted - you MUST extract them!
-`}
+🎯 VERIFIED EARNINGS DOCUMENT: ${validatedPdfUrl}
 
-🎯 YOUR PRIMARY MISSION: Extract quarterly metrics from the official earnings PDF!
+🚨🚨🚨 ABSOLUTE CRITICAL RULE - READ FIRST 🚨🚨🚨
 
-CRITICAL INSTRUCTIONS:
+THIS EXTRACTION IS FOR **QUARTERLY DATA ONLY** - Q${q} ${yr}
 
-**STEP 1: Find the Investor Relations Website**
-1. Search: "${companyName} investor relations"
-2. Common URL patterns:
-   - investors.${companyName}.com
-   - investor.${companyName}.com
-    - investors.${symbol}.com
-   - investor.${symbol}.com
-   - ir.{company}.com
-   - {company}.com/investors
-3. 🎯 SAVE THIS URL as "irWebsiteUrl"
+❌ NEVER USE:
+- Annual data (Full Year, FY, Fiscal Year)
+- TTM (Trailing Twelve Months)
+- Year-to-Date (YTD)
+- Twelve months / Cumulative
+- Any period other than Q${q} ${yr}
 
-**STEP 2: Find the Q${q} ${yr} Earnings Materials**
-1. Look on the IR site for:
-   - "Q${q} ${yr} Earnings Presentation" (PDF slides)
-   - "Q${q} ${yr} Press Release" (PDF/HTML)
-   - "Quarter Ended [date] Results"
-2. 🎯 SAVE THE PDF/PRESS RELEASE URL as "pdfUrl"
+✅ ONLY USE:
+- Data explicitly labeled "Q${q} ${yr}" or "Fourth Quarter ${yr}"
+- Data from quarterly comparison tables showing Q${q} ${yr} vs Q${q} ${yr-1}
+- Data from section clearly titled "Three months ended [date]"
 
-🚨 MANDATORY: You MUST find and return BOTH URLs before extracting data!
-If you cannot find the PDF → return error with "pdfUrl": null
+If you cannot find QUARTERLY data → return null.
 
-**STEP 3: Extract Quarterly Metrics from PDF**
+════════════════════════════════════════════════════════════════
+🔴 FORBIDDEN KEYWORDS - AUTOMATIC DISQUALIFICATION
+════════════════════════════════════════════════════════════════
 
-🔴 CRITICAL RULE: Extract ONLY from the QUARTERLY comparison table!
-- Look for columns: "Q${q} ${yr}" and "Q${q} ${yr - 1}"
-- IGNORE: "Full Year ${yr}", "FY ${yr}", "TTM", "Year to Date"
-- If you see annual data → STOP and move to next section!
+If ANY of these appear near a number you're extracting → DISQUALIFY IT:
 
-You MUST extract ALL of these metrics:
+❌ FORBIDDEN PHRASES:
+- "full year", "fiscal year", "FY"
+- "trailing twelve months", "TTM"
+- "year-to-date", "YTD"
+- "twelve months", "cumulative", "annual"
+
+Example:
+Document: "Full year 2025 net interest income: $850M" → REJECT
+Document: "Fourth quarter net interest income: $206M" → ACCEPT
+
+════════════════════════════════════════════════════════════════
+🏢 STEP 1: IDENTIFY COMPANY TYPE
+════════════════════════════════════════════════════════════════
+
+Determine the company type to select the right metrics:
+
+🏦 **REITs (e.g., AGNC, NLY):**
+- Key Indicator: "Net spread", "Net interest income", "Book Value".
+- **CRITICAL:** For REITs, "Total Revenue" (GAAP) is often meaningless/negative. Use "Net Interest Income".
+
+🏦 **BANKS:**
+- Key Indicator: "Efficiency ratio", "Provision for credit losses".
+
+🏭 **REGULAR:**
+- Key Indicator: "Total Revenue", "Gross Margin".
+
+════════════════════════════════════════════════════════════════
+📋 STEP 2: EXTRACT QUARTERLY DATA
+════════════════════════════════════════════════════════════════
 
 ${!hasFinnhubData ? `
-1. **EPS** (from PDF only!):
-   - Actual: Q${q} ${yr} diluted EPS
-   - Estimate: Wall Street consensus (if not in PDF → search "${symbol} Q${q} ${yr} EPS estimate")
-   - Calculate beatPercent: ((actual - estimate) / |estimate|) * 100
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1️⃣ EPS (QUARTERLY Q${q} ${yr})
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A) ACTUAL:
+- **REITs:** Look for **"Net Spread and Dollar Roll Income per share"** OR **"Core Earnings per share"**. (Do NOT use GAAP EPS if it reflects unrealized losses).
+- **Others:** Look for "Diluted EPS".
+- Quote the exact source.
 
-2. **Revenue** (from PDF only!):
-   - Actual: Q${q} ${yr} total revenue (in dollars, NOT billions!)
-   - Estimate: Analyst consensus (if not in PDF → search "${symbol} Q${q} ${yr} revenue estimate")
-   - Calculate beatPercent: ((actual - estimate) / estimate) * 100
-` : ''}
+B) ESTIMATE:
+- Consensus estimate matching the metric above.
 
-3. **Revenue YoY Growth** (MANDATORY - QUARTERLY ONLY!):
-   - Find table showing Q${q} ${yr} vs Q${q} ${yr - 1}
-   - Calculate: ((current - prior) / prior) * 100
-   - Return as number (e.g., 7.0 for +7%)
-   
-   Example:
-   ✅ CORRECT: Q4 2025 Revenue $3.5B, Q4 2024 Revenue $3.3B → 6.1%
-   ❌ WRONG: Full Year 2025 $14B vs Full Year 2024 $13B → 7.7%
+C) BEAT PERCENT:
+- ((actual - estimate) / |estimate|) * 100
 
-4. **Net Margin Q${q}** (MANDATORY - CALCULATE IT):
-   - Net Income Q${q} ${yr} / Revenue Q${q} ${yr} * 100
-   - Return as number (e.g., 17.5 for 17.5%)
-   
-   Example:
-   ✅ CORRECT: Q4 Net Income $500M / Q4 Revenue $3.5B = 14.3%
-   ❌ WRONG: Annual Net Income $2B / Annual Revenue $14B = 14.3%
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2️⃣ REVENUE (QUARTERLY Q${q} ${yr})
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+A) ACTUAL:
+- **REITs:** Extract **"Net Interest Income"** ($ Value) OR **"Net Spread and Dollar Roll Income"** ($ Value).
+  * ⚠️ WARNING: If GAAP "Total Revenue" is negative due to mark-to-market, IGNORE IT. Find the positive operating figure.
+- **Banks:** "Net Interest Income".
+- **Regular:** "Total Revenue".
 
-5. **Operating Margin OR Efficiency Ratio** (MANDATORY):
-   
-   🏦 FOR BANKS ONLY: Extract "Efficiency Ratio"
-   - EXACT search: "Efficiency ratio" or "Adjusted efficiency ratio"
-   - WHERE: "Quarterly Financial Highlights" or "Key Metrics" section
-   - WHAT: A percentage like "62.3%"
-   - ✅ If found: Return {"type": "efficiency_ratio", "value": 62.3, "source": "Page X, Section Y", "verified": true}
-   - ❌ If NOT found: Return null (DO NOT estimate or calculate!)
-   
-   🏭 FOR NON-BANKS: Extract "Operating Margin"
-   - Calculate from quarterly data or find stated margin
-   - Return {"type": "operating_margin", "value": X, "source": "Page Y", "verified": true}
+⚠️ CONVERT TO DOLLARS (e.g., "206 million" → 206000000).
 
-6. **Cash from Operations Q${q}** (MANDATORY - QUARTERLY ONLY):
-   - Find "Cash Flow Statement" quarterly table
-   - Look for: "Operating Cash Flow" or "Cash from Operations"
-   - Q${q} ${yr} value (NOT annual, NOT TTM!)
-   - Return in MILLIONS (e.g., 1500 for $1.5B)
-   - 🛡️ VALIDATION: Quarterly FCF typically $100M-$3B (not $5B+!)
-   
-   ⚠️ DO NOT USE:
-   - Net Income (wrong metric!)
-   - Annual/TTM numbers
+B) ESTIMATE:
+- Consensus estimate matching the metric above.
+` : `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ EPS & REVENUE ALREADY PROVIDED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Known Data:
+- EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
+- Revenue: $${(revenueActual! / 1e9).toFixed(2)}B vs $${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
+`}
 
-**STEP 4: Extract Qualitative Data**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3️⃣ REVENUE YoY GROWTH (QUARTERLY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Compare Q${q} ${yr} vs Q${q} ${yr - 1}.
+- **REITs:** Compare "Net Interest Income" (or the metric used in section 2).
+- **Regular:** Compare "Total Revenue".
+- Calculate: ((Current - Prior) / Prior) * 100.
+- If explicit prior quarter data not found in text → return null.
 
-7. **Guidance**:
-   - Status: "raised" | "lowered" | "maintained" | "unavailable"
-   - Details: One sentence in HEBREW explaining what changed
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4️⃣ NET MARGIN (QUARTERLY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Calculate: (Net Income / Revenue) * 100.
+- **🔥 REIT EXCEPTION:** If the result is > 100% or < -100% (due to unrealized gains/losses), this is "Noise".
+  * **ACTION:** Look for **"Economic Return on Tangible Equity"** (often 2%-25%).
+  * If found, extract that value instead of the broken margin calculation.
 
-8. **Sentiment**:
-   - Overall: "positive" | "neutral" | "negative"
-   - Reasoning: One sentence in HEBREW explaining why
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5️⃣ OPERATING METRIC
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- **Banks:** "Efficiency Ratio".
+- **REITs:** "Net Interest Spread" (e.g. 2.15%).
+- **Regular:** (Operating Income / Revenue) * 100.
 
-9. **Highlights**: Exactly 2 bullet points (specific achievements)
+Return object: { "type": "...", "value": number, "source": "...", "verified": true }
 
-10. **Concerns**: Exactly 2 bullet points (specific risks/challenges)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6️⃣ CASH FROM OPERATIONS (QUARTERLY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- "Net cash provided by operating activities" (Cash Flow Statement).
+- **REITs:** If not available, look for "Distributable Earnings" or "FFO".
+- Return in MILLIONS.
 
-OUTPUT FORMAT - Return ONLY this JSON:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7️⃣ GUIDANCE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Status: "raised" | "lowered" | "maintained" | "unavailable"
+- Details: Hebrew sentence.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8️⃣ SENTIMENT & LOGIC (🔥 CRITICAL FIX)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+**Analyze Management Tone:**
+
+**🔥 THE "BOOK VALUE" RULE (FOR REITs like AGNC):**
+- Check **"Tangible Book Value per Share" (TBV)**.
+- **IF TBV INCREASED:** Sentiment is **POSITIVE**, even if EPS/Revenue missed.
+  * *Reasoning:* "למרות הפספוס ברווח, החברה הציגה עלייה בשווי הנכסי (Book Value), המעידה על יצירת ערך למשקיעים."
+- **IF TBV DECREASED:** Sentiment is **NEGATIVE**.
+
+**For Regular Companies:**
+- "Strong/Record/Growth" → Positive.
+- "Challenging/Headwinds" → Negative.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9️⃣ HIGHLIGHTS (2 items in HEBREW)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Specific achievements (e.g. "Dividends declared: $0.36").
+- **REITs:** Must mention Book Value change if found.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔟 CONCERNS (2 items in HEBREW)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Specific risks (e.g. "Interest rate volatility", "Spread widening").
+
+════════════════════════════════════════════════════════════════
+📤 OUTPUT FORMAT (STRICT JSON)
+════════════════════════════════════════════════════════════════
+
+Return ONLY this JSON structure:
+
 {
-  "irWebsiteUrl": "https://investors.{company}.com",
-  "pdfUrl": "https://investors.{company}.com/.../Q${q}-${yr}-earnings.pdf" | null,
+  "pdfUrl": "${validatedPdfUrl}",
+  "companyType": "REIT" | "Bank" | "Regular",
   ${!hasFinnhubData ? `
   "eps": {
-    "actual": <number>,
-    "estimate": <number>,
-    "beatPercent": <number>
+    "actual": <number> | null,
+    "estimate": <number> | null,
+    "beatPercent": <number> | null
   },
   "revenue": {
-    "actual": <number in dollars>,
-    "estimate": <number in dollars>,
-    "beatPercent": <number>
+    "actual": <number in dollars> | null,
+    "estimate": <number in dollars> | null,
+    "beatPercent": <number> | null,
+    "revenueType": "net_interest_income" | "total_revenue"
   },
   ` : ''}
   "guidance": {
@@ -1220,59 +4679,28 @@ OUTPUT FORMAT - Return ONLY this JSON:
   },
   "sentiment": {
     "overall": "positive" | "neutral" | "negative",
-    "reasoning": "משפט בעברית" | null
+    "reasoning": "משפט בעברית (חובה להתייחס ל-Book Value אם רלוונטי)"
   },
-  "highlights": ["Achievement 1", "Achievement 2"],
-  "concerns": ["Risk 1", "Risk 2"],
+  "highlights": [
+    "הישג 1",
+    "הישג 2"
+  ],
+  "concerns": [
+    "חשש 1",
+    "חשש 2"
+  ],
   "pdfMetrics": {
-    "revenueYoY": 7.0 | null,
-    "netMargin": 17.5 | null,
+    "revenueYoY": <number> | null,
+    "netMargin": <number> | null,
     "marginMetric": {
-      "type": "efficiency_ratio" | "operating_margin",
-      "value": 62.5,
-      "source": "Page 12, Quarterly Highlights",
+      "type": "efficiency_ratio" | "net_interest_spread" | "operating_margin",
+      "value": <number>,
+      "source": "string",
       "verified": true
     } | null,
-    "cashFromOperations": 1500 | null
-  },
-  "dataSources": {
-    "irWebsiteUrl": "https://...",
-    "pdfUrl": "https://..." | null,
-    "pageTitle": "Q${q} ${yr} Results",
-    "searchUsed": "Which search worked"
+    "cashFromOperations": <number in millions> | null
   }
 }
-
-⚠️ CRITICAL RULES:
-1. Always return irWebsiteUrl (even if PDF not found)
-2. Always return dataSources object
-3. Quarterly metrics ONLY (not TTM, not annual)
-4. Real URLs only (user will verify them!)
-5. If you cannot extract a metric → return null (don't estimate!)
-
-🚨 IF EXTRACTION FAILS:
-Return this error format (but still include URLs you found!):
-{
-  "error": "EXTRACTION_FAILED",
-  "reason": "Specific reason why",
-  "irWebsiteUrl": "https://..." (if found),
-  "pdfUrl": "https://..." | null,
-  "foundFields": ["list what you found"],
-  "missingFields": ["list what's missing"],
-  "searchesAttempted": ["searches you tried"],
-  "dataSources": {
-    "irWebsiteUrl": "https://...",
-    "pdfUrl": null,
-    "searchUsed": "..."
-  }
-}
-
-🎯 SELF-CHECK BEFORE RETURNING:
-- Did I find the PDF URL? (if no → set pdfUrl: null)
-- Did I extract from QUARTERLY table? (not annual!)
-- Are my numbers reasonable? (Revenue YoY <50%, FCF <$3B, etc.)
-
-Return ONLY valid JSON - NO markdown, NO explanations, NO extra text.
 `;
 
   const MAX_RETRIES = 3;
@@ -1287,15 +4715,15 @@ Return ONLY valid JSON - NO markdown, NO explanations, NO extra text.
         [
           {
             role: "system",
-            content: `You are a financial data extraction API. Always return irWebsiteUrl and dataSources, even if extraction fails. Return ONLY valid JSON with no markdown.`
+            content: `You are a financial data extraction API. The PDF URL has been verified to exist: ${validatedPdfUrl}. Extract data ONLY from this PDF. Return ONLY valid JSON with no markdown.`
           },
           {
             role: "user",
             content: supplementPrompt
           }
         ],
-        0.1,
-        2500,
+        0.05, // Very low temperature for factual extraction
+        3000,
         true
       );
 
@@ -1310,113 +4738,37 @@ Return ONLY valid JSON - NO markdown, NO explanations, NO extra text.
       cleanedRes = cleanedRes.trim();
 
       const tempAiData = JSON.parse(cleanedRes);
-
+      stockLog.extractionData(symbol, {
+        eps: tempAiData.eps || null,
+        revenue: tempAiData.revenue || null,
+        pdfMetrics: tempAiData.pdfMetrics || null
+      });
       // ============================================
       // DISPLAY EXTRACTION RESULTS
       // ============================================
       logger.info(`\n📎 ===== AI EXTRACTION RESULTS =====`);
+      logger.info(`   📄 Source PDF: ${validatedPdfUrl}`);
+      logger.info(`   ✅ Status: SUCCESS`);
       
-      // URLs
-      if (tempAiData.irWebsiteUrl || tempAiData.dataSources?.irWebsiteUrl) {
-        const irUrl = tempAiData.irWebsiteUrl || tempAiData.dataSources?.irWebsiteUrl;
-        logger.info(`   🏢 IR Website: ${irUrl}`);
-      } else {
-        logger.error(`   ❌ IR Website URL: NOT FOUND`);
-      }
-
-      if (tempAiData.pdfUrl || tempAiData.dataSources?.pdfUrl) {
-        const pdfUrl = tempAiData.pdfUrl || tempAiData.dataSources?.pdfUrl;
-        logger.info(`   📎 PDF Document: ${pdfUrl}`);
-      } else {
-        logger.warn(`   ⚠️ PDF URL: NOT FOUND`);
-      }
-
-      // Status
-      if (tempAiData.error === "EXTRACTION_FAILED") {
-        logger.error(`   ❌ Status: EXTRACTION FAILED`);
-        logger.error(`   📝 Reason: ${tempAiData.reason}`);
-        
-        if (tempAiData.foundFields && tempAiData.foundFields.length > 0) {
-          logger.info(`   ✅ Found: ${tempAiData.foundFields.join(', ')}`);
+      if (tempAiData.pdfMetrics) {
+        logger.info(`   📊 Extracted Metrics:`);
+        if (tempAiData.pdfMetrics.revenueYoY !== null) {
+          logger.info(`      - Revenue YoY: ${tempAiData.pdfMetrics.revenueYoY}%`);
         }
-        
-        if (tempAiData.missingFields && tempAiData.missingFields.length > 0) {
-          logger.warn(`   ❌ Missing: ${tempAiData.missingFields.join(', ')}`);
+        if (tempAiData.pdfMetrics.netMargin !== null) {
+          logger.info(`      - Net Margin: ${tempAiData.pdfMetrics.netMargin}%`);
         }
-      } else {
-        logger.info(`   ✅ Status: SUCCESS`);
+        if (tempAiData.pdfMetrics.marginMetric) {
+          logger.info(`      - ${tempAiData.pdfMetrics.marginMetric.type}: ${tempAiData.pdfMetrics.marginMetric.value}%`);
+        }
+        if (tempAiData.pdfMetrics.cashFromOperations !== null) {
+          logger.info(`      - Cash from Ops: $${tempAiData.pdfMetrics.cashFromOperations}M`);
+        }
       }
-
-      // Searches attempted
-      if (tempAiData.searchesAttempted && tempAiData.searchesAttempted.length > 0) {
-        logger.info(`   🔍 Searches: ${tempAiData.searchesAttempted.length} attempts`);
-      }
-
+      
       logger.info(`📎 ===== END EXTRACTION RESULTS =====\n`);
 
-      // ============================================
-      // 🔥 CRITICAL: VALIDATE PDF URL EXISTS!
-      // ============================================
-      const pdfUrl = tempAiData.pdfUrl || tempAiData.dataSources?.pdfUrl;
-      
-      if (!pdfUrl || pdfUrl === null || pdfUrl.toLowerCase().includes('not found')) {
-        logger.error(`❌ CRITICAL: No PDF URL returned by AI`);
-        logger.error(`   This means the earnings report is not published yet`);
-        logger.error(`   🚫 ABORTING EXTRACTION`);
-        
-        throw new Error(`Earnings report not published - PDF URL not found for ${symbol} Q${q} ${yr}`);
-      }
-
-      logger.info(`✅ PDF URL validated: ${pdfUrl}`);
-      logger.info(`   Proceeding with data extraction...\n`);
-
-      // ============================================
-      // VALIDATION & DECISION
-      // ============================================
-      
-      if (tempAiData.error === "EXTRACTION_FAILED") {
-        const foundCount = tempAiData.foundFields?.length || 0;
-        const missingCount = tempAiData.missingFields?.length || 0;
-        const hasUrls = !!(tempAiData.irWebsiteUrl || tempAiData.pdfUrl);
-
-        // Accept if we have URLs or some data
-        if (foundCount >= 2 || hasUrls) {
-          logger.warn(`   ⚠️ Partial extraction - accepting with ${foundCount} fields + URLs`);
-          
-          // Convert error response to normal response
-          delete tempAiData.error;
-          delete tempAiData.reason;
-          
-          // Ensure dataSources exists
-          if (!tempAiData.dataSources) {
-            tempAiData.dataSources = {};
-          }
-          
-          if (tempAiData.irWebsiteUrl) {
-            tempAiData.dataSources.irWebsiteUrl = tempAiData.irWebsiteUrl;
-          }
-          if (tempAiData.pdfUrl) {
-            tempAiData.dataSources.pdfUrl = tempAiData.pdfUrl;
-          }
-          
-          aiData = tempAiData;
-          logger.info(`   ✅ Continuing with partial data`);
-          break;
-        } else {
-          lastError = tempAiData.reason || "Unknown extraction error";
-          logger.warn(`   ⏳ Attempt ${attempt}/${MAX_RETRIES} failed - no usable data`);
-          
-          if (attempt < MAX_RETRIES) {
-            logger.info(`   🔄 Retrying in 5 seconds...`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            continue;
-          } else {
-            throw new Error(`Failed after ${MAX_RETRIES} attempts: ${lastError}`);
-          }
-        }
-      }
-
-      // Validate success response
+      // Validate response
       const hasGuidance = tempAiData.guidance?.status;
       const hasSentiment = tempAiData.sentiment?.overall;
       const hasHighlights = tempAiData.highlights?.length >= 2;
@@ -1437,6 +4789,7 @@ Return ONLY valid JSON - NO markdown, NO explanations, NO extra text.
 
       // Success!
       aiData = tempAiData;
+      aiData.pdfUrl = validatedPdfUrl; // Ensure we use the validated URL
       logger.info(`   ✅ Valid AI response received on attempt ${attempt}/${MAX_RETRIES}`);
       break;
 
@@ -1499,22 +4852,20 @@ Return ONLY valid JSON - NO markdown, NO explanations, NO extra text.
     ? aiData.pdfMetrics.cashFromOperations * 1e6
     : apiData.fcf;
 
-  const pdfUrl = aiData.pdfUrl || aiData.dataSources?.pdfUrl || "Unknown";
-
   const data: FullExtractionResponse = {
     symbol,
     companyName,
     reportDate,
     eps: {
       actual: epsActual,
-      estimate: epsEstimate,
+      estimate: epsEstimate || epsActual,
       beatPercent: epsBeatPercent,
       beat: null,
       source: hasFinnhubData ? "Finnhub" : "PDF"
     },
     revenue: {
       actual: revenueActual,
-      estimate: revenueEstimate,
+      estimate: revenueEstimate || revenueActual,
       beatPercent: revBeatPercent,
       beat: null,
       source: hasFinnhubData ? "Finnhub" : "PDF"
@@ -1556,11 +4907,11 @@ Return ONLY valid JSON - NO markdown, NO explanations, NO extra text.
   logger.info(`\n${"=".repeat(70)}`);
   logger.info(`✅ EXTRACTION COMPLETE: ${symbol}`);
   logger.info(`${"=".repeat(70)}`);
-  logger.info(`📄 PDF: ${pdfUrl}`);
+  logger.info(`📄 PDF: ${validatedPdfUrl}`);
   logger.info(`📊 Quarter: Q${q} ${yr}`);
   logger.info(`─`.repeat(70));
-  logger.info(`💰 EPS: ${data.eps.actual} vs ${data.eps.estimate} (${data.eps.beatPercent >= 0 ? '+' : ''}${data.eps.beatPercent.toFixed(2)}%) [${data.eps.source}]`);
-  logger.info(`💵 Revenue: $${(data.revenue.actual / 1e9).toFixed(2)}B vs $${(data.revenue.estimate / 1e9).toFixed(2)}B (${data.revenue.beatPercent >= 0 ? '+' : ''}${data.revenue.beatPercent.toFixed(2)}%) [${data.revenue.source}]`);
+  logger.info(`💰 EPS: ${data.eps.actual} vs ${data.eps.estimate} (${data.eps.beatPercent !== null ? (data.eps.beatPercent >= 0 ? '+' : '') + data.eps.beatPercent.toFixed(2) : 'N/A'}%) [${data.eps.source}]`);
+  logger.info(`💵 Revenue: $${(data.revenue.actual / 1e9).toFixed(2)}B vs $${(data.revenue.estimate / 1e9).toFixed(2)}B (${data.revenue.beatPercent !== null ? (data.revenue.beatPercent >= 0 ? '+' : '') + data.revenue.beatPercent.toFixed(2) : 'N/A'}%) [${data.revenue.source}]`);
   logger.info(`─`.repeat(70));
   logger.info(`📈 YoY Revenue: ${data.yoyGrowth.revenueChange !== null ? (data.yoyGrowth.revenueChange >= 0 ? '+' : '') + data.yoyGrowth.revenueChange.toFixed(2) + '%' : 'N/A'} (${data.yoyGrowth.revenueChangeType || 'N/A'})`);
   logger.info(`📊 Net Margin: ${data.margins.netMargin !== null ? data.margins.netMargin.toFixed(2) + '%' : 'N/A'}`);
@@ -1791,7 +5142,7 @@ interface TimeContext {
 
 function getTimeContext(): TimeContext {
   const now = new Date();
-  
+  now.setDate(now.getDate()); // Ensure current date
   const etTimeStr = now.toLocaleString('en-US', { 
     timeZone: 'America/New_York',
     year: 'numeric',
@@ -1817,7 +5168,7 @@ function getTimeContext(): TimeContext {
   };
 }
 export class StockProcessor {
-  private stocks: (StockProcessingState & { quarter?: number, fiscalYear?: number })[] = [];
+  private stocks: (StockProcessingStateExtended)[] = [];
   private isRunning: boolean = false;
   private checkInterval: NodeJS.Timeout | null = null;
 
@@ -1832,6 +5183,7 @@ export class StockProcessor {
   private isWithinReasonableCheckWindow(windowStart: string, reportType: "BMO" | "AMC"): boolean {
     try {
       const now = new Date();
+      now.setDate(now.getDate()); // הורדת יומיים
       const nyTime = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
       const currentHour = nyTime.getHours();
       const currentMinute = nyTime.getMinutes();
@@ -1842,7 +5194,6 @@ export class StockProcessor {
       const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
       const windowMinutesFromMidnight = windowHour * 60 + windowMinute;
       
-      // BMO: בדוק בין 05:00-12:00 (2 שעות לפני עד 2.5 אחרי)
       if (reportType === "BMO") {
         const checkStart = Math.max(5 * 60, windowMinutesFromMidnight - (WINDOW_BUFFER_HOURS * 60));
         const checkEnd = windowMinutesFromMidnight + (150); // 2.5 hours after
@@ -1866,246 +5217,200 @@ export class StockProcessor {
   /**
    * פונקציה מעודכנת: מעבד את כל המניות בכל iteration
    */
-  private async processAllStocks(): Promise<void> {
-    if (!this.isRunning) return;
-    const timeContext = getTimeContext();
+private async processAllStocks(): Promise<void> {
+  if (!this.isRunning) return;
+  const timeContext = getTimeContext();
 
-    logger.info(`\n${"=".repeat(60)}`);
-  logger.info(`🔄 Starting new iteration - checking all stocks`);
-  logger.info(`📅 Local Time (IL): ${new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })}`);
-  logger.info(`📅 US Time (ET): ${timeContext.currentETTimeStr}`);
-  logger.info(`📅 Reporting Date (US): ${timeContext.reportingDateET}`);
+  logger.info(`\n${"=".repeat(60)}`);
+  logger.info(`🔄 Starting new iteration`);
   logger.info(`${"=".repeat(60)}\n`);
 
-    // סינון מניות שצריך לבדוק
- const stocksToCheck = this.stocks.filter((s) => {
-  // דלג על מניות שכבר נשלחו
-  if (s.sentToTelegram) return false;
-  
-  // דלג על מניות שכבר היו יותר מדי ניסיונות
-  if (s.checkCount >= MAX_CHECK_ATTEMPTS) {
-    if (s.checkCount === MAX_CHECK_ATTEMPTS) {
-      logger.warn(`⚠️ ${s.symbol} - Reached max check attempts (${MAX_CHECK_ATTEMPTS}). Stopping checks.`);
-    }
-    return false;
-  }
-
-  // ✅ חדש: בדוק אם צריך לחכות לפני retry של extraction
-  if (s.nextRetryTime) {
-    const now = Date.now();
-    const retryTime = new Date(s.nextRetryTime).getTime();
+  const stocksToCheck = this.stocks.filter((s) => {
+    if (s.sentToTelegram || s.status === 'completed') return false;
+    if (s.isProcessing) return false;
+    if (s.checkCount >= MAX_CHECK_ATTEMPTS) return false;
     
-    if (now < retryTime) {
-      const minutesLeft = Math.ceil((retryTime - now) / (60 * 1000));
-      // Don't log every iteration - only occasionally
-      if (minutesLeft % 5 === 0) {
-        logger.debug(`⏰ ${s.symbol} - Waiting ${minutesLeft}m before extraction retry`);
-      }
-      return false; // לא בודקים עדיין
-    } else {
-      logger.info(`🔄 ${s.symbol} - Retry time reached, attempting extraction again (attempt ${(s.extractionAttempts || 0) + 1}/3)`);
-      s.nextRetryTime = null; // נסה שוב עכשיו
+    if (s.nextRetryTime) {
+      const now = Date.now();
+      const retryTime = new Date(s.nextRetryTime).getTime();
+      if (now < retryTime) return false;
+      s.nextRetryTime = null;
     }
-  }
-  
-  // בדוק רק מניות בטווח זמן סביר
-  if (!this.isWithinReasonableCheckWindow(s.windowStart, s.reportType)) {
-    return false;
-  }
-  
-  return true;
-});
+    
+    if (!this.isWithinReasonableCheckWindow(s.windowStart, s.reportType)) {
+      return false;
+    }
+    
+    return true;
+  });
 
-    if (stocksToCheck.length === 0) {
-      const totalSent = this.stocks.filter(s => s.sentToTelegram).length;
-      const maxedOut = this.stocks.filter(s => s.checkCount >= MAX_CHECK_ATTEMPTS).length;
-      const outOfWindow = this.stocks.length - totalSent - maxedOut - stocksToCheck.length;
-      
-      logger.info(`\n📊 No stocks to check in current iteration:`);
-      logger.info(`   ✅ Already sent: ${totalSent}`);
-      logger.info(`   🔒 Max attempts reached: ${maxedOut}`);
-      logger.info(`   ⏰ Outside time window: ${outOfWindow}`);
-      logger.info(`   📦 Total stocks: ${this.stocks.length}\n`);
-      
-      // אם כולם נשלחו - עצור
-      if (totalSent === this.stocks.length) {
-        logger.info("✅ All stocks processed! Stopping processor.");
-        this.stop();
-      }
-      
-      return;
+  if (stocksToCheck.length === 0) {
+    const totalSent = this.stocks.filter(s => s.sentToTelegram).length;
+    logger.info(`\n📊 No stocks to check - ${totalSent}/${this.stocks.length} sent\n`);
+    
+    if (totalSent === this.stocks.length) {
+      logger.info("✅ All stocks processed! Stopping processor.");
+      this.stop();
+    }
+    return;
+  }
+
+  logger.info(`🎯 Checking ${stocksToCheck.length} stocks\n`);
+
+  for (const stock of stocksToCheck) {
+    if (!this.isRunning) break;
+
+    // ✅ FIX #1: בדיקה כפולה + סימון - לפני הכל!
+    if (stock.sentToTelegram || stock.isProcessing) {
+      logger.info(`⏭️ Skipping ${stock.symbol} - already sent/processing`);
+      continue;
     }
 
-    logger.info(`🎯 Checking ${stocksToCheck.length} stocks in this iteration:\n`);
-    stocksToCheck.forEach(s => {
-      logger.info(`   • ${s.symbol} (${s.reportType} ${s.windowStart}) - Attempt ${s.checkCount + 1}/${MAX_CHECK_ATTEMPTS}`);
-    });
-    logger.info('');
+    stock.isProcessing = true;  // ✅ נעילה
 
-    // לולאה על כל המניות
-    for (const stock of stocksToCheck) {
-      if (!this.isRunning) break;
+    try {
+      logger.info(`\n${"─".repeat(50)}`);
+      logger.info(`📦 Processing ${stock.symbol}`);
+      logger.info(`${"─".repeat(50)}`);
 
-      try {
-        // דלוג אם כבר נשלח (בדיקה כפולה)
-        if (stock.sentToTelegram) {
-          logger.info(`⏭️ Skipping ${stock.symbol} - already sent to Telegram`);
-          continue;
-        }
+      stock.status = "checking";
+      stock.checkCount++;
+      stock.lastCheck = new Date().toISOString();
+      
+      // בדיקת Finnhub
+      const finnhubHasData = await checkFinnhubUpdates(
+        stock.symbol, 
+        timeContext.reportingDateET
+      );
+      
+      let reportConfirmed = false;
 
-        logger.info(`\n${"─".repeat(50)}`);
-        logger.info(`📦 Processing ${stock.symbol} (${stock.reportType} ${stock.windowStart})`);
-        logger.info(`   Attempt: ${stock.checkCount + 1}/${MAX_CHECK_ATTEMPTS}`);
-        logger.info(`${"─".repeat(50)}`);
-
-        stock.status = "checking";
-        stock.checkCount++;
-        stock.lastCheck = new Date().toISOString();
-        
-        // שלב 1: בדיקת Finnhub
-        const finnhubHasData = await checkFinnhubUpdates(
+      if (finnhubHasData) {
+        logger.info(`🚀 FINNHUB CONFIRMED: ${stock.symbol}`);
+        reportConfirmed = true;
+      } else {
+        logger.info(`🔍 Running AI mini-check...`);
+        const miniCheckResult = await miniCheck(
           stock.symbol, 
-          timeContext.reportingDateET
+          stock.companyName, 
+          stock.quarter, 
+          stock.fiscalYear
         );
         
-        let reportConfirmed = false;
-
-        if (finnhubHasData) {
-          logger.info(`🚀 FINNHUB CONFIRMED: ${stock.symbol} has reported!`);
+        if (miniCheckResult.result === "YES") {
+          logger.info(`🤖 AI CONFIRMED: ${stock.symbol}`);
           reportConfirmed = true;
-        } else {
-          // שלב 2: Mini-check עם AI
-          logger.info(`🔍 Running AI mini-check for ${stock.symbol}...`);
-          const miniCheckResult = await miniCheck(
-            stock.symbol, 
-            stock.companyName, 
-            stock.quarter, 
-            stock.fiscalYear
-          );
+        }
+      }
+
+      if (reportConfirmed) {
+        logger.info(`✅ Report confirmed! Starting extraction...`);
+        stock.status = "extracting";
+        
+        try {
+          const quote = await getQuote(stock.symbol);
+          const currentPrice = quote?.price || 0;
           
-          if (miniCheckResult.result === "YES") {
-            logger.info(`🤖 AI CONFIRMED: ${stock.symbol} has reported!`);
-            reportConfirmed = true;
+          const fullData = await fullExtraction(
+            stock.symbol,
+            stock.companyName,
+            timeContext.reportingDateET,
+            currentPrice,
+            stock.finnhubData,
+            stock.quarter,
+            stock.fiscalYear,
+            stock.cachedIRPortal,
+           (irPortal) => {
+    stock.cachedIRPortal = irPortal;
+    
+    // ✅ עדכן את קובץ ה-JSON
+    const filePath = path.join(__dirname, "../data/stocksReportingToday.json");
+    
+    try {
+      const currentState = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      const stockIndex = currentState.stocks.findIndex((s: any) => s.symbol === stock.symbol);
+      
+      if (stockIndex !== -1) {
+        currentState.stocks[stockIndex].cachedIRPortal = irPortal;
+        fs.writeFileSync(filePath, JSON.stringify(currentState, null, 2));
+        logger.info(`💾 [${stock.symbol}] Cached IR portal: ${irPortal.url}`);
+      }
+    } catch (e: any) {
+      logger.error(`❌ [${stock.symbol}] Failed to save IR cache: ${e.message}`);
+    }
+  }
+);
+  
+          stock.fullData = fullData;
+          const miraScore = calculateDetailedScore(fullData);
+          const analysis = await finalAnalysis(fullData, miraScore);
+
+          if (analysis) {
+            stock.analysis = analysis;
+            stock.status = "completed";
+            
+          
+            stock.isProcessing = false;
+            
+            logger.info(`✅ ${stock.symbol} - Marked as sent!`);
+
+            if (this.onComplete) {
+              await this.onComplete(stock);
+            }
           } else {
-            logger.info(`⏳ ${stock.symbol} - Not published yet (${miniCheckResult.result})`);
+            stock.status = "error";
+            stock.error = "Analysis generation failed";
+            stock.isProcessing = false;  // ✅
+          }
+          
+        } catch (extractionError: any) {
+          logger.error(`❌ Extraction error: ${extractionError.message}`);
+          
+          stock.extractionAttempts = (stock.extractionAttempts || 0) + 1;
+          
+          if (stock.extractionAttempts >= 3) {
+            stock.status = "error";
+            stock.error = `Failed ${stock.extractionAttempts} times`;
+            stock.isProcessing = false;  // ✅
+          } else {
+            stock.nextRetryTime = new Date(Date.now() + 20 * 60 * 1000).toISOString();
+            stock.status = "pending";
+            stock.isProcessing = false;  // ✅
           }
         }
-          let currentPrice = 0;
-
-        // שלב 3: אם דוח אושר - עיבוד מלא
-        if (reportConfirmed) {
-          logger.info(`✅ Report confirmed for ${stock.symbol}! Starting full extraction...`);
-          stock.status = "extracting";
-          try {
-              const quote = await getQuote(stock.symbol);
-              currentPrice = quote?.price || 0;
-              logger.info(`💰 Retrieved price for ${stock.symbol}: $${currentPrice}`);
-            } catch (err: any) {
-              logger.error(`❌ Failed to get price: ${err.message}`);
-            }
-
-           try {
-    const fullData = await fullExtraction(
-      stock.symbol,
-      stock.companyName,
-      timeContext.reportingDateET,
-      currentPrice,
-      stock.finnhubData,
-      stock.quarter,
-      stock.fiscalYear
-    );
-
-    // ✅ אם הגענו לכאן - extraction הצליח!
-    stock.fullData = fullData;
-    logger.info(`📊 Full extraction complete for ${stock.symbol}`);
-
-    // ✅ חישוב Mira Score
-    const miraScore = calculateDetailedScore(fullData);
-    logger.info(`🎯 Mira Score for ${stock.symbol}: ${miraScore.totalScore} (${miraScore.classification})`);
-
-    // ✅ ניתוח סופי
-    const analysis = await finalAnalysis(fullData, miraScore);
-
-    if (analysis) {
-      stock.analysis = analysis;
-      stock.status = "completed";
-      logger.info(`✅ Analysis complete for ${stock.symbol}!`);
-
-      // קריאה ל-callback
-      if (this.onComplete) {
-        await this.onComplete(stock);
-      }
-    } else {
-      logger.error(`❌ Analysis failed for ${stock.symbol}`);
-      stock.status = "error";
-      stock.error = "Analysis generation failed";
-    }
-    
-  } catch (extractionError: any) {
-    // ✅ תפוס שגיאות extraction
-    logger.error(`❌ Extraction error for ${stock.symbol}: ${extractionError.message}`);
-    
-    // ✅ בדוק אם זו שגיאת "data not ready"
-    if (extractionError.message.includes('Incomplete extraction') || 
-        extractionError.message.includes('AI extraction failed') ||
-        extractionError.message.includes('Report may not be ready')) {
-      
-      stock.extractionAttempts = (stock.extractionAttempts || 0) + 1;
-      stock.lastExtractionFailure = new Date().toISOString();
-      
-      if (stock.extractionAttempts >= 3) {
-        // Give up after 3 attempts
-        stock.status = "error";
-        stock.error = `Failed ${stock.extractionAttempts} times: ${extractionError.message}`;
-        logger.error(`🚫 ${stock.symbol}: Giving up after ${stock.extractionAttempts} extraction attempts`);
-        logger.error(`   Final error: ${extractionError.message}`);
       } else {
-        // Schedule retry in 20 minutes
-        const retryDelay = 20 * 60 * 1000; // 20 minutes
-        stock.nextRetryTime = new Date(Date.now() + retryDelay).toISOString();
+        // ✅ FIX #3: לא נמצא דוח - אפס isProcessing!
         stock.status = "pending";
-        
-        logger.warn(`⏰ ${stock.symbol}: Data incomplete - will retry extraction`);
-        logger.warn(`   Retry scheduled for: ${stock.nextRetryTime}`);
-        logger.warn(`   Attempt ${stock.extractionAttempts}/3`);
-        logger.warn(`   Reason: ${extractionError.message}`);
+        stock.isProcessing = false;
+        logger.info(`⏳ ${stock.symbol} - Not published yet`);
       }
-    } else {
-      // שגיאה אחרת (network, API, etc) - permanent
+
+    } catch (error: any) {
+      logger.error(`❌ Error processing ${stock.symbol}: ${error.message}`);
       stock.status = "error";
-      stock.error = `Extraction error: ${extractionError.message}`;
-      logger.error(`🚫 ${stock.symbol}: Permanent extraction error - will not retry`);
+      stock.error = error.message;
+      stock.isProcessing = false;  // ✅
+    } finally {
+      // ✅ FIX #4: finally block - ביטוח אחרון!
+      if (stock.isProcessing) {
+        logger.warn(`⚠️ ${stock.symbol} - isProcessing still true in finally, forcing false`);
+        stock.isProcessing = false;
+      }
+    }
+
+    if (this.isRunning) {
+      await delay(DELAY_BETWEEN_STOCKS_MS);
     }
   }
-} else {
-  // לא נמצא דוח - חזור ל-pending לניסיון הבא
-  stock.status = "pending";
+
+  const summary = this.getSummary();
+  logger.info(`\n${"=".repeat(60)}`);
+  logger.info(`📊 Iteration Summary:`);
+  logger.info(`   ✅ Completed: ${summary.completed}`);
+  logger.info(`   📤 Sent: ${summary.sent}`);
+  logger.info(`   ⏳ Pending: ${summary.pending}`);
+  logger.info(`${"=".repeat(60)}\n`);
 }
-
-      } catch (error: any) {
-        logger.error(`❌ Error processing ${stock.symbol}: ${error.message}`);
-        stock.status = "error";
-        stock.error = error.message;
-      }
-
-      // המתנה קצרה בין מניות (למנוע rate limits)
-      if (this.isRunning) {
-        await delay(DELAY_BETWEEN_STOCKS_MS);
-      }
-    }
-
-    // סיכום iteration
-    const summary = this.getSummary();
-    logger.info(`\n${"=".repeat(60)}`);
-    logger.info(`📊 Iteration Summary:`);
-    logger.info(`   ✅ Completed: ${summary.completed}`);
-    logger.info(`   📤 Sent to Telegram: ${summary.sent}`);
-    logger.info(`   ⏳ Still pending: ${summary.pending}`);
-    logger.info(`   🔄 Currently checking: ${summary.checking}`);
-    logger.info(`   ❌ Errors: ${summary.errors}`);
-    logger.info(`   📦 Total: ${summary.total}`);
-    logger.info(`${"=".repeat(60)}\n`);
-  }
 
   /**
    * פונקציה חדשה: מחזירה סיכום מצב
