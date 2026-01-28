@@ -30,7 +30,7 @@ dotenv.config({ quiet: true });
 
 const GROK_API_KEY = process.env.GROK_API_KEY;
 const GROK_MODEL = "grok-3"; 
-const MAX_API_RETRIES = 3;
+const MAX_API_RETRIES = 2;
 const CHECK_INTERVAL_MS = 30 * 60 * 1000; // 10 minutes between iterations
 const DELAY_BETWEEN_STOCKS_MS = 5000; // 5 seconds between individual stock checks
 const MAX_CHECK_ATTEMPTS = 10; // Stop checking after 10 failed attempts
@@ -143,9 +143,9 @@ async function callGrokAPI(
     logger.info(`   First message preview: ${messages[0].content.substring(0, 150)}...`);
   }
 
-  for (let attempt = 0; attempt <= MAX_API_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < MAX_API_RETRIES; attempt++) {
     try {
-      logger.info(`\n🔄 API Call Attempt ${attempt + 1}/${MAX_API_RETRIES + 1}...`);
+      logger.info(`\n🔄 API Call Attempt ${attempt + 1}/${MAX_API_RETRIES }...`);
       
       const response = await axios.post(
         GROK_API_URL,
