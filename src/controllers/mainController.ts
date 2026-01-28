@@ -201,15 +201,18 @@ import {  sendTelegramMessage } from "../services/telegramService";
 import logger from "../utils/logger";
 import fs from "fs";
 import path from "path";
+import { stockLog } from "../utils/structureLogger";
 
 // משתנה גלובלי למעבד - כדי שלא יעלם בסיום הבקשה
-let activeProcessor: StockProcessor | null = null;
+export let activeProcessor: StockProcessor | null = null;
 
 export const runDailyCheck = async (req?: Request, res?: Response) => {
   try {
 
 
-    const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+    const d = new Date();
+    d.setDate(d.getDate());
+    const today = d.toISOString().split("T")[0];
     const filePath = path.join(__dirname, "../data/stocksReportingToday.json");
 
     logger.info(`🚀 Starting Daily Check Process for ${today}`);
@@ -284,6 +287,7 @@ export const runDailyCheck = async (req?: Request, res?: Response) => {
                 await sendTelegramMessage(completedStock.analysis);
                 // ✅ Mark as sent after successful delivery
                 completedStock.sentToTelegram = true;
+                stockLog.sent(completedStock.symbol);
                 logger.info(`✅ ${completedStock.symbol} marked as sent to Telegram`);
 
                 // ✅ SAVE STATE: Update JSON file with new sentToTelegram status
