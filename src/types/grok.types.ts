@@ -75,8 +75,15 @@ export interface Stock {
     revenueActual: number | null;
     revenueEstimate: number | null;
   };
+  cachedIRPortal?: IRPortal | null;
 }
-
+interface IRPortal {
+  url: string;
+  domain: string;
+  confidence: number;
+  reason: string;
+  verifiedAt?: string;  // ✅ Add optional timestamp for cache
+}
 export interface MorningIntelligenceResponse {
   date: string;
   stocks: Stock[];
