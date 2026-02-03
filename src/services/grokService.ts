@@ -743,88 +743,226 @@ async function verifyEarningsDate(symbol: string, expectedDate: string): Promise
 // }
 
 
+// export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {
+//   const dateObj = new Date();
+//   const now = dateObj.toISOString();
+//   const today = now.split("T")[0];
+//   const specificTerm = (quarter && fiscalYear) ? `Q${quarter} ${fiscalYear}` : "Quarterly";
+  
+//   // ==============================================================================
+//   // 📉 STEP 1: CHEAP SEARCH (Serper API)
+//   // Cost: ~$0.001 per check
+//   // ==============================================================================
+//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
+//   if (!SERPER_API_KEY) throw new Error("SERPER_API_KEY is missing");
+
+//   // We add "today" to the query to bias results, and use 'qdr:d' filter
+//   const query = `${symbol} ${companyName} ${specificTerm} earnings release`;
+//   let searchResults: any[] = [];
+
+//   try {
+//     const response = await axios.post(
+//       'https://google.serper.dev/search',
+//       {
+//         q: query,
+//         num: 8,
+//         tbs: "qdr:d",      // 🔥 Last 24 hours ONLY
+//         gl: "us",
+//         hl: "en"
+//       },
+//       { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' } }
+//     );
+    
+//     // Combine News + Organic results
+//     searchResults = [...(response.data.news || []), ...(response.data.organic || [])];
+
+//   } catch (err: any) {
+//     logger.warn(`⚠️ [MiniCheck] Serper failed for ${symbol}: ${err.message}`);
+//     return { symbol, checkTime: now, result: "UNSURE" };
+//   }
+
+//   // ==============================================================================
+//   // 🛑 STEP 2: HEURISTIC GATEKEEPER (Zero Cost)
+//   // If no results from last 24h, return NO immediately.
+//   // ==============================================================================
+//   if (searchResults.length === 0) {
+//     stockLog.miniCheck(symbol, "NO");
+//     return { symbol, checkTime: now, result: "NO" };
+//   }
+
+//   // ==============================================================================
+//   // 🧠 STEP 3: AI VALIDATION (OpenRouter - Cheap Model)
+//   // Model: google/gemini-2.0-flash-001 (Often Free / Extremely Cheap)
+//   // ==============================================================================
+  
+//   const snippetsText = searchResults.map((r, i) => 
+//     `[${i+1}] Title: ${r.title}\nSnippet: ${r.snippet}\nDate: ${r.date || 'N/A'}`
+//   ).join('\n---\n');
+
+//   const prompt = `
+//   Analyze these search results for ${symbol} (${companyName}).
+//   Target: ${specificTerm} Earnings Release.
+//   Current Date: ${today}
+
+//   SEARCH RESULTS:
+//   ${snippetsText}
+
+//   TASK:
+//   Has the OFFICIAL earnings report been released TODAY?
+  
+//   RULES:
+//   1. IGNORE previews, estimates, "scheduled for", or "conference call alert".
+//   2. LOOK FOR "Reports", "Announces", "Results are out", "Released".
+//   3. LOOK FOR specific numbers (EPS, Revenue) in the snippets.
+  
+//   OUTPUT ONE WORD ONLY: YES or NO.
+//   `;
+
+//   try {
+//     // 🔥 Using Gemini 2.0 Flash via OpenRouter
+//     const res = await callOpenRouterAPI(
+//       [{ role: "user", content: prompt }],
+//       "google/gemini-2.0-flash-001", // <--- THE CHEAP/FAST MODEL
+//       0.1,
+//       10
+//     );
+
+//     const cleanRes = res.trim().toUpperCase().replace(/[^A-Z]/g, '');
+//     let finalResult: MiniCheckResult = "UNSURE";
+
+//     if (cleanRes.includes("YES")) finalResult = "YES";
+//     else if (cleanRes.includes("NO")) finalResult = "NO";
+
+//     if (finalResult === "YES") {
+//        logger.info(`🔍 [MiniCheck] AI confirmed YES for ${symbol}`);
+//     }
+
+//     stockLog.miniCheck(symbol, finalResult);
+//     return { symbol, checkTime: now, result: finalResult };
+
+//   } catch (e: any) { 
+//     logger.error(`❌ [MiniCheck] OpenRouter failed: ${e.message}`);
+//     // Fallback: If AI fails but we had search results, return UNSURE to be safe
+//     return { symbol, checkTime: now, result: "UNSURE" }; 
+//   }
+// }
+
 export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {
   const dateObj = new Date();
   const now = dateObj.toISOString();
   const today = now.split("T")[0];
-  const specificTerm = (quarter && fiscalYear) ? `Q${quarter} ${fiscalYear}` : "Quarterly";
   
-  // ==============================================================================
-  // 📉 STEP 1: CHEAP SEARCH (Serper API)
-  // Cost: ~$0.001 per check
-  // ==============================================================================
   const SERPER_API_KEY = process.env.SERPER_API_KEY;
   if (!SERPER_API_KEY) throw new Error("SERPER_API_KEY is missing");
+  const specificTerm = (quarter && fiscalYear) ? `Q${quarter} ${fiscalYear}` : "Quarterly";
 
-  // We add "today" to the query to bias results, and use 'qdr:d' filter
   const query = `${symbol} ${companyName} ${specificTerm} earnings release`;
   let searchResults: any[] = [];
-
+// ✅ ערכי default חכמים
+  const currentYear = new Date().getFullYear();
+  const currentQuarter = Math.ceil((new Date().getMonth() + 1) / 3);
+  const targetQuarter = quarter ?? currentQuarter;
+  const targetYear = fiscalYear ?? currentYear;
+  const previousQuarter = targetQuarter === 1 ? 4 : targetQuarter - 1;
+  const previousYear = targetQuarter === 1 ? targetYear - 1 : targetYear;
+  
   try {
     const response = await axios.post(
       'https://google.serper.dev/search',
       {
         q: query,
-        num: 8,
-        tbs: "qdr:d",      // 🔥 Last 24 hours ONLY
+        num: 10,
+        tbs: "qdr:w",
         gl: "us",
         hl: "en"
       },
-      { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' } }
+      { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' }, timeout: 10000 }
     );
     
-    // Combine News + Organic results
     searchResults = [...(response.data.news || []), ...(response.data.organic || [])];
+    logger.info(`🔍 [MiniCheck] Serper returned ${searchResults.length} results for ${symbol}`);
 
   } catch (err: any) {
-    logger.warn(`⚠️ [MiniCheck] Serper failed for ${symbol}: ${err.message}`);
+    logger.warn(`⚠️ [MiniCheck] Serper failed: ${err.message}`);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // FALLBACK: קווירי פשוט אם לא מצאנו כלום
+  // ═══════════════════════════════════════════════════════════
+  if (searchResults.length === 0) {
+    logger.info(`🔄 [MiniCheck] Retrying with simpler query for ${symbol}`);
+    try {
+      const simpleQuery = `${symbol} earnings`;
+      const retryResponse = await axios.post(
+        'https://google.serper.dev/search',
+        { q: simpleQuery, num: 8, gl: "us" },
+        { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' } }
+      );
+      
+      searchResults = [...(retryResponse.data.news || []), ...(retryResponse.data.organic || [])];
+      logger.info(`🔄 [MiniCheck] Retry found ${searchResults.length} results`);
+    } catch (retryErr: any) {
+      logger.error(`❌ [MiniCheck] Retry failed: ${retryErr.message}`);
+      return { symbol, checkTime: now, result: "UNSURE" };
+    }
+  }
+
+  if (searchResults.length === 0) {
+    logger.warn(`⚠️ [MiniCheck] No results found for ${symbol}`);
     return { symbol, checkTime: now, result: "UNSURE" };
   }
 
-  // ==============================================================================
-  // 🛑 STEP 2: HEURISTIC GATEKEEPER (Zero Cost)
-  // If no results from last 24h, return NO immediately.
-  // ==============================================================================
-  if (searchResults.length === 0) {
-    stockLog.miniCheck(symbol, "NO");
-    return { symbol, checkTime: now, result: "NO" };
-  }
-
-  // ==============================================================================
-  // 🧠 STEP 3: AI VALIDATION (OpenRouter - Cheap Model)
-  // Model: google/gemini-2.0-flash-001 (Often Free / Extremely Cheap)
-  // ==============================================================================
+  // ═══════════════════════════════════════════════════════════
+  // 🔥 CRITICAL: פרומפט מחוזק שבודק תאריך ורבעון!
+  // ═══════════════════════════════════════════════════════════
   
   const snippetsText = searchResults.map((r, i) => 
-    `[${i+1}] Title: ${r.title}\nSnippet: ${r.snippet}\nDate: ${r.date || 'N/A'}`
+    `[${i+1}] Title: ${r.title}
+Snippet: ${r.snippet}
+Date: ${r.date || 'N/A'}
+Link: ${r.link}`
   ).join('\n---\n');
 
-  const prompt = `
-  Analyze these search results for ${symbol} (${companyName}).
-  Target: ${specificTerm} Earnings Release.
-  Current Date: ${today}
+const prompt = `
+You are validating if a SPECIFIC earnings report has been published.
 
-  SEARCH RESULTS:
-  ${snippetsText}
+TARGET REPORT:
+- Company: ${symbol} (${companyName})
+- Quarter: ${specificTerm}
+- Today's Date: ${today}
 
-  TASK:
-  Has the OFFICIAL earnings report been released TODAY?
-  
-  RULES:
-  1. IGNORE previews, estimates, "scheduled for", or "conference call alert".
-  2. LOOK FOR "Reports", "Announces", "Results are out", "Released".
-  3. LOOK FOR specific numbers (EPS, Revenue) in the snippets.
-  
-  OUTPUT ONE WORD ONLY: YES or NO.
-  `;
+SEARCH RESULTS:
+${snippetsText}
+
+CRITICAL VALIDATION RULES:
+1. Must mention "${specificTerm}" or "Q${targetQuarter} ${targetYear}" or "fourth quarter ${targetYear}"
+2. Must have actual earnings numbers (EPS, Revenue)
+3. Must be published recently (within last 7 days)
+4. IGNORE old quarters (Q${previousQuarter} ${previousYear}, Q${targetQuarter} ${targetYear - 1}, etc.)
+5. IGNORE previews, estimates, or "scheduled for" announcements
+
+EXAMPLES OF WHAT TO ACCEPT:
+✅ "${symbol} Reports Q${targetQuarter} ${targetYear} Earnings"
+✅ "Fourth Quarter ${targetYear} Results"
+✅ "Q${targetQuarter} ${targetYear} EPS: $X.XX, Revenue: $XXM"
+
+EXAMPLES OF WHAT TO REJECT:
+❌ "Q${previousQuarter} ${previousYear} Results" (wrong quarter)
+❌ "Q${targetQuarter} ${targetYear - 1} Results" (wrong year)
+❌ "${symbol} to Report Earnings on..." (preview, not actual)
+❌ "Analysts Estimate..." (estimate, not actual)
+
+QUESTION: Has ${symbol} published the ACTUAL ${specificTerm} earnings report?
+
+Answer with ONE WORD ONLY: YES or NO
+`;
 
   try {
-    // 🔥 Using Gemini 2.0 Flash via OpenRouter
     const res = await callOpenRouterAPI(
       [{ role: "user", content: prompt }],
-      "google/gemini-2.0-flash-001", // <--- THE CHEAP/FAST MODEL
+      "google/gemini-2.0-flash-001",
       0.1,
-      10
+      100  // ⬅️ יותר טוקנים למקרה שצריך
     );
 
     const cleanRes = res.trim().toUpperCase().replace(/[^A-Z]/g, '');
@@ -833,21 +971,16 @@ export async function miniCheck(symbol: string, companyName: string, quarter?: n
     if (cleanRes.includes("YES")) finalResult = "YES";
     else if (cleanRes.includes("NO")) finalResult = "NO";
 
-    if (finalResult === "YES") {
-       logger.info(`🔍 [MiniCheck] AI confirmed YES for ${symbol}`);
-    }
+    logger.info(`🤖 [MiniCheck] AI decision for ${symbol} ${specificTerm}: "${res.trim()}" → ${finalResult}`);
 
     stockLog.miniCheck(symbol, finalResult);
     return { symbol, checkTime: now, result: finalResult };
 
   } catch (e: any) { 
-    logger.error(`❌ [MiniCheck] OpenRouter failed: ${e.message}`);
-    // Fallback: If AI fails but we had search results, return UNSURE to be safe
+    logger.error(`❌ [MiniCheck] AI failed: ${e.message}`);
     return { symbol, checkTime: now, result: "UNSURE" }; 
   }
 }
-
-
 
 // ============================================
 // 3. FULL EXTRACTION & SCORING
@@ -4052,23 +4185,29 @@ private async processAllStocks(): Promise<void> {
       
       let reportConfirmed = false;
 
-      if (finnhubHasData) {
-        logger.info(`🚀 FINNHUB CONFIRMED: ${stock.symbol}`);
-      
-     
-        logger.info(`🔍 Running AI mini-check...`);
-        const miniCheckResult = await miniCheck(
-          stock.symbol, 
-          stock.companyName, 
-          stock.quarter, 
-          stock.fiscalYear
-        );
-        
-        if (miniCheckResult.result === "YES") {
-          logger.info(`🤖 AI CONFIRMED: ${stock.symbol}`);
+        if (finnhubHasData) {
+          // ✅ אם Finnhub אישר - סמוך עליו ללא miniCheck
+          logger.info(`🚀 FINNHUB CONFIRMED: ${stock.symbol} - Proceeding without miniCheck`);
           reportConfirmed = true;
+          
+        } else {
+          // ⚠️ אם Finnhub לא אישר - נסה miniCheck
+          logger.info(`⚠️ No Finnhub data for ${stock.symbol} - Running miniCheck as fallback...`);
+          
+          const miniCheckResult = await miniCheck(
+            stock.symbol, 
+            stock.companyName, 
+            stock.quarter, 
+            stock.fiscalYear
+          );
+          
+          if (miniCheckResult.result === "YES") {
+            logger.info(`🤖 AI CONFIRMED (via miniCheck): ${stock.symbol}`);
+            reportConfirmed = true;
+          } else {
+            logger.info(`⏳ ${stock.symbol} - miniCheck said ${miniCheckResult.result}, will retry later`);
+          }
         }
-      }
 
       if (reportConfirmed) {
         logger.info(`✅ Report confirmed! Starting extraction...`);
