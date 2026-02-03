@@ -256,8 +256,8 @@ export async function verifyIRWithFlash(
     }
     return null;
 
-  } catch (e) {
-    logger.error(`❌ Flash Verification failed: ${e.message}`);
+  } catch (e: any) {
+    logger.error(`❌ Flash Verification failed: ${(e as Error).message}`);
     return null;
   }
 }
