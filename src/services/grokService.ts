@@ -4080,7 +4080,7 @@ export class StockProcessor {
    * @param reportType - BMO או AMC
    * @returns true אם כדאי לבדוק את המניה עכשיו
    */
-  private isWithinReasonableCheckWindow(windowStart: string, reportType: "BMO" | "AMC"): boolean {
+ private isWithinReasonableCheckWindow(windowStart: string, reportType: "BMO" | "AMC"): boolean {
     try {
       const now = new Date();
       now.setDate(now.getDate());
@@ -4095,25 +4095,26 @@ export class StockProcessor {
       const windowMinutesFromMidnight = windowHour * 60 + windowMinute;
       
       if (reportType === "BMO") {
-        const checkStart = Math.max(5 * 60, windowMinutesFromMidnight - (WINDOW_BUFFER_HOURS * 60));
-        const checkEnd = windowMinutesFromMidnight + (150); // 2.5 hours after
+        const checkStart = Math.max(6 * 60, windowMinutesFromMidnight - (WINDOW_BUFFER_HOURS * 60));
+        const checkEnd = windowMinutesFromMidnight; // 16:30 ISR
         return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
       }
       
       // AMC: בדוק בין 14:00-20:00 (2 שעות לפני עד 2 אחרי)
-      if (reportType === "AMC") {
-        const checkStart = Math.max(16 * 60, windowMinutesFromMidnight - (WINDOW_BUFFER_HOURS * 60));
-        const checkEnd = windowMinutesFromMidnight + ((1+WINDOW_BUFFER_HOURS) * 60);
-        return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-      }
-      
+  if (reportType === "AMC") {
+    const checkStart = Math.max(16 * 60, windowMinutesFromMidnight - (WINDOW_BUFFER_HOURS * 60)); 
+   const checkEnd = Math.min(
+    windowMinutesFromMidnight + (WINDOW_BUFFER_HOURS * 60), // סיום לפי הבופר בלבד
+    20 * 60 // הגבול המקסימלי
+);
+    return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+}
       return true; // במקרה של ספק - בדוק
     } catch (error) {
       logger.error(`Error in isWithinReasonableCheckWindow: ${error}`);
       return true; // במקרה של שגיאה - בדוק
     }
   }
-
   /**
    * פונקציה מעודכנת: מעבד את כל המניות בכל iteration
    */
