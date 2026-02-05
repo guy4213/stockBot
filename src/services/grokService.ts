@@ -4081,40 +4081,34 @@ export class StockProcessor {
    * @returns true אם כדאי לבדוק את המניה עכשיו
    */
  private isWithinReasonableCheckWindow(windowStart: string, reportType: "BMO" | "AMC"): boolean {
-    try {
-      const now = new Date();
-      now.setDate(now.getDate());
-      const nyTime = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-      const currentHour = nyTime.getHours();
-      const currentMinute = nyTime.getMinutes();
-      
-      const [windowHour, windowMinute] = windowStart.split(':').map(Number);
-      
-      // המר לדקות מחצות
-      const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
-      const windowMinutesFromMidnight = windowHour * 60 + windowMinute;
-      
-      if (reportType === "BMO") {
-        const checkStart = Math.max(6 * 60, windowMinutesFromMidnight - (WINDOW_BUFFER_HOURS * 60));
-        const checkEnd = windowMinutesFromMidnight; // 16:30 ISR
-        return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-      }
-      
-      // AMC: בדוק בין 14:00-20:00 (2 שעות לפני עד 2 אחרי)
-  if (reportType === "AMC") {
-    const checkStart = Math.max(16 * 60, windowMinutesFromMidnight - (WINDOW_BUFFER_HOURS * 60)); 
-   const checkEnd = Math.min(
-    windowMinutesFromMidnight + (WINDOW_BUFFER_HOURS * 60), // סיום לפי הבופר בלבד
-    20 * 60 // הגבול המקסימלי
-);
-    return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-}
-      return true; // במקרה של ספק - בדוק
-    } catch (error) {
-      logger.error(`Error in isWithinReasonableCheckWindow: ${error}`);
-      return true; // במקרה של שגיאה - בדוק
+  try {
+    const now = new Date();
+    const nyTime = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+    const currentHour = nyTime.getHours();
+    const currentMinute = nyTime.getMinutes();
+    
+    const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
+    
+    if (reportType === "BMO") {
+      // BMO: 6:00 AM - 9:30 AM
+      const checkStart = 6 * 60; // 360
+      const checkEnd = 9 * 60 + 30; // 570
+      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
     }
+    
+    if (reportType === "AMC") {
+      // AMC: 4:00 PM - 8:00 PM
+      const checkStart = 16 * 60; // 960
+      const checkEnd = 20 * 60; // 1200
+      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    }
+    
+    return true;
+  } catch (error) {
+    logger.error(`Error in isWithinReasonableCheckWindow: ${error}`);
+    return true;
   }
+}
   /**
    * פונקציה מעודכנת: מעבד את כל המניות בכל iteration
    */
