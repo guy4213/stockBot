@@ -12,7 +12,7 @@ const MAX_CONTENT_LENGTH = 30000;  // חותכים כדי לא להציף את G
  */
 export async function fetchContentWithJina(url: string): Promise<string | null> {
   const jinaUrl = `${JINA_BASE_URL}${url}`;
-  
+  console.log(`jinaURL is: ${jinaUrl}`);
   const response = await axios.get(jinaUrl, {
     timeout: 30000,
     headers: {

@@ -1,14 +1,14 @@
 {
-  "date": "2026-02-25",
+  "date": "2026-02-26",
   "stocks": [
     {
-      "symbol": "NVDA",
-      "companyName": "NVIDIA Corporation",
+      "symbol": "CRM",
+      "companyName": "Salesforce, Inc.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 4761299451807,
-      "volume": 230041455,
+      "marketCap": 187439286104,
+      "volume": 13719478,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -17,194 +17,28 @@
       "quarter": 4,
       "fiscalYear": 2026,
       "finnhubData": {
-        "epsActual": 1.62,
-        "epsEstimate": 1.5616,
-        "revenueActual": 68127000000,
-        "revenueEstimate": 67322949625
-      },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://investor.nvidia.com/home/default.aspx",
-        "domain": "investor.nvidia.com",
-        "confidence": 0.9,
-        "reason": "The URL 'https://investor.nvidia.com/home/default.aspx' has the title 'NVIDIA Investor Relations' and the snippet describes NVIDIA as the world leader in accelerated computing, indicating it is the official IR website.",
-        "verifiedAt": "2026-02-26T08:51:55.046Z"
-      }
-    },
-    {
-      "symbol": "TJX",
-      "companyName": "The TJX Companies, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 173418119141,
-      "volume": 8036189,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": 1.43,
-        "epsEstimate": 1.4047,
-        "revenueActual": 17743000000,
-        "revenueEstimate": 17543273214
-      },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://investor.tjx.com/",
-        "domain": "investor.tjx.com",
-        "confidence": 0.9,
-        "reason": "The URL 'https://investor.tjx.com/' has the subdomain 'investor' and the title 'Investors | The TJX Companies, Inc.', suggesting it is the official investor relations website.",
-        "verifiedAt": "2026-02-26T08:52:42.691Z"
-      }
-    },
-    {
-      "symbol": "NU",
-      "companyName": "Nu Holdings Ltd.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 80292357303,
-      "volume": 64119584,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.19,
-        "epsEstimate": 0.1988,
-        "revenueActual": 4685870000,
-        "revenueEstimate": 3875811926
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "SNOW",
-      "companyName": "Snowflake Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 57903662000,
-      "volume": 12971094,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": 0.32,
-        "epsEstimate": 0.2768,
-        "revenueActual": 1283990000,
-        "revenueEstimate": 1279805036
-      },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://investors.snowflake.com/overview/default.aspx",
-        "domain": "investors.snowflake.com",
-        "confidence": 0.9,
-        "reason": "The URL investors.snowflake.com is the official investor relations domain for Snowflake Inc. The title and snippet confirm it is the investor relations page.",
-        "verifiedAt": "2026-02-26T08:53:31.011Z"
-      }
-    },
-    {
-      "symbol": "VICI",
-      "companyName": "VICI Properties Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 32320855859,
-      "volume": 5144464,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.6,
-        "epsEstimate": 0.698,
-        "revenueActual": 1013090000,
-        "revenueEstimate": 1029550168
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "ZM",
-      "companyName": "Zoom Communications, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 25568290794,
-      "volume": 6489936,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": 1.44,
-        "epsEstimate": 1.5328,
-        "revenueActual": 1246990000,
-        "revenueEstimate": 1269470498
-      },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://investors.zoom.us/",
-        "domain": "investors.zoom.us",
-        "confidence": 0.9,
-        "reason": "The URL 'https://investors.zoom.us/' has the title 'Investor Relations | Zoom Communications, Inc.' and the snippet mentions 'Investor Relations' and upcoming events, suggesting it's the main IR page.",
-        "verifiedAt": "2026-02-26T08:54:24.426Z"
-      }
-    },
-    {
-      "symbol": "PSTG",
-      "companyName": "Pure Storage, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 24287426500,
-      "volume": 6465420,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": 0.69,
-        "epsEstimate": 0.6591,
-        "revenueActual": 1058900000,
-        "revenueEstimate": 1051860546
+        "epsActual": null,
+        "epsEstimate": 3.0745,
+        "revenueActual": null,
+        "revenueEstimate": 11286562402
       },
       "sentToTelegram": false,
       "cachedIRPortal": {
-        "url": "https://investor.purestorage.com/investor-home/default.aspx",
-        "domain": "investor.purestorage.com",
-        "confidence": 0.9,
-        "reason": "The URL contains 'investor.purestorage.com' and the title is 'Pure Storage, Inc. - Investor Home', indicating it's the official investor relations website.",
-        "verifiedAt": "2026-02-26T08:55:03.159Z"
+        "url": "https://investor.salesforce.com/overview/default.aspx",
+        "domain": "investor.salesforce.com",
+        "confidence": 0.95,
+        "reason": "The URL 'https://investor.salesforce.com/overview/default.aspx' has 'investor.salesforce.com' which is the official investor relations domain for Salesforce. The title also explicitly states 'Salesforce Investor Relations: Salesforce.com, Inc.'",
+        "verifiedAt": "2026-02-26T16:26:11.604Z"
       }
     },
     {
-      "symbol": "CRCL",
-      "companyName": "Circle Internet Group",
+      "symbol": "WBD",
+      "companyName": "Warner Bros. Discovery, Inc.",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 21153943477,
-      "volume": 63054611,
+      "marketCap": 71694357584,
+      "volume": 5070099,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -213,320 +47,28 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": 0.43,
-        "epsEstimate": 0.251,
-        "revenueActual": 770230000,
-        "revenueEstimate": 754234726
+        "epsActual": -0.1,
+        "epsEstimate": -0.031,
+        "revenueActual": 9460000000,
+        "revenueEstimate": 9399212893
       },
-      "sentToTelegram": false
+      "sentToTelegram": true,
+      "cachedIRPortal": {
+        "url": "https://ir.wbd.com/investor-relations/default.aspx/1000/",
+        "domain": "ir.wbd.com",
+        "confidence": 0.95,
+        "reason": "Multiple snippets across different URLs consistently point to `https://ir.wbd.com` as the official investor relations website. URL [6] directly uses this URL and has the title 'Warner Bros. Discovery - Investor Relations'.",
+        "verifiedAt": "2026-02-26T16:26:43.741Z"
+      }
     },
     {
-      "symbol": "PR",
-      "companyName": "Permian Resources Corporation",
+      "symbol": "CRWV",
+      "companyName": "CoreWeave, Inc. Class A Common Stock",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 13118023590,
-      "volume": 9227083,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.37,
-        "epsEstimate": 0.285,
-        "revenueActual": 1169370000,
-        "revenueEstimate": 1346651355
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "TTD",
-      "companyName": "The Trade Desk, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 12301802483,
-      "volume": 22848495,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.59,
-        "epsEstimate": 0.5882,
-        "revenueActual": 846790000,
-        "revenueEstimate": 849081719
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "IONQ",
-      "companyName": "IonQ, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 11900265200,
-      "volume": 20357778,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 1.93,
-        "epsEstimate": -0.333,
-        "revenueActual": 61890000,
-        "revenueEstimate": 41193720
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "PSKY",
-      "companyName": "Paramount Skydance Corporation Class B Common Stock",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 10888136486,
-      "volume": 12369787,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.12,
-        "epsEstimate": -0.0087,
-        "revenueActual": 8148000000,
-        "revenueEstimate": 8299917480
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "NTNX",
-      "companyName": "Nutanix, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 10394173079,
-      "volume": 6893078,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 2,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": 0.56,
-        "epsEstimate": 0.457,
-        "revenueActual": 722830000,
-        "revenueEstimate": 724146409
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "APA",
-      "companyName": "APA Corporation",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 9873991948,
-      "volume": 6226029,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.91,
-        "epsEstimate": 0.6483,
-        "revenueActual": 1978000000,
-        "revenueEstimate": 1876358476
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "JOBY",
-      "companyName": "Joby Aviation, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 9472829710,
-      "volume": 33928609,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.2,
-        "epsEstimate": -0.22,
-        "revenueActual": 30840000,
-        "revenueEstimate": 17301576
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "CHYM",
-      "companyName": "Chime Financial, Inc. Class A Common Stock",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 7907341306,
-      "volume": 5465210,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.12,
-        "epsEstimate": -0.1564,
-        "revenueActual": 596360000,
-        "revenueEstimate": 589589498
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "UWMC",
-      "companyName": "UWM Holdings Corporation",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 6305918940,
-      "volume": 56704515,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.08,
-        "epsEstimate": 0.0882,
-        "revenueActual": 945250000,
-        "revenueEstimate": 789471156
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "YOU",
-      "companyName": "Clear Secure, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 4446206005,
-      "volume": 9431469,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.31,
-        "epsEstimate": 0.2929,
-        "revenueActual": 240750000,
-        "revenueEstimate": 238075856
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "LFST",
-      "companyName": "LifeStance Health Group, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 2882492082,
-      "volume": 6107107,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.03,
-        "epsEstimate": -0.0017,
-        "revenueActual": 382200000,
-        "revenueEstimate": 383831895
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "DBRG",
-      "companyName": "DigitalBridge Group, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 2803982950,
-      "volume": 5551863,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.21,
-        "epsEstimate": 0.0969,
-        "revenueActual": 105750000,
-        "revenueEstimate": 105965250
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "SM",
-      "companyName": "SM Energy Company",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 2525778152,
-      "volume": 6065809,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.83,
-        "epsEstimate": 0.8966,
-        "revenueActual": 705000000,
-        "revenueEstimate": 790788566
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "ETNB",
-      "companyName": "89bio, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 2200759564,
-      "volume": 38511212,
+      "marketCap": 49545279155,
+      "volume": 9319169,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -536,20 +78,20 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": -0.5365,
+        "epsEstimate": -0.5036,
         "revenueActual": null,
-        "revenueEstimate": 0
+        "revenueEstimate": 1579009072
       },
       "sentToTelegram": false
     },
     {
-      "symbol": "DRVN",
-      "companyName": "Driven Brands Holdings Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 1907668929,
-      "volume": 14874011,
+      "symbol": "RKLB",
+      "companyName": "Rocket Lab USA, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 38383031867,
+      "volume": 6116066,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -559,43 +101,20 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 0.282,
+        "epsEstimate": -0.0942,
         "revenueActual": null,
-        "revenueEstimate": 484780775
+        "revenueEstimate": 182040848
       },
       "sentToTelegram": false
     },
     {
-      "symbol": "ACHC",
-      "companyName": "Acadia Healthcare Company, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 1884858399,
-      "volume": 11007514,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.07,
-        "epsEstimate": 0.0592,
-        "revenueActual": 821460000,
-        "revenueEstimate": 816065871
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "JAMF",
-      "companyName": "Jamf Holding Corp.",
+      "symbol": "CPNG",
+      "companyName": "Coupang, Inc.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 1749694580,
-      "volume": 16439271,
+      "marketCap": 33966511453,
+      "volume": 6896184,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -605,43 +124,20 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 0.2368,
+        "epsEstimate": 0.0296,
         "revenueActual": null,
-        "revenueEstimate": 187466820
+        "revenueEstimate": 9229192050
       },
       "sentToTelegram": false
     },
     {
-      "symbol": "ARRY",
-      "companyName": "Array Technologies, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 1680225437,
-      "volume": 6944926,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.01,
-        "epsEstimate": -0.009,
-        "revenueActual": 226040000,
-        "revenueEstimate": 216256697
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "RXRX",
-      "companyName": "Recursion Pharmaceuticals, Inc.",
+      "symbol": "VTRS",
+      "companyName": "Viatris Inc.",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 1511078254,
-      "volume": 44357595,
+      "marketCap": 18197963978,
+      "volume": 6141607,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -650,182 +146,21 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": -0.21,
-        "epsEstimate": -0.322,
-        "revenueActual": 35540000,
-        "revenueEstimate": 25077424
+        "epsActual": 0.57,
+        "epsEstimate": 0.5438,
+        "revenueActual": 3703600000,
+        "revenueEstimate": 3603030833
       },
       "sentToTelegram": false
     },
     {
-      "symbol": "RDW",
-      "companyName": "Redwire Corporation",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 1423599749,
-      "volume": 12971040,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.35,
-        "epsEstimate": -0.1906,
-        "revenueActual": 108790000,
-        "revenueEstimate": 103385872
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "AI",
-      "companyName": "C3.ai, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 1415078430,
-      "volume": 5153591,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 3,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": -0.4,
-        "epsEstimate": -0.2975,
-        "revenueActual": 53260000,
-        "revenueEstimate": 77884243
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "ENVX",
-      "companyName": "Enovix Corporation",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 1327268400,
-      "volume": 6923979,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.14,
-        "epsEstimate": -0.1798,
-        "revenueActual": 11270000,
-        "revenueEstimate": 10479704
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "GERN",
-      "companyName": "Geron Corporation",
+      "symbol": "CELH",
+      "companyName": "Celsius Holdings, Inc.",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 1097971073,
-      "volume": 30017789,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.03,
-        "epsEstimate": -0.0323,
-        "revenueActual": 48020000,
-        "revenueEstimate": 51428910
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "ODD",
-      "companyName": "Oddity Tech Ltd.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 835150447,
-      "volume": 23974926,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.2,
-        "epsEstimate": 0.1353,
-        "revenueActual": 152730000,
-        "revenueEstimate": 152554440
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "TDOC",
-      "companyName": "Teladoc Health, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 825251333,
-      "volume": 6261979,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.14,
-        "epsEstimate": -0.1915,
-        "revenueActual": 642270000,
-        "revenueEstimate": 647939659
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "IRWD",
-      "companyName": "Ironwood Pharmaceuticals, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 546600254,
-      "volume": 11555685,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.01,
-        "epsEstimate": 0.0102,
-        "revenueActual": 47710000,
-        "revenueEstimate": 51951996
-      },
-      "sentToTelegram": false
-    },
-    {
-      "symbol": "BLMN",
-      "companyName": "Bloomin' Brands, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 486589590,
-      "volume": 5681916,
+      "marketCap": 14136945687,
+      "volume": 8022033,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -835,9 +170,538 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": 0.26,
-        "epsEstimate": 0.2509,
-        "revenueActual": 975220000,
-        "revenueEstimate": 1000660290
+        "epsEstimate": 0.2103,
+        "revenueActual": 721630000,
+        "revenueEstimate": 653650629
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "PRMB",
+      "companyName": "Primo Brands Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 8183316335,
+      "volume": 7071190,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.26,
+        "epsEstimate": 0.2105,
+        "revenueActual": 1554100000,
+        "revenueEstimate": 1538789442
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "QBTS",
+      "companyName": "D-Wave Quantum Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 7633716480,
+      "volume": 23445505,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": -0.12,
+        "epsEstimate": -0.0676,
+        "revenueActual": 2750000,
+        "revenueEstimate": 3842197
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "WULF",
+      "companyName": "TeraWulf Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 7494405670,
+      "volume": 11331843,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.1392,
+        "revenueActual": null,
+        "revenueEstimate": 46697823
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "ACLX",
+      "companyName": "Arcellx, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 6577062462,
+      "volume": 7206240,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -1.0616,
+        "revenueActual": null,
+        "revenueEstimate": 13459716
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "COMP",
+      "companyName": "Compass, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 5475001862,
+      "volume": 6601581,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.0612,
+        "revenueActual": null,
+        "revenueEstimate": 1720920417
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "SPR",
+      "companyName": "Spirit AeroSystems Holdings, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 4637297077,
+      "volume": 5774646,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.0682,
+        "revenueActual": null,
+        "revenueEstimate": 2106498016
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "AKRO",
+      "companyName": "Akero Therapeutics, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 4498738105,
+      "volume": 11609142,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.9588,
+        "revenueActual": null,
+        "revenueEstimate": 0
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "SMR",
+      "companyName": "NuScale Power Corporation",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 3977276244,
+      "volume": 9436708,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.1325,
+        "revenueActual": null,
+        "revenueEstimate": 8654770
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "SOUN",
+      "companyName": "SoundHound AI, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 3717848529,
+      "volume": 15750271,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.016,
+        "revenueActual": null,
+        "revenueEstimate": 55069463
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "MARA",
+      "companyName": "Marathon Digital Holdings, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 3216609196,
+      "volume": 13884374,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.1282,
+        "revenueActual": null,
+        "revenueEstimate": 262607078
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "PENN",
+      "companyName": "PENN Entertainment, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 2085020404,
+      "volume": 5466805,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.07,
+        "epsEstimate": -0.0541,
+        "revenueActual": 1806200000,
+        "revenueEstimate": 1795113810
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "NVAX",
+      "companyName": "Novavax, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 1886613332,
+      "volume": 12720555,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.11,
+        "epsEstimate": -0.4995,
+        "revenueActual": 147140000,
+        "revenueEstimate": 80881338
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "IAS",
+      "companyName": "Integral Ad Science Holding Corp.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 1735615830,
+      "volume": 14550950,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.1291,
+        "revenueActual": null,
+        "revenueEstimate": 171639470
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "EOSE",
+      "companyName": "Eos Energy Enterprises, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 1666368904,
+      "volume": 90760093,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": -0.84,
+        "epsEstimate": -0.1827,
+        "revenueActual": 58000000,
+        "revenueEstimate": 95747655
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "IQ",
+      "companyName": "iQIYI, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 1623067121,
+      "volume": 7772242,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.13683,
+        "epsEstimate": -0.0172,
+        "revenueActual": 6558740805,
+        "revenueEstimate": 6968850941
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "HTZ",
+      "companyName": "Hertz Global Holdings, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 1378798605,
+      "volume": 5703399,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": -0.63,
+        "epsEstimate": -0.5202,
+        "revenueActual": 2028000000,
+        "revenueEstimate": 2020298384
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "QUBT",
+      "companyName": "Quantum Computing, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 1207833900,
+      "volume": 8865158,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.0332,
+        "revenueActual": null,
+        "revenueEstimate": 339150
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "BFLY",
+      "companyName": "Butterfly Network, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 1202385972,
+      "volume": 40835537,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": -0.02,
+        "epsEstimate": -0.0646,
+        "revenueActual": 31510000,
+        "revenueEstimate": 26440950
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "ABTC",
+      "companyName": "American Bitcoin Corp",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 973985215,
+      "volume": 6325370,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.0153,
+        "revenueActual": null,
+        "revenueEstimate": 81234330
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "MNKD",
+      "companyName": "MannKind Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 967270500,
+      "volume": 13567069,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": -0.05,
+        "epsEstimate": 0.0147,
+        "revenueActual": 111960000,
+        "revenueEstimate": 99556528
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "VITL",
+      "companyName": "Vital Farms, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 904669177,
+      "volume": 5286971,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.35,
+        "epsEstimate": 0.3987,
+        "revenueActual": 213550000,
+        "revenueEstimate": 218727871
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "DNUT",
+      "companyName": "Krispy Kreme, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 681825390,
+      "volume": 13588642,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.09,
+        "epsEstimate": 0.0316,
+        "revenueActual": 392370000,
+        "revenueEstimate": 394449300
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "RXT",
+      "companyName": "Rackspace Technology, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 427479811,
+      "volume": 49635862,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": -0.01,
+        "epsEstimate": -0.0303,
+        "revenueActual": 682800000,
+        "revenueEstimate": 679097063
       },
       "sentToTelegram": false
     }

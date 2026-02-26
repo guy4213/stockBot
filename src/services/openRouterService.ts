@@ -933,6 +933,9 @@ if (rawContent === null) {
   throw new Error(`Content extraction failed for ${symbol} after ${MAX_ATTEMPTS} attempts`);
 }
 
+// ✅ הוסף לפני הפרומפט
+const finnhubEpsEstimate = finnhubData?.epsEstimate ?? null;
+const finnhubRevEstimate = finnhubData?.revenueEstimate ?? null;
 
 const supplementPrompt = `
 You are a professional financial data analyst extracting QUARTERLY earnings data from official press releases.
@@ -1002,15 +1005,23 @@ Operating Margin MUST be calculated from the document ONLY:
 ${!hasFinnhubData ? `
 ── EPS ──────────────────────────────────────────────────────
 • actual:      Q${q} ${yr} EPS (per priority Rule 2 above)
-• estimate:    analyst consensus ONLY if explicitly stated in document, else null
-• beatPercent: ((actual - estimate) / |estimate|) * 100, else null
+• estimate:    ${finnhubEpsEstimate !== null
+    ? `USE THIS EXACT VALUE: ${finnhubEpsEstimate} (Finnhub consensus) — DO NOT look in document`
+    : 'not available, return null'}
+• beatPercent: ${finnhubEpsEstimate !== null
+    ? '((actual - estimate) / |estimate|) * 100'
+    : 'null'}
 • epsType:     exact label used e.g. "Adjusted EPS", "Operating EPS", "GAAP EPS"
 
 ── REVENUE ──────────────────────────────────────────────────
 • actual:      Q${q} ${yr} revenue in dollars (not billions)
 • For BANKS / REITs → use Net Interest Income instead of Total Revenue
-• estimate:    ONLY if explicitly stated in document, else null
-• beatPercent: ((actual - estimate) / |estimate|) * 100, else null
+• estimate:    ${finnhubRevEstimate !== null
+    ? `USE THIS EXACT VALUE: ${finnhubRevEstimate} (Finnhub consensus) — DO NOT look in document`
+    : 'not available, return null'}
+• beatPercent: ${finnhubRevEstimate !== null
+    ? '((actual - estimate) / estimate) * 100'
+    : 'null'}
 
 ── YoY CALCULATIONS ─────────────────────────────────────────
 • epsYoY:     ((Q${q}_${yr}_EPS - Q${q}_${yr-1}_EPS) / |Q${q}_${yr-1}_EPS|) * 100
@@ -1218,15 +1229,20 @@ ${rawContent}
   // If AI extracted EPS/Revenue, use it
   if (!hasFinnhubData && aiData.eps && aiData.revenue) {
     epsActual = aiData.eps.actual;
-    epsEstimate = aiData.eps.estimate;
+    epsEstimate = aiData.eps.estimate ?? finnhubEpsEstimate; 
     revenueActual = aiData.revenue.actual;
-    revenueEstimate = aiData.revenue.estimate;
-    epsBeatPercent = aiData.eps.beatPercent || 0;
-    revBeatPercent = aiData.revenue.beatPercent || 0;
-    
-    logger.info(`   ✅ EPS: ${epsActual} vs ${epsEstimate} (from PDF)`);
-    logger.info(`   ✅ Revenue: $${(revenueActual! / 1e9).toFixed(2)}B (from PDF)`);
-  }
+    revenueEstimate = aiData.revenue.estimate ?? finnhubRevEstimate;
+ // ✅ חשב beatPercent מחדש — חשוב כי ג'מיני אולי קיבל estimate מפינהאב
+  epsBeatPercent = epsEstimate && epsEstimate !== 0
+    ? ((epsActual! - epsEstimate) / Math.abs(epsEstimate)) * 100
+    : 0;
+  revBeatPercent = revenueEstimate && revenueEstimate !== 0
+    ? ((revenueActual! - revenueEstimate) / revenueEstimate) * 100
+    : 0;
+
+  logger.info(`   ✅ EPS: ${epsActual} vs ${epsEstimate} (from PDF + Finnhub estimate)`);
+  logger.info(`   ✅ Revenue: $${(revenueActual! / 1e9).toFixed(2)}B (from PDF + Finnhub estimate)`);
+}
 
   // Validate critical fields
   if (epsActual === null || revenueActual === null) {
