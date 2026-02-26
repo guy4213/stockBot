@@ -915,107 +915,25 @@ logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
 
 logger.info(`\n🤖 Step 3: Fetching content via Jina → Gemini extraction...`);
 
-// 3א - שליפת תוכן הדוח דרך Jina Reader
-let rawContent: string;
-try {
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_MS = 2000;
+let rawContent: string | null = null;
+for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
   rawContent = await fetchContentWithJina(validatedPdfUrl);
-} catch (jinaError: any) {
-  logger.error(`❌ Jina failed: ${jinaError.message}`);
-  throw new Error(`Content extraction failed for ${symbol}: ${jinaError.message}`);
+  
+  if (rawContent !== null) break;
+  
+  if (attempt < MAX_ATTEMPTS) {
+    logger.warn(`   🔄 Attempt ${attempt} failed, retrying in ${RETRY_DELAY_MS}ms...`);
+    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * attempt)); // backoff
+  }
 }
 
-// 3ב - הפרומפט - זהה בדיוק לפני, רק שורה אחת משתנה בהתחלה
-// const supplementPrompt = `
-// You are a professional financial data analyst extracting QUARTERLY earnings data from official reports.
+if (rawContent === null) {
+  throw new Error(`Content extraction failed for ${symbol} after ${MAX_ATTEMPTS} attempts`);
+}
 
-// ════════════════════════════════════════════════════════════════
-// 📊 EXTRACTION MISSION
-// ════════════════════════════════════════════════════════════════
 
-// TARGET COMPANY: ${symbol} (${companyName})
-// REPORT DATE: ${reportDate}
-// QUARTER: Q${q} ${yr}
-
-// ⚠️ THE DOCUMENT TEXT IS PROVIDED BELOW - extract data ONLY from it.
-
-// 🚨🚨🚨 ABSOLUTE CRITICAL RULE 🚨🚨🚨
-// THIS EXTRACTION IS FOR **QUARTERLY DATA ONLY** - Q${q} ${yr}
-
-// ❌ NEVER USE: Annual, TTM, YTD, Full Year, Cumulative
-// ✅ ONLY USE: Data explicitly labeled Q${q} ${yr} or "Three months ended"
-
-// ════════════════════════════════════════════════════════════════
-// 📋 EXTRACT THE FOLLOWING:
-// ════════════════════════════════════════════════════════════════
-
-// ${!hasFinnhubData ? `
-// 1. EPS actual + estimate + beatPercent (Q${q} ${yr} diluted EPS only)
-// 2. Revenue actual + estimate + beatPercent (in dollars, not billions)
-// 3. EPS YoY: Q${q} ${yr} diluted EPS vs Q${q} ${yr - 1} diluted EPS → ((current-prior)/prior)*100
-// 4. Revenue YoY: Q${q} ${yr} vs Q${q} ${yr - 1} → ((current-prior)/prior)*100
-// 5. Net Margin: (Net Income / Revenue) * 100 for Q${q} ${yr}
-// 6. Operating Margin OR Efficiency Ratio (banks)
-// 7. Cash from Operations Q${q} ${yr} in MILLIONS
-// ` : `
-// KNOWN DATA (DO NOT RE-EXTRACT):
-// - EPS: ${epsActual} vs estimate ${epsEstimate} (${epsBeatPercent.toFixed(2)}%)
-// - Revenue: ${(revenueActual! / 1e9).toFixed(2)}B vs ${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent.toFixed(2)}%)
-
-// 1. EPS YoY: Q${q} ${yr} diluted EPS vs Q${q} ${yr - 1} diluted EPS → ((current-prior)/prior)*100
-// 2. Revenue YoY: Q${q} ${yr} vs Q${q} ${yr - 1} → ((current-prior)/prior)*100
-// 3. Net Margin: (Net Income / Revenue) * 100 for Q${q} ${yr}
-// 4. Operating Margin: (Operating Income / Operating Revenues) * 100 for Q${q} ${yr}
-//    - Look for "Three Months Ended" table
-//    - FOR BANKS ONLY: use Efficiency Ratio instead
-// 5. Cash from Operations Q${q} ${yr} in MILLIONS
-//    - Look for "Three Months Ended" cash flow table
-//    - If only annual cash flow available → return null
-// `}
-
-// AND ALWAYS EXTRACT:
-// - Guidance: "raised" | "lowered" | "maintained" | "unavailable" + details in Hebrew
-// - Sentiment: "positive" | "neutral" | "negative" + reasoning in Hebrew
-// - Highlights: exactly 2 specific achievements in Hebrew
-// - Concerns: exactly 2 specific risks in Hebrew
-// - companyType: "REIT" | "Bank" | "Regular"
-
-// ════════════════════════════════════════════════════════════════
-// 📤 OUTPUT - RETURN ONLY THIS JSON:
-// ════════════════════════════════════════════════════════════════
-
-// {
-//   "pdfUrl": "${validatedPdfUrl}",
-//   "companyType": "REIT" | "Bank" | "Regular",
-//   ${!hasFinnhubData ? `
-//   "eps": { "actual": <number>|null, "estimate": <number>|null, "beatPercent": <number>|null },
-//   "revenue": { "actual": <number in dollars>|null, "estimate": <number in dollars>|null, "beatPercent": <number>|null, "revenueType": "net_interest_income"|"total_revenue" },
-//   ` : ''}
-//   "guidance": { "status": "raised"|"lowered"|"maintained"|"unavailable", "details": "עברית"|null },
-//   "sentiment": { "overall": "positive"|"neutral"|"negative", "reasoning": "עברית" },
-//   "highlights": ["הישג 1", "הישג 2"],
-//   "concerns": ["חשש 1", "חשש 2"],
-//   "pdfMetrics": {
-//     "epsYoY": <number>|null,
-//     "revenueYoY": <number>|null,
-//     "netMargin": <number>|null,
-//     "marginMetric": { 
-//     "type": "efficiency_ratio"|"operating_margin", 
-//     "value": <(Operating Income / Operating Revenues * 100)>, 
-//     "source": "Three Months Ended Q${q} ${yr}", 
-//     "verified": true 
-//   }|null,
-//   "cashFromOperations": <number in millions>|null  // quarterly only, null if not available
-//   }
-// }
-
-// Return ONLY valid JSON. No markdown, no explanations.
-
-// ════════════════════════════════════════════════════════════════
-// 📄 DOCUMENT TEXT:
-// ════════════════════════════════════════════════════════════════
-
-// ${rawContent}
-// `;
 const supplementPrompt = `
 You are a professional financial data analyst extracting QUARTERLY earnings data from official press releases.
 
@@ -1650,19 +1568,19 @@ export class StockProcessor {
     
     const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
     
-    if (reportType === "BMO") {
-      // BMO: 6:00 AM - 9:30 AM
-      const checkStart = 6 * 60; // 360
-      const checkEnd = 9 * 60 + 30; // 570
-      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    }
+    // if (reportType === "BMO") {
+    //   // BMO: 6:00 AM - 9:30 AM
+    //   const checkStart = 6 * 60; // 360
+    //   const checkEnd = 9 * 60 + 30; // 570
+    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    // }
     
-    if (reportType === "AMC") {
-      // AMC: 4:00 PM - 8:00 PM
-      const checkStart = 16 * 60; // 960
-      const checkEnd = 20 * 60; // 1200
-      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    }
+    // if (reportType === "AMC") {
+    //   // AMC: 4:00 PM - 8:00 PM
+    //   const checkStart = 16 * 60; // 960
+    //   const checkEnd = 20 * 60; // 1200
+    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    // }
     
     return true;
   } catch (error) {
