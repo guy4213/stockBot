@@ -21,9 +21,7 @@ interface StockSymbol {
 // ⚠️ פונקציה זו לא נדרשת יותר - השתמש בקובץ us_stocks_cache.json הקיים!
 // אם אתה צריך לעדכן את הקובץ, עשה זאת ידנית או השתמש בסקריפט חיצוני
 export async function fetchAndCacheUSStocks(): Promise<void> {
-  logger.warn("⚠️ fetchAndCacheUSStocks is deprecated!");
-  logger.warn("   Please use the existing us_stocks_cache.json file.");
-  logger.warn("   FMP API is no longer required.");
+
 
   // בדיקה אם הקובץ קיים
   try {
