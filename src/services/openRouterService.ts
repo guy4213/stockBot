@@ -40,27 +40,18 @@ interface ExtendedStock extends Stock {
     quarter?: number;
     fiscalYear?: number;
 }
-
-interface GrokResponseNew {
-  id: string;
-  object: string;
-  created: number;
-  model: string;
-  choices: Array<{
-    index: number;
-    message: {
-      role: string;
-      content: string;
-      tool_calls?: any[];
-    };
-    finish_reason: string;
-  }>;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
+interface FinnhubEarningsEntry {
+    revenueEstimate: null;
+    epsEstimate: number | null | undefined; 
+    symbol: string; 
+    hour: string; 
+    quarter: number; 
+    year: number;
+    epsActual?: number | null|undefined;
+    revenueActual?: number | null;
 }
+
+
 // ✅ הוסף את זה:
 interface StockProcessingStateExtended extends StockProcessingState {
   isProcessing?: boolean;  // ⬅️ הוסף את זה!
@@ -275,11 +266,7 @@ interface FinnhubEarningsEntry {
     epsActual?: number | null|undefined;
     revenueActual?: number | null;
 }
-    // const now = new Date();
-    // const threeDaysAgo = new Date(now);
-    // threeDaysAgo.setDate(threeDaysAgo.getDate());
-    // const dateString = threeDaysAgo.toISOString().split("T")[0];
-    // not related to grok
+
 async function checkFinnhubUpdates(symbol: string, date: string): Promise<boolean> {
     const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
     if (!FINNHUB_API_KEY) return false;
@@ -587,7 +574,6 @@ Answer with ONE WORD ONLY: YES or NO
   }
 }
 
-//not related to grok
 export async function findIRCandidates(
   symbol: string,
   companyName: string
@@ -1584,19 +1570,19 @@ export class StockProcessor {
     
     const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
     
-    // if (reportType === "BMO") {
-    //   // BMO: 6:00 AM - 9:30 AM
-    //   const checkStart = 6 * 60; // 360
-    //   const checkEnd = 9 * 60 + 30; // 570
-    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    // }
+    if (reportType === "BMO") {
+      // BMO: 6:00 AM - 9:30 AM
+      const checkStart = 6 * 60; // 360
+      const checkEnd = 9 * 60 + 30; // 570
+      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    }
     
-    // if (reportType === "AMC") {
-    //   // AMC: 4:00 PM - 8:00 PM
-    //   const checkStart = 16 * 60; // 960
-    //   const checkEnd = 20 * 60; // 1200
-    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    // }
+    if (reportType === "AMC") {
+      // AMC: 4:00 PM - 8:00 PM
+      const checkStart = 16 * 60; // 960
+      const checkEnd = 20 * 60; // 1200
+      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    }
     
     return true;
   } catch (error) {
