@@ -7,7 +7,8 @@ import {
   getQuote,
   getFinnhubMetrics,
   getIncomeStatement,
-  getCashFlow
+  getCashFlow,
+  runHardPreFilter
 } from "./stockService"; 
 import {
   GrokResponse,
@@ -765,6 +766,10 @@ if (!validatedPdfUrl) {
   throw new Error(`Earnings PDF not found for ${symbol} Q${q} ${yr} - report may not be published`);
 }
 
+ const epsBeatForPreFilter = finnhubData?.epsActual != null && finnhubData?.epsEstimate != null && finnhubData.epsEstimate !== 0
+    ? ((finnhubData.epsActual - finnhubData.epsEstimate) / Math.abs(finnhubData.epsEstimate)) * 100
+    : null;
+  const hardPreFilter = await runHardPreFilter(symbol, companyName, epsBeatForPreFilter);
 
 
 logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
@@ -1303,7 +1308,8 @@ const finalOperatingMargin = aiData.pdfMetrics?.marginMetric?.value !== null && 
     reportTime: "",
     managementCommentary: null,
     dataQuality: "high" as any,
-    aiRecommendation: "hold" as any
+    aiRecommendation: "hold" as any,
+    hardPreFilter
   };
 
   // ============================================
@@ -1335,6 +1341,7 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   logger.info(`📝 Generating Final Telegram Report for ${fullData.symbol} using Gemini Flash...`);
 
   const currentPrice = fullData.marketData?.price || 0;
+  const preFilter = fullData.hardPreFilter;
 
   if (!currentPrice || currentPrice === 0) {
     logger.warn(`⚠️ No valid price for ${fullData.symbol} - cannot calculate trade parameters`);
@@ -1373,8 +1380,17 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
     ? ` (${fullData.cashFlow.yoyChange > 0 ? '+' : ''}${fullData.cashFlow.yoyChange.toFixed(1)}% YoY)`
     : '';
 
-  // בניית הפרומפט (נשאר זהה כי הוא עובד טוב, אבל המודל שיקרא אותו זול יותר)
-  const prompt = `
+
+
+const preFilterSection = preFilter
+  ? `
+🔍 ניתוח שוק (Pre-Filter):
+- Run-Up 30 יום: ${preFilter.runUp30d !== null ? (preFilter.runUp30d >= 0 ? "+" : "") + preFilter.runUp30d.toFixed(1) + "%" : "לא זמין"}
+- תגובת AH: ${preFilter.ahChangePercent !== null ? (preFilter.ahChangePercent >= 0 ? "+" : "") + preFilter.ahChangePercent.toFixed(1) + "%" : "לא זמין"}
+- נפח יחסי: ${preFilter.volumeRatio !== null ? "×" + preFilter.volumeRatio.toFixed(1) : "לא זמין"}
+${preFilter.signals.filter(s => s.includes("🚨") || s.includes("🔴") || s.includes("🟡")).join("\n")}`
+  : "";
+    const prompt = `
   אתה Mira, אנליסט פיננסי AI מומחה.
   צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
 
@@ -1434,6 +1450,8 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   ⚖ ניקוד כולל: ${miraScore.totalScore}
   ⚖ סיווג סופי: ${miraScore.classification === 'POSITIVE' || miraScore.classification === 'VERY_POSITIVE' ? 'חיובי' : miraScore.classification === 'NEGATIVE' || miraScore.classification === 'VERY_NEGATIVE' ? 'שלילי' : 'ניטרלי'}
   ${miraScore.exceptions && miraScore.exceptions.length > 0 ? `🔍 חריגים: ${miraScore.exceptions.join(', ')}` : ''}
+
+  ${preFilterSection}
 
   📈 המלצת מסחר:
   כיוון: ${tradeParams.direction}
@@ -1570,19 +1588,19 @@ export class StockProcessor {
     
     const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
     
-    if (reportType === "BMO") {
-      // BMO: 6:00 AM - 9:30 AM
-      const checkStart = 6 * 60; // 360
-      const checkEnd = 9 * 60 + 30; // 570
-      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    }
+    // if (reportType === "BMO") {
+    //   // BMO: 6:00 AM - 9:30 AM
+    //   const checkStart = 6 * 60; // 360
+    //   const checkEnd = 9 * 60 + 30; // 570
+    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    // }
     
-    if (reportType === "AMC") {
-      // AMC: 4:00 PM - 8:00 PM
-      const checkStart = 16 * 60; // 960
-      const checkEnd = 20 * 60; // 1200
-      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    }
+    // if (reportType === "AMC") {
+    //   // AMC: 4:00 PM - 8:00 PM
+    //   const checkStart = 16 * 60; // 960
+    //   const checkEnd = 20 * 60; // 1200
+    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    // }
     
     return true;
   } catch (error) {

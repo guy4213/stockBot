@@ -1,6 +1,8 @@
 import axios from "axios";
 import logger from "../utils/logger";
 import dotenv from "dotenv";
+import { HardPreFilter } from "../types/grok.types";
+import { buildPreFilterSignals, getAHDataFromGrok } from "./grokService";
 
 dotenv.config({ quiet: true });
 
@@ -24,6 +26,91 @@ export type EarningRes = {
   revenueEstimated: number | null;
   lastUpdated: string;
 };
+
+
+export interface HistoricalPrice {
+  date: string;
+  price: number;
+  volume: number;
+}
+
+
+// ============================================
+// runHardPreFilter - פונקציה עצמאית
+// קוראים אותה מתוך fullExtraction בשורה אחת
+// ============================================
+
+export async function runHardPreFilter(
+  symbol: string,
+  companyName: string,
+  epsBeatPercent: number | null  // מFinnhub אם זמין, אחרת null
+): Promise<HardPreFilter> {
+
+  logger.info(`\n🔍 Mira Step 0: Hard Pre-Filter [${symbol}]`);
+
+  // שלוש קריאות מקביליות
+  const [historicalResult, ahResult, quoteResult] = await Promise.allSettled([
+    getHistoricalPrices(symbol, 35),
+    getAHDataFromGrok(symbol, companyName),
+    getQuote(symbol),
+  ]);
+
+  const prices   = historicalResult.status === "fulfilled" ? historicalResult.value : null;
+  const ah       = ahResult.status       === "fulfilled" ? ahResult.value       : { ahPrice: null, ahChangePercent: null };
+  const quote    = quoteResult.status    === "fulfilled" ? quoteResult.value    : null;
+
+  const runUp30d     = calcRunUp(prices ?? []);
+  const volumeRatio  = quote?.volume && quote?.avgVolume && quote.avgVolume > 0
+    ? quote.volume / quote.avgVolume
+    : null;
+
+  const signals = buildPreFilterSignals(runUp30d, ah.ahChangePercent, volumeRatio, epsBeatPercent);
+
+  logger.info(`   📊 Run-Up 30d:    ${runUp30d     !== null ? runUp30d.toFixed(1) + "%"     : "N/A"}`);
+  logger.info(`   📊 AH Change:     ${ah.ahChangePercent !== null ? ah.ahChangePercent.toFixed(1) + "%" : "N/A"}`);
+  logger.info(`   📊 Volume Ratio:  ${volumeRatio  !== null ? "×" + volumeRatio.toFixed(1)  : "N/A"}`);
+  logger.info(`   🚦 Signals: ${signals.join(" | ")}`);
+
+  return {
+    runUp30d,
+    volumeRatio,
+    ahChangePercent: ah.ahChangePercent,
+    ahPrice:         ah.ahPrice,
+    signals,
+  };
+}
+export const getHistoricalPrices = async (
+  symbol: string,
+  limit: number = 35
+): Promise<HistoricalPrice[] | null> => {
+  try {
+    const url = `${stableBaseUrl}/historical-price-eod/light?symbol=${symbol}&limit=${limit}&apikey=${apiKey}`;
+    const response = await axios.get(url);
+
+    if (!response.data || response.data.length === 0) {
+      logger.warn(`No historical prices for ${symbol}`);
+      return null;
+    }
+
+    // מגיע sorted desc (חדש→ישן) - משאירים כך
+    return response.data as HistoricalPrice[];
+  } catch (e) {
+    logger.error(`getHistoricalPrices error for ${symbol}:`, e);
+    return null;
+  }
+};
+
+export function calcRunUp(prices: HistoricalPrice[]): number | null {
+  if (!prices || prices.length < 30) return null;
+
+  // prices[0] = היום (הכי חדש), prices[29] = לפני 30 יום
+  const priceToday = prices[0].price;
+  const price30dAgo = prices[29].price;
+
+  if (!price30dAgo || price30dAgo === 0) return null;
+
+  return ((priceToday - price30dAgo) / price30dAgo) * 100;
+}
 
 export const getEarningsCalendar = async (
   startDate: string,

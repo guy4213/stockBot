@@ -168,6 +168,15 @@ export interface AIRecommendation {
   reasoning: string;
 }
 
+
+export interface HardPreFilter {
+  runUp30d: number | null;          // % עלייה 30 יום לפני הדוח
+  volumeRatio: number | null;       // volume / avgVolume ביום הדוח
+  ahChangePercent: number | null;   // % תנועת AH (מגרוק)
+  ahPrice: number | null;           // מחיר AH בפועל
+  signals: string[];                // אזהרות טקסטואליות
+}
+
 export interface FullExtractionResponse {
   symbol: string;
   companyName: string;
@@ -187,6 +196,8 @@ export interface FullExtractionResponse {
   managementCommentary: string | null;
   dataQuality: DataQuality;
   aiRecommendation: AIRecommendation;
+  hardPreFilter: HardPreFilter;     // ✅ חדש - שלב 0
+
 }
 
 // ============================================

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { GrokMessage } from '../types/grok.types';
 import logger, { stockLog } from '../utils/structureLogger';
 import { findIRCandidates, GROK_API_KEY, IRPortal, MAX_API_RETRIES, verifyIRWithFlash } from './openRouterService';
+import { getHistoricalPrices, calcRunUp } from "./stockService";
 
 const TRUSTED_CDN_DOMAINS = [
   'q4cdn.com',
@@ -501,4 +502,85 @@ NOT_FOUND: Could only find pre-announcement, no actual report.
     logger.error(`   ❌ Grok search failed: ${e.message}`);
     return null;
   }
+}
+
+
+
+export async function getAHDataFromGrok(
+  symbol: string,
+  companyName: string
+): Promise<{ ahPrice: number | null; ahChangePercent: number | null }> {
+  try {
+    const prompt = `What is the current after-hours price of ${symbol} (${companyName}) stock right now?
+Return ONLY this JSON, no explanation:
+{
+  "ahPrice": <number or null>,
+  "ahChangePercent": <number or null>
+}
+ahChangePercent should be the % change from regular close (positive = up, negative = down).
+If after-hours trading is not available or market is open, return nulls.`;
+
+    const res = await callGrokAPI(
+      [{ role: "user", content: prompt }],
+      0.1,
+      150,
+      true  // enable web_search
+    );
+
+    const clean = res.trim().replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(clean);
+
+    return {
+      ahPrice: parsed.ahPrice ?? null,
+      ahChangePercent: parsed.ahChangePercent ?? null,
+    };
+  } catch (e) {
+    logger.warn(`⚠️ Could not fetch AH data for ${symbol}: ${(e as Error).message}`);
+    return { ahPrice: null, ahChangePercent: null };
+  }
+}
+
+
+// ============================================
+// 3. פונקציית חישוב סיגנלים - הוסף לפני fullExtraction
+// ============================================
+export function buildPreFilterSignals(
+  runUp30d: number | null,
+  ahChangePercent: number | null,
+  volumeRatio: number | null,
+  epsBeatPercent: number | null  // יגיע מFinnhub אם זמין
+): string[] {
+  const signals: string[] = [];
+
+  // Run-Up signals
+  if (runUp30d !== null) {
+    if (runUp30d > 25) signals.push(`🔴 Run-Up גבוה מאוד: +${runUp30d.toFixed(1)}% ב-30 יום`);
+    else if (runUp30d > 15) signals.push(`🟡 Run-Up משמעותי: +${runUp30d.toFixed(1)}% ב-30 יום`);
+    else if (runUp30d < -10) signals.push(`🟢 ירידה לפני דוח: ${runUp30d.toFixed(1)}% ב-30 יום (לא Priced-In)`);
+    else signals.push(`⚪ Run-Up נמוך: ${runUp30d.toFixed(1)}% ב-30 יום`);
+  }
+
+  // Beat קטן אחרי Run-Up גדול - האזהרה הקריטית
+  if (runUp30d !== null && runUp30d > 15 && epsBeatPercent !== null && epsBeatPercent < 5) {
+    signals.push(`🚨 אזהרה: Beat קטן (${epsBeatPercent.toFixed(1)}%) אחרי Run-Up גדול - סיכון Sell-The-News`);
+  }
+
+  // AH signals
+  if (ahChangePercent !== null) {
+    if (ahChangePercent >= 4) signals.push(`🟢 AH חיובי חזק: +${ahChangePercent.toFixed(1)}%`);
+    else if (ahChangePercent > 0) signals.push(`🟢 AH חיובי: +${ahChangePercent.toFixed(1)}%`);
+    else if (ahChangePercent <= -4) signals.push(`🔴 AH שלילי חזק: ${ahChangePercent.toFixed(1)}% - Market Negative Signal`);
+    else signals.push(`🟡 AH שלילי קל: ${ahChangePercent.toFixed(1)}%`);
+  } else {
+    signals.push(`⚪ AH: לא זמין`);
+  }
+
+  // Volume signals
+  if (volumeRatio !== null) {
+    if (volumeRatio >= 3) signals.push(`🟢 נפח חריג: ×${volumeRatio.toFixed(1)} מהממוצע`);
+    else if (volumeRatio >= 1.5) signals.push(`🟢 נפח מאשר: ×${volumeRatio.toFixed(1)} מהממוצע`);
+    else signals.push(`🟡 נפח חלש: ×${volumeRatio.toFixed(1)} מהממוצע - חוסר אישור`);
+  }
+
+  return signals;
 }
