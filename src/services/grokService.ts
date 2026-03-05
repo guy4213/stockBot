@@ -506,44 +506,7 @@ NOT_FOUND: Could only find pre-announcement, no actual report.
 
 
 
-export async function getAHDataFromGrok(
-  symbol: string,
-  companyName: string
-): Promise<{ ahPrice: number | null; ahChangePercent: number | null }> {
-  try {
-    const prompt = `What is the current after-hours price of ${symbol} (${companyName}) stock right now?
-Return ONLY this JSON, no explanation:
-{
-  "ahPrice": <number or null>,
-  "ahChangePercent": <number or null>
-}
-ahChangePercent should be the % change from regular close (positive = up, negative = down).
-If after-hours trading is not available or market is open, return nulls.`;
 
-    const res = await callGrokAPI(
-      [{ role: "user", content: prompt }],
-      0.1,
-      150,
-      true  // enable web_search
-    );
-
-    const clean = res.trim().replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(clean);
-
-    return {
-      ahPrice: parsed.ahPrice ?? null,
-      ahChangePercent: parsed.ahChangePercent ?? null,
-    };
-  } catch (e) {
-    logger.warn(`⚠️ Could not fetch AH data for ${symbol}: ${(e as Error).message}`);
-    return { ahPrice: null, ahChangePercent: null };
-  }
-}
-
-
-// ============================================
-// 3. פונקציית חישוב סיגנלים - הוסף לפני fullExtraction
-// ============================================
 export function buildPreFilterSignals(
   runUp30d: number | null,
   ahChangePercent: number | null,
@@ -561,9 +524,13 @@ export function buildPreFilterSignals(
   }
 
   // Beat קטן אחרי Run-Up גדול - האזהרה הקריטית
-  if (runUp30d !== null && runUp30d > 15 && epsBeatPercent !== null && epsBeatPercent < 5) {
-    signals.push(`🚨 אזהרה: Beat קטן (${epsBeatPercent.toFixed(1)}%) אחרי Run-Up גדול - סיכון Sell-The-News`);
+if (runUp30d !== null && runUp30d > 15 && epsBeatPercent !== null) {
+  if (epsBeatPercent < 0) {
+    signals.push(`🚨 EPS Miss מהותי: ${epsBeatPercent.toFixed(1)}% אחרי Run-Up של +${runUp30d.toFixed(1)}% - סיכון גבוה מאוד`);
+  } else if (epsBeatPercent < 5) {
+    signals.push(`🚨 אזהרה: Beat קטן (+${epsBeatPercent.toFixed(1)}%) אחרי Run-Up גדול - סיכון Sell-The-News`);
   }
+}
 
   // AH signals
   if (ahChangePercent !== null) {

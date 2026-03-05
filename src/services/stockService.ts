@@ -2,7 +2,7 @@ import axios from "axios";
 import logger from "../utils/logger";
 import dotenv from "dotenv";
 import { HardPreFilter } from "../types/grok.types";
-import { buildPreFilterSignals, getAHDataFromGrok } from "./grokService";
+import { buildPreFilterSignals } from "./grokService";
 
 dotenv.config({ quiet: true });
 
@@ -43,41 +43,62 @@ export interface HistoricalPrice {
 export async function runHardPreFilter(
   symbol: string,
   companyName: string,
-  epsBeatPercent: number | null  // מFinnhub אם זמין, אחרת null
+  reportType: "BMO" | "AMC",
+  epsBeatPercent: number | null
 ): Promise<HardPreFilter> {
 
-  logger.info(`\n🔍 Mira Step 0: Hard Pre-Filter [${symbol}]`);
-
-  // שלוש קריאות מקביליות
-  const [historicalResult, ahResult, quoteResult] = await Promise.allSettled([
+  const [historicalResult, quoteResult] = await Promise.allSettled([
     getHistoricalPrices(symbol, 35),
-    getAHDataFromGrok(symbol, companyName),
     getQuote(symbol),
   ]);
 
-  const prices   = historicalResult.status === "fulfilled" ? historicalResult.value : null;
-  const ah       = ahResult.status       === "fulfilled" ? ahResult.value       : { ahPrice: null, ahChangePercent: null };
-  const quote    = quoteResult.status    === "fulfilled" ? quoteResult.value    : null;
+  const prices = historicalResult.status === "fulfilled" ? historicalResult.value : null;
+  const quote  = quoteResult.status === "fulfilled" ? quoteResult.value : null;
 
-  const runUp30d     = calcRunUp(prices ?? []);
-  const volumeRatio  = quote?.volume && quote?.avgVolume && quote.avgVolume > 0
-    ? quote.volume / quote.avgVolume
-    : null;
+  // ─── Run-Up 30 יום ────────────────────────────────────────
+  const runUp30d = calcRunUp(prices ?? []);
 
-  const signals = buildPreFilterSignals(runUp30d, ah.ahChangePercent, volumeRatio, epsBeatPercent);
+  // ─── Volume Ratio — מחושב מhistorical ────────────────────
+  let volumeRatio: number | null = null;
 
-  logger.info(`   📊 Run-Up 30d:    ${runUp30d     !== null ? runUp30d.toFixed(1) + "%"     : "N/A"}`);
-  logger.info(`   📊 AH Change:     ${ah.ahChangePercent !== null ? ah.ahChangePercent.toFixed(1) + "%" : "N/A"}`);
-  logger.info(`   📊 Volume Ratio:  ${volumeRatio  !== null ? "×" + volumeRatio.toFixed(1)  : "N/A"}`);
-  logger.info(`   🚦 Signals: ${signals.join(" | ")}`);
+  if (quote?.volume && prices && prices.length >= 20) {
+    const avgVolume = prices
+      .slice(0, 30)  // 30 ימים אחרונים
+      .reduce((sum, day) => sum + (day.volume ?? 0), 0) / Math.min(prices.length, 30);
 
-  return {
-    runUp30d,
-    volumeRatio,
-    ahChangePercent: ah.ahChangePercent,
-    ahPrice:         ah.ahPrice,
-    signals,
-  };
+    if (avgVolume > 0) {
+      volumeRatio = quote.volume / avgVolume;
+      logger.info(`   📊 Volume: ${(quote.volume/1e6).toFixed(1)}M vs avg ${(avgVolume/1e6).toFixed(1)}M → ×${volumeRatio.toFixed(1)}`);
+    }
+  } else {
+    logger.warn(`   ⚠️ volumeRatio N/A — prices: ${prices?.length ?? 0}, volume: ${quote?.volume ?? 'null'}`);
+  }
+
+  // ─── AH / Gap ─────────────────────────────────────────────
+  let ahPrice: number | null = null;
+  let ahChangePercent: number | null = null;
+
+  if (quote?.open && quote?.previousClose && quote.previousClose > 0) {
+    if (reportType === "BMO") {
+      ahPrice = quote.open;
+      ahChangePercent = Number(
+        (((quote.open - quote.previousClose) / quote.previousClose) * 100).toFixed(2)
+      );
+      logger.info(`   📊 BMO Gap: $${quote.open} vs $${quote.previousClose} = ${ahChangePercent}%`);
+    } else {
+      ahPrice = quote.price;
+      ahChangePercent = Number((quote.changesPercentage ?? 0).toFixed(2));
+      logger.info(`   📊 AMC Change: ${ahChangePercent}%`);
+    }
+  }
+
+  logger.info(`   📊 Run-Up 30d:   ${runUp30d !== null ? runUp30d.toFixed(1) + "%" : "N/A"}`);
+  logger.info(`   📊 AH Change:    ${ahChangePercent !== null ? ahChangePercent.toFixed(1) + "%" : "N/A"}`);
+  logger.info(`   📊 Volume Ratio: ${volumeRatio !== null ? "×" + volumeRatio.toFixed(1) : "N/A"}`);
+
+  const signals = buildPreFilterSignals(runUp30d, ahChangePercent, volumeRatio, epsBeatPercent);
+
+  return { runUp30d, volumeRatio, ahChangePercent, ahPrice, signals };
 }
 export const getHistoricalPrices = async (
   symbol: string,
@@ -168,6 +189,8 @@ export const getQuote = async (symbol: string) => {
       changesPercentage: quote.changesPercentage,
       eps: quote.eps,
       pe: quote.pe,
+      open: quote.open ?? null,                      
+      previousClose: quote.previousClose ?? null,   
     };
   } catch (e) {
     logger.error(`getQuote error for ${symbol}:`, e);

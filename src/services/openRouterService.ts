@@ -727,7 +727,9 @@ export async function fullExtraction(
   quarter?: number,
   fiscalYear?: number,
   cachedIRPortal?: IRPortal | null ,
-    onIRPortalFound?: (portal: IRPortal) => void  // ✅ הוסף את זה
+    onIRPortalFound?: (portal: IRPortal) => void ,
+    reportType: "BMO" | "AMC" = "BMO"   // ✅ הוסף בסוף עם default
+
 
 ): Promise<FullExtractionResponse> {
   logger.info(`\n${"=".repeat(70)}`);
@@ -769,8 +771,7 @@ if (!validatedPdfUrl) {
  const epsBeatForPreFilter = finnhubData?.epsActual != null && finnhubData?.epsEstimate != null && finnhubData.epsEstimate !== 0
     ? ((finnhubData.epsActual - finnhubData.epsEstimate) / Math.abs(finnhubData.epsEstimate)) * 100
     : null;
-  const hardPreFilter = await runHardPreFilter(symbol, companyName, epsBeatForPreFilter);
-
+const hardPreFilter = await runHardPreFilter(symbol, companyName, reportType, epsBeatForPreFilter);
 
 logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
   logger.info(`   Proceeding with extraction...\n`);
@@ -1588,19 +1589,19 @@ export class StockProcessor {
     
     const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
     
-    // if (reportType === "BMO") {
-    //   // BMO: 6:00 AM - 9:30 AM
-    //   const checkStart = 6 * 60; // 360
-    //   const checkEnd = 9 * 60 + 30; // 570
-    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    // }
+    if (reportType === "BMO") {
+      // BMO: 6:00 AM - 9:30 AM
+      const checkStart = 6 * 60; // 360
+      const checkEnd = 9 * 60 + 30; // 570
+      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    }
     
-    // if (reportType === "AMC") {
-    //   // AMC: 4:00 PM - 8:00 PM
-    //   const checkStart = 16 * 60; // 960
-    //   const checkEnd = 20 * 60; // 1200
-    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    // }
+    if (reportType === "AMC") {
+      // AMC: 4:00 PM - 8:00 PM
+      const checkStart = 16 * 60; // 960
+      const checkEnd = 20 * 60; // 1200
+      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    }
     
     return true;
   } catch (error) {
@@ -1726,7 +1727,8 @@ private async processAllStocks(): Promise<void> {
     
     // 2. שמירה לדיסק (כדי שירוץ מחר/אחרי קריסה)
     saveIrPortalToDisk(stock.symbol, foundIrPortal);
-  }
+  },
+  stock.reportType
 );
   
           stock.fullData = fullData;
