@@ -131,13 +131,17 @@ export interface Revenue {
 export interface YoYGrowth {
   epsChange: number | null;
   revenueChange: number | null;
-  revenueChangeType?: "quarterly" | "TTM";  // Type of revenue comparison
+  revenueChangeType?: "quarterly" | "TTM";
+  prevQuarterEpsChange: number | null;
+  prevQuarterRevChange: number | null;
 }
-
 export interface CashFlow {
   freeCashFlow: number | null;
   yoyChange: number | null;
+  commonStockRepurchased: number | null;  
+  commonDividendsPaid: number | null;     
 }
+
 
 export interface Margins {
   netMargin: number | null;
@@ -171,15 +175,23 @@ export interface AIRecommendation {
 
 export interface HardPreFilter {
   runUp30d: number | null;         
-  volumeRatio: number | null;       // 
+  volumeRatio: number | null;       
   ahChangePercent: number | null
   ahPrice: number | null
   signals: string[];     
-   runUp60d: number | null;       
+  runUp60d: number | null;       
   peExpansion: number | null;       
   epsRevision: number | null;       
   pricedInScore: number | null;   
   pricedInClassification: "Fully" | "Partially" | "Not" | null;
+  sectorHeatClassification: "Hot" | "Neutral" | "Cold" | null;
+  sectorHeatScore: number | null;        
+  sectorChange: number | null;             
+  peersAvgChange: number | null;           
+  sectorName: string | null;
+  sectorLongBlocked: boolean;    
+  etfFlowSignal: "positive" | "negative" | "neutral" | null;
+  newsMomentumSignal: "positive" | "negative" | "neutral" | null;
 }
 
 export interface FullExtractionResponse {
@@ -201,7 +213,19 @@ export interface FullExtractionResponse {
   managementCommentary: string | null;
   dataQuality: DataQuality;
   aiRecommendation: AIRecommendation;
-  hardPreFilter: HardPreFilter;     // ✅ חדש - שלב 0
+  hardPreFilter: HardPreFilter;  
+
+  intradayPotential?: {
+  classification: "High" | "Medium" | "Low";
+  score: number;
+  signals: string[];
+
+}
+trendPotential?: {
+  classification: "High" | "Medium" | "Low";
+  score: number;       // 0-7
+  signals: string[];
+};
 
 }
 
@@ -287,3 +311,5 @@ export interface StockProcessingState {
     revenueEstimate: number | null;
   };
 }
+
+

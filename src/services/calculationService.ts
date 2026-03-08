@@ -1,7 +1,131 @@
 import { FullExtractionResponse, MiraScore } from "../types/grok.types";
 import logger from '../utils/structureLogger';
 
+export type IntradayClassification = "High" | "Medium" | "Low";
 
+export interface IntradayPotential {
+  classification: IntradayClassification;
+  score: number;           // 0-6 כמה מדדים חיוביים
+  signals: string[];       // פירוט לכל מדד
+}
+export type TrendClassification = "High" | "Medium" | "Low";
+
+export interface TrendPotential {
+  classification: TrendClassification;
+  score: number;       // 0-7
+  signals: string[];
+}
+
+
+export function calcTrendPotential(data: FullExtractionResponse): TrendPotential {
+  let positiveCount = 0;
+  const signals: string[] = [];
+
+  // ── Metric 1: Dual Beat (Rev + EPS) ─────────────────────
+  const epsBeat = data.eps.beatPercent ?? 0;
+  const revBeat = data.revenue.beatPercent ?? 0;
+  if (epsBeat > 0 && revBeat > 0) {
+    positiveCount++;
+    signals.push(`✅ Dual Beat: EPS +${epsBeat.toFixed(1)}% / Rev +${revBeat.toFixed(1)}%`);
+  } else {
+    signals.push(`❌ Dual Beat: EPS ${epsBeat.toFixed(1)}% / Rev ${revBeat.toFixed(1)}%`);
+  }
+
+  // ── Metric 2: Guidance Raised ────────────────────────────
+  if (data.guidance.status === "raised") {
+    positiveCount++;
+    signals.push(`✅ Guidance: raised`);
+  } else {
+    signals.push(`❌ Guidance: ${data.guidance.status}`);
+  }
+
+  // ── Metric 3: Margin Expansion ───────────────────────────
+  if (data.margins.trend === "improving") {
+    positiveCount++;
+    signals.push(`✅ Margin Expansion: improving`);
+  } else {
+    signals.push(`❌ Margin Expansion: ${data.margins.trend}`);
+  }
+
+  // ── Metric 4: Operating Leverage ─────────────────────────
+  // Revenue growing + operating margin positive + improving
+  const revChange = data.yoyGrowth.revenueChange ?? 0;
+  const opMargin = data.margins.operatingMargin ?? 0;
+  const marginTrend = data.margins.trend;
+  if (revChange > 5 && opMargin > 0 && marginTrend === "improving") {
+    positiveCount++;
+    signals.push(`✅ Operating Leverage: Rev +${revChange.toFixed(1)}% + Op Margin ${opMargin.toFixed(1)}% improving`);
+  } else {
+    signals.push(`❌ Operating Leverage: Rev ${revChange.toFixed(1)}% / Op Margin ${opMargin.toFixed(1)}% (${marginTrend})`);
+  }
+
+  // ── Metric 5: YoY Acceleration ───────────────────────────
+  const currEpsYoY = data.yoyGrowth.epsChange ?? null;
+  const currRevYoY = data.yoyGrowth.revenueChange ?? null;
+  const prevEpsYoY = data.yoyGrowth.prevQuarterEpsChange ?? null;
+  const prevRevYoY = data.yoyGrowth.prevQuarterRevChange ?? null;
+
+  const epsAccelerating =
+    currEpsYoY !== null && prevEpsYoY !== null
+      ? currEpsYoY > prevEpsYoY
+      : null;
+
+  const revAccelerating =
+    currRevYoY !== null && prevRevYoY !== null
+      ? currRevYoY > prevRevYoY
+      : null;
+
+  // Option B: both accelerating = ✅, mixed = ❌, both decelerating = ❌
+  if (epsAccelerating === true && revAccelerating === true) {
+    positiveCount++;
+    signals.push(
+      `✅ YoY Acceleration: EPS ${prevEpsYoY?.toFixed(1)}% → ${currEpsYoY?.toFixed(1)}% | Rev ${prevRevYoY?.toFixed(1)}% → ${currRevYoY?.toFixed(1)}%`
+    );
+  } else if (epsAccelerating === null && revAccelerating === null) {
+    signals.push(`➡️ YoY Acceleration: N/A (insufficient data)`);
+  } else {
+    signals.push(
+      `❌ YoY Acceleration: mixed or decelerating — EPS acc:${epsAccelerating} Rev acc:${revAccelerating}`
+    );
+  }
+
+  // ── Metric 6: FCF Improvement ────────────────────────────
+  const fcfChange = data.cashFlow.yoyChange ?? 0;
+  if (fcfChange > 0) {
+    positiveCount++;
+    signals.push(`✅ FCF Improvement: +${fcfChange.toFixed(1)}% YoY`);
+  } else {
+    signals.push(`❌ FCF Improvement: ${fcfChange.toFixed(1)}% YoY`);
+  }
+
+  // ── Metric 7: Buybacks / Capital Return ──────────────────
+  const buybacks = data.cashFlow.commonStockRepurchased ?? 0;
+  const dividends = data.cashFlow.commonDividendsPaid ?? 0;
+  const hasCapitalReturn = buybacks < 0 || dividends < 0;
+
+  if (hasCapitalReturn) {
+    const parts: string[] = [];
+    if (buybacks < 0) parts.push(`Buybacks $${Math.abs(buybacks / 1e6).toFixed(0)}M`);
+    if (dividends < 0) parts.push(`Dividends $${Math.abs(dividends / 1e6).toFixed(0)}M`);
+    positiveCount++;
+    signals.push(`✅ Capital Return: ${parts.join(" + ")}`);
+  } else {
+    signals.push(`❌ Capital Return: none`);
+  }
+
+  // ── Final Classification ──────────────────────────────────
+  const classification: TrendClassification =
+    positiveCount >= 6 ? "High"
+    : positiveCount >= 4 ? "Medium"
+    : "Low";
+
+  logger.info(
+    `📈 Trend Potential [${data.symbol}]: ${classification} (${positiveCount}/7 signals)`
+  );
+  signals.forEach((s) => logger.info(`   ${s}`));
+
+  return { classification, score: positiveCount, signals };
+}
 export function calculateDetailedScore(data: FullExtractionResponse): MiraScore {
     let totalScore = 0;
     const scoreBreakdown: string[] = [];
@@ -77,7 +201,7 @@ export function calculateDetailedScore(data: FullExtractionResponse): MiraScore 
 
 
     ///////////////////////////////////////////////////////////////////
-    // Priced-In Detector 
+    // Priced-In Detector - stage 3
     const pricedInScore = data.hardPreFilter?.pricedInScore ?? null;
     const pricedInClass = data.hardPreFilter?.pricedInClassification ?? null;
 
@@ -95,7 +219,23 @@ export function calculateDetailedScore(data: FullExtractionResponse): MiraScore 
     } else {
       scoreBreakdown.push(`Priced-In: N/A (נתונים חסרים) → 0`);
     }
-  
+    // Stage 4: Sector Heat Check
+    const sectorHeatScore = data.hardPreFilter?.sectorHeatScore ?? null;
+    const sectorHeatClass = data.hardPreFilter?.sectorHeatClassification ?? null;
+
+    if (sectorHeatScore !== null) {
+      totalScore += sectorHeatScore;
+      if (sectorHeatScore === 1) {
+        scoreBreakdown.push(`Sector Heat: 🔥 Hot → +1`);
+      } else if (sectorHeatScore === -1.5) {
+        scoreBreakdown.push(`Sector Heat: ❄️ Cold → -1.5`);
+        negativeCount++;
+      } else {
+        scoreBreakdown.push(`Sector Heat: Neutral → 0`);
+      }
+    } else {
+      scoreBreakdown.push(`Sector Heat: N/A → 0`);
+    }
     // ============================================
     // STEP 2: SMART EXCEPTION LAYER
     // ============================================
@@ -229,4 +369,77 @@ export function calculateTradeParams(price: number, classification: string) {
         stopPrice:   Number((safePrice * 0.97).toFixed(2)),
         hasPriceData: true
     };
+}
+
+
+export function calcIntradayPotential(data: FullExtractionResponse): IntradayPotential {
+  let positiveCount = 0;
+  const signals: string[] = [];
+
+  // ── מדד 1: EPS Surprise Size ─────────────────────────────
+  const epsBeat = data.eps.beatPercent ?? 0;
+  if (epsBeat > 5) {
+    positiveCount++;
+    signals.push(`✅ EPS Surprise: +${epsBeat.toFixed(1)}%`);
+  } else {
+    signals.push(`❌ EPS Surprise: ${epsBeat.toFixed(1)}%`);
+  }
+
+  // ── מדד 2: Margin Surprise ───────────────────────────────
+  const marginTrend = data.margins.trend;
+  if (marginTrend === "improving") {
+    positiveCount++;
+    signals.push(`✅ Margin Surprise: improving`);
+  } else {
+    signals.push(`❌ Margin Surprise: ${marginTrend}`);
+  }
+
+  // ── מדד 3: Guidance Delta ────────────────────────────────
+  const guidance = data.guidance.status;
+  if (guidance === "raised") {
+    positiveCount++;
+    signals.push(`✅ Guidance: raised`);
+  } else {
+    signals.push(`❌ Guidance: ${guidance}`);
+  }
+
+  // ── מדד 4: FCF Shift ─────────────────────────────────────
+  const fcfChange = data.cashFlow.yoyChange ?? 0;
+  if (fcfChange > 0) {
+    positiveCount++;
+    signals.push(`✅ FCF Shift: +${fcfChange.toFixed(1)}% YoY`);
+  } else {
+    signals.push(`❌ FCF Shift: ${fcfChange.toFixed(1)}% YoY`);
+  }
+
+  // ── מדד 5: Volume Spike ──────────────────────────────────
+  const volumeRatio = data.hardPreFilter?.volumeRatio ?? 0;
+  if (volumeRatio > 1.5) {
+    positiveCount++;
+    signals.push(`✅ Volume Spike: ×${volumeRatio.toFixed(1)}`);
+  } else {
+    signals.push(`❌ Volume Spike: ×${volumeRatio.toFixed(1)}`);
+  }
+
+  // ── מדד 6: AH Reaction ───────────────────────────────────
+  const ahChange = data.hardPreFilter?.ahChangePercent ?? 0;
+  if (ahChange > 2) {
+    positiveCount++;
+    signals.push(`✅ AH Reaction: +${ahChange.toFixed(1)}%`);
+  } else {
+    signals.push(`❌ AH Reaction: ${ahChange.toFixed(1)}%`);
+  }
+
+  // ── סיווג סופי ───────────────────────────────────────────
+  const classification: IntradayClassification =
+    positiveCount >= 5 ? "High"
+    : positiveCount >= 3 ? "Medium"
+    : "Low";
+
+  logger.info(
+    `⚡ Intraday Potential [${data.symbol}]: ${classification} (${positiveCount}/6 signals)`
+  );
+  signals.forEach(s => logger.info(`   ${s}`));
+
+  return { classification, score: positiveCount, signals };
 }

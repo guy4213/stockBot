@@ -25,7 +25,7 @@ import {
 import fs from "fs";
 import path from "path";
 import { fetchContentWithJina } from "./contentExtractor";
-import { calculateDetailedScore, calculateTradeParams } from "./calculationService";
+import { calcIntradayPotential, calcTrendPotential, calculateDetailedScore, calculateTradeParams } from "./calculationService";
 import { callGrokAPI, findEarningsPdf } from "./grokService";
 dotenv.config({ quiet: true });
 
@@ -1386,9 +1386,6 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
     ? ` (${fullData.cashFlow.yoyChange > 0 ? '+' : ''}${fullData.cashFlow.yoyChange.toFixed(1)}% YoY)`
     : '';
 
-
-
-
 const preFilterSection = preFilter
   ? `
 🔍 ניתוח שוק (Pre-Filter):
@@ -1401,6 +1398,38 @@ const preFilterSection = preFilter
 - Priced-In: ${preFilter.pricedInClassification === "Fully" ? "🔴 מתומחר במלואו" : preFilter.pricedInClassification === "Partially" ? "🟡 מתומחר חלקית" : preFilter.pricedInClassification === "Not" ? "🟢 לא מתומחר" : "לא זמין"} ${preFilter.pricedInScore !== null ? `(${preFilter.pricedInScore > 0 ? "+" : ""}${preFilter.pricedInScore})` : ""}
 ${preFilter.signals.filter(s => s.includes("🚨") || s.includes("🔴") || s.includes("🟡")).join("\n")}`
   : "";
+
+const sectorHeatLine = preFilter?.sectorHeatClassification
+  ? `- מצב סקטור: ${
+      preFilter.sectorHeatClassification === "Hot"    ? "🔥 חם"
+      : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
+      : "⚪ ניטרלי"
+    } (${preFilter.sectorName ?? "?"})
+  • סקטור: ${preFilter.sectorChange !== null ? (preFilter.sectorChange >= 0 ? "+" : "") + preFilter.sectorChange.toFixed(1) + "%" : "N/A"}
+  • Peers: ${preFilter.peersAvgChange !== null ? (preFilter.peersAvgChange >= 0 ? "+" : "") + preFilter.peersAvgChange.toFixed(1) + "%" : "N/A"}
+  • ETF Flow: ${preFilter.etfFlowSignal === "positive" ? "📈 חיובי" : preFilter.etfFlowSignal === "negative" ? "📉 שלילי" : "➡️ ניטרלי"}
+  • News: ${preFilter.newsMomentumSignal === "positive" ? "📰 חיובי" : preFilter.newsMomentumSignal === "negative" ? "📰 שלילי" : "📰 ניטרלי"}${preFilter.sectorLongBlocked ? "\n  ⛔ חסם LONG" : ""}`
+  : "- מצב סקטור: לא זמין";
+
+const intradayPotential = calcIntradayPotential(fullData);
+fullData.intradayPotential = intradayPotential;
+
+
+const intradayLine = `⚡ פוטנציאל יומי: ${
+  intradayPotential.classification === "High"   ? "🟢 גבוה"
+  : intradayPotential.classification === "Medium" ? "🟡 בינוני"
+  : "🔴 נמוך — אין המלצת Day Trade"
+} (${intradayPotential.score}/6)`;
+
+
+const trendPotential = calcTrendPotential(fullData);
+fullData.trendPotential = trendPotential;
+
+const trendLine = `📈 פוטנציאל מגמה: ${
+  trendPotential.classification === "High"   ? "🟢 גבוה"
+  : trendPotential.classification === "Medium" ? "🟡 בינוני"
+  : "🔴 נמוך — אין המלצת Swing"
+} (${trendPotential.score}/7)`;
     const prompt = `
   אתה Mira, אנליסט פיננסי AI מומחה.
   צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
@@ -1464,6 +1493,12 @@ ${preFilter.signals.filter(s => s.includes("🚨") || s.includes("🔴") || s.in
 
   ${preFilterSection}
 
+  ${sectorHeatLine}
+
+  ${intradayLine}
+  
+  ${trendLine}
+  
   📈 המלצת מסחר:
   כיוון: ${tradeParams.direction}
   מחיר נוכחי: $${currentPrice}

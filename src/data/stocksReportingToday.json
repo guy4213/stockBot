@@ -52,7 +52,14 @@
         "revenueActual": 444300000,
         "revenueEstimate": 426481408
       },
-      "sentToTelegram": false
+      "sentToTelegram": true,
+      "cachedIRPortal": {
+        "url": "https://investors.samsara.com/overview/default.aspx",
+        "domain": "investors.samsara.com",
+        "confidence": 0.9,
+        "reason": "The URL clearly indicates the investor relations section of Samsara's website, with the title 'Investor Relations: Samsara Inc.' and relevant information like stock ticker and contact information.",
+        "verifiedAt": "2026-03-08T11:25:46.041Z"
+      }
     },
     {
       "symbol": "COO",
@@ -75,7 +82,14 @@
         "revenueActual": 1024099999,
         "revenueEstimate": 1036697330
       },
-      "sentToTelegram": false
+      "sentToTelegram": true,
+      "cachedIRPortal": {
+        "url": "https://investor.coopercos.com/",
+        "domain": "investor.coopercos.com",
+        "confidence": 0.9,
+        "reason": "The URL investor.coopercos.com appears consistently across multiple snippets as the location for investor-related information for The Cooper Companies (COO).",
+        "verifiedAt": "2026-03-08T12:20:58.447Z"
+      }
     },
     {
       "symbol": "RUM",
@@ -98,7 +112,8 @@
         "revenueActual": 27070000,
         "revenueEstimate": 27899563
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "AMPX",
@@ -121,7 +136,8 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "OMDA",
@@ -130,7 +146,7 @@
       "windowStart": "16:00",
       "windowEnd": "20:00",
       "marketCap": 813608060,
-      "volume": 5372583,
+      "volume": 5348752,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -144,7 +160,8 @@
         "revenueActual": 75850000,
         "revenueEstimate": 71064868
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "GEVO",
@@ -167,7 +184,8 @@
         "revenueActual": 45350000,
         "revenueEstimate": 46902456
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "PDYN",
@@ -190,7 +208,8 @@
         "revenueActual": 1660000,
         "revenueEstimate": 825180
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "ALT",
@@ -213,7 +232,8 @@
         "revenueActual": 30000,
         "revenueEstimate": 717
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     }
   ]
 }

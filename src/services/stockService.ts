@@ -17,6 +17,30 @@ const stableBaseUrl = "https://financialmodelingprep.com/stable";
 const apiBaseUrl = "https://financialmodelingprep.com/api/v3";
 const apiV4BaseUrl = "https://financialmodelingprep.com/api/v4";
 
+
+
+const SECTOR_ETF_MAP: Record<string, string> = {
+  "Technology":             "XLK",
+  "Healthcare":             "XLV",
+  "Financials":             "XLF",
+  "Consumer Discretionary": "XLY",
+  "Consumer Staples":       "XLP",
+  "Energy":                 "XLE",
+  "Industrials":            "XLI",
+  "Materials":              "XLB",
+  "Real Estate":            "XLRE",
+  "Utilities":              "XLU",
+  "Communication Services": "XLC",
+};
+
+export interface SectorHeatRawData {
+  sectorChange: number | null;
+  peersAvgChange: number | null;
+  sectorName: string | null;
+  exchange: string | null;
+}
+
+
 export type EarningRes = {
   symbol: string;
   date: string;
@@ -27,6 +51,15 @@ export type EarningRes = {
   lastUpdated: string;
 };
 
+
+export interface SectorHeatRawData {
+  sectorChange: number | null;
+  peersAvgChange: number | null;
+  sectorName: string | null;
+  exchange: string | null;
+  etfFlowSignal: "positive" | "negative" | "neutral";
+  newsMomentumSignal: "positive" | "negative" | "neutral";
+}
 
 export interface HistoricalPrice {
   date: string;
@@ -46,19 +79,24 @@ export async function runHardPreFilter(
 
   // ─── שליפות מקבילות ───────────────────────────────────────
  
-const [historicalResult, quoteResult, ratiosResult, estimatesResult] = await Promise.allSettled([
-  getHistoricalPrices(symbol, 65),
-  getQuote(symbol),
-getHistoricalRatios(symbol, reportDate),
-getAnalystEstimates(symbol, reportDate),
-]);
+
+const [historicalResult, quoteResult, ratiosResult, estimatesResult, sectorHeatResult] =
+  await Promise.allSettled([
+    getHistoricalPrices(symbol, 65),
+    getQuote(symbol),
+    getHistoricalRatios(symbol, reportDate),
+    getAnalystEstimates(symbol, reportDate),
+    getSectorHeatData(symbol,companyName),   // ✅ חדש
+  ]);
 
 
   const prices  = historicalResult.status === "fulfilled" ? historicalResult.value : null;
   const quote   = quoteResult.status === "fulfilled" ? quoteResult.value : null;
   const ratios  = ratiosResult.status === "fulfilled" ? ratiosResult.value : null;
   const estimates = estimatesResult.status === "fulfilled" ? estimatesResult.value : null;
-
+  const sectorRaw = sectorHeatResult.status === "fulfilled" ? sectorHeatResult.value : null;
+  // ג. חשב classification:
+  const sectorHeat = sectorRaw ? calcSectorHeat(sectorRaw) : { sectorHeatClassification: null, sectorHeatScore: null, sectorLongBlocked: false };
 
   logger.info(`🔍 DEBUG Volume — quote.volume: ${quote?.volume}`);
   logger.info(`🔍 DEBUG Volume — prices length: ${prices?.length}`);
@@ -66,6 +104,11 @@ getAnalystEstimates(symbol, reportDate),
   logger.info(`🔍 DEBUG Volume — prices[1].volume: ${prices?.[1]?.volume}`);
   logger.info(`🔍 DEBUG Ratios: ${JSON.stringify(ratios)}`);
   logger.info(`🔍 DEBUG Estimates: ${JSON.stringify(estimates)}`);
+
+logger.info(
+  `🌡️ Sector Heat [${symbol}]: ${sectorHeat.sectorHeatClassification ?? "N/A"} (score: ${sectorHeat.sectorHeatScore ?? "N/A"})`
+);
+
   // ─── שלב 0: Run-Up 30 יום (קיים) ─────────────────────────
   const runUp30d = calcRunUp(prices ?? [], 30);
 
@@ -158,6 +201,14 @@ getAnalystEstimates(symbol, reportDate),
     epsRevision,
     pricedInScore,
     pricedInClassification,
+    sectorHeatClassification: sectorHeat.sectorHeatClassification ?? null,
+    sectorHeatScore: sectorHeat.sectorHeatScore ?? null,
+    sectorChange: sectorRaw?.sectorChange ?? null,
+    peersAvgChange: sectorRaw?.peersAvgChange ?? null,
+    sectorName: sectorRaw?.sectorName ?? null,
+    sectorLongBlocked: sectorHeat.sectorLongBlocked,
+    etfFlowSignal: sectorRaw?.etfFlowSignal ?? null,
+    newsMomentumSignal: sectorRaw?.newsMomentumSignal ?? null,
   };
 }
 
@@ -326,6 +377,282 @@ export const getHistoricalPrices = async (
 };
 
 
+////new function for level 4
+export async function getSectorHeatData(symbol: string,companyName:string): Promise<SectorHeatRawData> {
+  // ── שלב א: Profile (חובה — נותן sector + exchange) ──────────
+  let sectorName: string | null = null;
+  let exchange: string | null = null;
+
+  try {
+    const profileRes = await axios.get(
+      `${stableBaseUrl}/profile?symbol=${symbol}&apikey=${apiKey}`
+    );
+    const profile = Array.isArray(profileRes.data)
+      ? profileRes.data[0]
+      : profileRes.data;
+    sectorName = profile?.sector ?? null;
+    exchange = profile?.exchange ?? null;
+    logger.info(`🏭 getSectorHeatData [${symbol}] — sector: ${sectorName}, exchange: ${exchange}`);
+  } catch (e) {
+    logger.warn(`⚠️ getSectorHeatData [${symbol}]: profile fetch failed`);
+    return { sectorChange: null, peersAvgChange: null, sectorName: null, exchange: null , etfFlowSignal: "neutral", newsMomentumSignal: "neutral" };
+  }
+
+  // ── שלב ב: Sector Performance + Peers — במקביל ─────────────
+  const today = new Date().toISOString().split("T")[0];
+
+  const [sectorPerfResult, peersResult] = await Promise.allSettled([
+    exchange
+      ? axios.get(
+          `${stableBaseUrl}/sector-performance-snapshot?date=${today}&exchange=${exchange}&apikey=${apiKey}`
+        )
+      : Promise.reject("no exchange"),
+    axios.get(`${stableBaseUrl}/stock-peers?symbol=${symbol}&apikey=${apiKey}`),
+  ]);
+
+  // ── Sector Change ────────────────────────────────────────────
+  let sectorChange: number | null = null;
+  if (sectorPerfResult.status === "fulfilled" && sectorName) {
+    const sectors = sectorPerfResult.value.data;
+    const match = Array.isArray(sectors)
+      ? sectors.find((s: any) => s.sector === sectorName)
+      : null;
+    sectorChange = match?.averageChange ?? null;
+    logger.info(
+      `📊 Sector [${sectorName}]: averageChange = ${sectorChange !== null ? sectorChange.toFixed(2) + "%" : "N/A"}`
+    );
+  } else {
+    logger.warn(`⚠️ getSectorHeatData [${symbol}]: sector-performance fetch failed or no match`);
+  }
+
+  // ── Peers Avg Change ─────────────────────────────────────────
+  let peersAvgChange: number | null = null;
+  if (peersResult.status === "fulfilled") {
+    const peerData = peersResult.value.data;
+    const rawPeers: string[] =
+      Array.isArray(peerData) && peerData[0]?.peersList
+        ? peerData[0].peersList
+        : [];
+
+    const peers = rawPeers.filter((p) => p !== symbol).slice(0, 10);
+
+    if (peers.length > 0) {
+      try {
+        const quoteRes = await axios.get(
+          `${stableBaseUrl}/quote?symbol=${peers.join(",")}&apikey=${apiKey}`
+        );
+        const quotes: any[] = Array.isArray(quoteRes.data) ? quoteRes.data : [];
+        const changes = quotes
+          .map((q: any) => q.changesPercentage)
+          .filter((c: any) => c != null && !isNaN(c));
+
+        if (changes.length > 0) {
+          peersAvgChange =
+            changes.reduce((a: number, b: number) => a + b, 0) / changes.length;
+          logger.info(
+            `👥 Peers avg change (${changes.length} peers): ${peersAvgChange.toFixed(2)}%`
+          );
+        } else {
+          logger.warn(`⚠️ getSectorHeatData [${symbol}]: no valid peer changesPercentage`);
+        }
+      } catch (e) {
+        logger.warn(`⚠️ getSectorHeatData [${symbol}]: peer quote fetch failed`);
+      }
+    } else {
+      logger.warn(`⚠️ getSectorHeatData [${symbol}]: no peers found`);
+    }
+  } else {
+    logger.warn(`⚠️ getSectorHeatData [${symbol}]: stock-peers fetch failed`);
+  }
+
+  
+const [etfFlowSignal, newsMomentumSignal] = await Promise.all([
+  getEtfFlowSignal(sectorName),
+  getNewsMomentumSignal(symbol, companyName), // ← הוסף companyName לפרמטרים של getSectorHeatData
+]);
+return {
+  sectorChange,
+  peersAvgChange,
+  sectorName,
+  exchange,
+  etfFlowSignal,
+  newsMomentumSignal,
+};
+
+}
+
+////new function for level 4
+
+export function calcSectorHeat(raw: SectorHeatRawData): {
+  sectorHeatClassification: "Hot" | "Neutral" | "Cold";
+  sectorHeatScore: number;
+  sectorLongBlocked: boolean;
+} {
+  const { sectorChange, peersAvgChange, etfFlowSignal, newsMomentumSignal } = raw;
+
+  // ── סיגנל 1: Sector Performance ─────────────────────────
+  const sectorSignal =
+    sectorChange == null   ? "neutral"
+    : sectorChange > 0.5  ? "positive"
+    : sectorChange < -0.5 ? "negative"
+    : "neutral";
+
+  // ── סיגנל 2: Peer Reactions ──────────────────────────────
+  const peersSignal =
+    peersAvgChange == null  ? "neutral"
+    : peersAvgChange > 1    ? "positive"
+    : peersAvgChange < -1   ? "negative"
+    : "neutral";
+
+
+  const signals = [sectorSignal, peersSignal, etfFlowSignal, newsMomentumSignal];
+
+  const positiveCount = signals.filter((s) => s === "positive").length;
+  const negativeCount = signals.filter((s) => s === "negative").length;
+
+  logger.info(
+    `🌡️ calcSectorHeat signals → sector:${sectorSignal} peers:${peersSignal} etf:${etfFlowSignal} news:${newsMomentumSignal}`
+  );
+  logger.info(
+    `🌡️ calcSectorHeat counts → pos:${positiveCount} neg:${negativeCount}`
+  );
+
+  let classification: "Hot" | "Neutral" | "Cold";
+
+  if (positiveCount >= 3) classification = "Hot";
+  else if (negativeCount >= 3) classification = "Cold";
+  else classification = "Neutral";
+
+  const sectorHeatScore =
+    classification === "Hot"  ? 1
+    : classification === "Cold" ? -1.5
+    : 0;
+
+  return {
+    sectorHeatClassification: classification,
+    sectorHeatScore,
+    sectorLongBlocked: classification === "Cold",
+  };
+}
+
+
+
+
+export async function getEtfFlowSignal(
+  sectorName: string | null
+): Promise<"positive" | "negative" | "neutral"> {
+  const SERPER_API_KEY = process.env.SERPER_API_KEY;
+  if (!SERPER_API_KEY || !sectorName) return "neutral";
+
+  const etfTicker = SECTOR_ETF_MAP[sectorName];
+  if (!etfTicker) {
+    logger.warn(`⚠️ getEtfFlowSignal: no ETF mapped for sector "${sectorName}"`);
+    return "neutral";
+  }
+
+  try {
+    const query = `${etfTicker} ETF flow today`;
+    const response = await axios.post(
+      "https://google.serper.dev/search",
+      { q: query, num: 8, tbs: "qdr:d", gl: "us", hl: "en" },
+      {
+        headers: { "X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json" },
+        timeout: 8000,
+      }
+    );
+
+    const results = [
+      ...(response.data.news || []),
+      ...(response.data.organic || []),
+    ];
+
+    const POSITIVE_KEYWORDS = [
+      "inflow", "inflows", "buying", "bullish", "surge", "rally",
+      "gains", "up", "rises", "higher", "outperform",
+    ];
+    const NEGATIVE_KEYWORDS = [
+      "outflow", "outflows", "selling", "bearish", "drop", "fell",
+      "decline", "lower", "underperform", "losses", "down",
+    ];
+
+    let positiveCount = 0;
+    let negativeCount = 0;
+
+    for (const r of results) {
+      const text = `${r.title ?? ""} ${r.snippet ?? ""}`.toLowerCase();
+      if (POSITIVE_KEYWORDS.some((kw) => text.includes(kw))) positiveCount++;
+      if (NEGATIVE_KEYWORDS.some((kw) => text.includes(kw))) negativeCount++;
+    }
+
+    logger.info(
+      `📡 ETF Flow [${etfTicker}]: pos=${positiveCount} neg=${negativeCount} (${results.length} results)`
+    );
+
+    if (positiveCount > negativeCount + 1) return "positive";
+    if (negativeCount > positiveCount + 1) return "negative";
+    return "neutral";
+
+  } catch (e: any) {
+    logger.warn(`⚠️ getEtfFlowSignal [${sectorName}]: ${e.message}`);
+    return "neutral";
+  }
+}
+
+
+export async function getNewsMomentumSignal(
+  symbol: string,
+  companyName: string
+): Promise<"positive" | "negative" | "neutral"> {
+  const SERPER_API_KEY = process.env.SERPER_API_KEY;
+  if (!SERPER_API_KEY) return "neutral";
+
+  try {
+    const query = `${symbol} ${companyName} earnings`;
+    const response = await axios.post(
+      "https://google.serper.dev/search",
+      { q: query, num: 10, tbs: "qdr:d", gl: "us", hl: "en" },
+      {
+        headers: { "X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json" },
+        timeout: 8000,
+      }
+    );
+
+    const results = [
+      ...(response.data.news || []),
+      ...(response.data.organic || []),
+    ];
+
+    const POSITIVE_KEYWORDS = [
+      "beat", "beats", "strong", "record", "raised guidance", "raises guidance",
+      "surpass", "exceed", "top", "upside", "bullish", "rally", "jumps", "soars",
+    ];
+    const NEGATIVE_KEYWORDS = [
+      "miss", "misses", "weak", "lowered guidance", "lowers guidance", "cuts",
+      "disappoints", "below", "downside", "bearish", "drops", "falls", "slumps",
+    ];
+
+    let positiveCount = 0;
+    let negativeCount = 0;
+
+    for (const r of results) {
+      const text = `${r.title ?? ""} ${r.snippet ?? ""}`.toLowerCase();
+      if (POSITIVE_KEYWORDS.some((kw) => text.includes(kw))) positiveCount++;
+      if (NEGATIVE_KEYWORDS.some((kw) => text.includes(kw))) negativeCount++;
+    }
+
+    logger.info(
+      `📰 News Momentum [${symbol}]: pos=${positiveCount} neg=${negativeCount} (${results.length} results)`
+    );
+
+    if (positiveCount > negativeCount + 1) return "positive";
+    if (negativeCount > positiveCount + 1) return "negative";
+    return "neutral";
+
+  } catch (e: any) {
+    logger.warn(`⚠️ getNewsMomentumSignal [${symbol}]: ${e.message}`);
+    return "neutral";
+  }
+}
 
 export const getEarningsCalendar = async (
   startDate: string,
@@ -395,7 +722,7 @@ export const getQuote = async (symbol: string) => {
 // 🆕 NEW: שליפת Income Statement למאר Margins
 export const getIncomeStatement = async (symbol: string) => {
   try {
-    const url = `${apiBaseUrl}/income-statement/${symbol}?period=quarter&limit=5&apikey=${apiKey}`;
+    const url = `${stableBaseUrl}/income-statement?${symbol}?period=quarter&limit=5&apikey=${apiKey}`;
     const response = await axios.get(url);
     
     if (!response.data || response.data.length === 0) {
