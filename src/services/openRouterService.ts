@@ -771,7 +771,10 @@ if (!validatedPdfUrl) {
  const epsBeatForPreFilter = finnhubData?.epsActual != null && finnhubData?.epsEstimate != null && finnhubData.epsEstimate !== 0
     ? ((finnhubData.epsActual - finnhubData.epsEstimate) / Math.abs(finnhubData.epsEstimate)) * 100
     : null;
-const hardPreFilter = await runHardPreFilter(symbol, companyName, reportType, epsBeatForPreFilter);
+const hardPreFilter = await runHardPreFilter(symbol, companyName, reportType, epsBeatForPreFilter,reportDate);
+
+
+
 
 logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
   logger.info(`   Proceeding with extraction...\n`);
@@ -1344,6 +1347,8 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   const currentPrice = fullData.marketData?.price || 0;
   const preFilter = fullData.hardPreFilter;
 
+  
+
   if (!currentPrice || currentPrice === 0) {
     logger.warn(`⚠️ No valid price for ${fullData.symbol} - cannot calculate trade parameters`);
   } else {
@@ -1383,12 +1388,17 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
 
 
 
+
 const preFilterSection = preFilter
   ? `
 🔍 ניתוח שוק (Pre-Filter):
 - Run-Up 30 יום: ${preFilter.runUp30d !== null ? (preFilter.runUp30d >= 0 ? "+" : "") + preFilter.runUp30d.toFixed(1) + "%" : "לא זמין"}
+- Run-Up 60 יום: ${preFilter.runUp60d !== null ? (preFilter.runUp60d >= 0 ? "+" : "") + preFilter.runUp60d.toFixed(1) + "%" : "לא זמין"}
 - תגובת AH: ${preFilter.ahChangePercent !== null ? (preFilter.ahChangePercent >= 0 ? "+" : "") + preFilter.ahChangePercent.toFixed(1) + "%" : "לא זמין"}
 - נפח יחסי: ${preFilter.volumeRatio !== null ? "×" + preFilter.volumeRatio.toFixed(1) : "לא זמין"}
+- Multiple Expansion: ${preFilter.peExpansion !== null ? (preFilter.peExpansion >= 0 ? "+" : "") + preFilter.peExpansion.toFixed(1) + "%" : "לא זמין"}
+- EPS Revision: ${preFilter.epsRevision !== null ? (preFilter.epsRevision >= 0 ? "+" : "") + preFilter.epsRevision.toFixed(1) + "%" : "לא זמין"}
+- Priced-In: ${preFilter.pricedInClassification === "Fully" ? "🔴 מתומחר במלואו" : preFilter.pricedInClassification === "Partially" ? "🟡 מתומחר חלקית" : preFilter.pricedInClassification === "Not" ? "🟢 לא מתומחר" : "לא זמין"} ${preFilter.pricedInScore !== null ? `(${preFilter.pricedInScore > 0 ? "+" : ""}${preFilter.pricedInScore})` : ""}
 ${preFilter.signals.filter(s => s.includes("🚨") || s.includes("🔴") || s.includes("🟡")).join("\n")}`
   : "";
     const prompt = `
@@ -1589,19 +1599,19 @@ export class StockProcessor {
     
     const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
     
-    if (reportType === "BMO") {
-      // BMO: 6:00 AM - 9:30 AM
-      const checkStart = 6 * 60; // 360
-      const checkEnd = 9 * 60 + 30; // 570
-      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    }
+    // if (reportType === "BMO") {
+    //   // BMO: 6:00 AM - 9:30 AM
+    //   const checkStart = 6 * 60; // 360
+    //   const checkEnd = 9 * 60 + 30; // 570
+    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    // }
     
-    if (reportType === "AMC") {
-      // AMC: 4:00 PM - 8:00 PM
-      const checkStart = 16 * 60; // 960
-      const checkEnd = 20 * 60; // 1200
-      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    }
+    // if (reportType === "AMC") {
+    //   // AMC: 4:00 PM - 8:00 PM
+    //   const checkStart = 16 * 60; // 960
+    //   const checkEnd = 20 * 60; // 1200
+    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    // }
     
     return true;
   } catch (error) {

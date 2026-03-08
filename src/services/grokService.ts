@@ -511,11 +511,13 @@ export function buildPreFilterSignals(
   runUp30d: number | null,
   ahChangePercent: number | null,
   volumeRatio: number | null,
-  epsBeatPercent: number | null  // יגיע מFinnhub אם זמין
+  epsBeatPercent: number | null,
+  pricedInClassification: "Fully" | "Partially" | "Not" | null,
+  runUp60d: number | null
 ): string[] {
   const signals: string[] = [];
 
-  // Run-Up signals
+  // ─── Run-Up 30 יום ────────────────────────────────────────
   if (runUp30d !== null) {
     if (runUp30d > 25) signals.push(`🔴 Run-Up גבוה מאוד: +${runUp30d.toFixed(1)}% ב-30 יום`);
     else if (runUp30d > 15) signals.push(`🟡 Run-Up משמעותי: +${runUp30d.toFixed(1)}% ב-30 יום`);
@@ -523,30 +525,41 @@ export function buildPreFilterSignals(
     else signals.push(`⚪ Run-Up נמוך: ${runUp30d.toFixed(1)}% ב-30 יום`);
   }
 
-  // Beat קטן אחרי Run-Up גדול - האזהרה הקריטית
-if (runUp30d !== null && runUp30d > 15 && epsBeatPercent !== null) {
-  if (epsBeatPercent < 0) {
-    signals.push(`🚨 EPS Miss מהותי: ${epsBeatPercent.toFixed(1)}% אחרי Run-Up של +${runUp30d.toFixed(1)}% - סיכון גבוה מאוד`);
-  } else if (epsBeatPercent < 5) {
-    signals.push(`🚨 אזהרה: Beat קטן (+${epsBeatPercent.toFixed(1)}%) אחרי Run-Up גדול - סיכון Sell-The-News`);
+  // ─── Beat קטן אחרי Run-Up גדול ───────────────────────────
+  if (runUp30d !== null && runUp30d > 15 && epsBeatPercent !== null) {
+    if (epsBeatPercent < 0) {
+      signals.push(`🚨 EPS Miss מהותי: ${epsBeatPercent.toFixed(1)}% אחרי Run-Up של +${runUp30d.toFixed(1)}% - סיכון גבוה מאוד`);
+    } else if (epsBeatPercent < 5) {
+      signals.push(`🚨 אזהרה: Beat קטן (+${epsBeatPercent.toFixed(1)}%) אחרי Run-Up גדול - סיכון Sell-The-News`);
+    }
   }
-}
 
-  // AH signals
+  // ─── AH ──────────────────────────────────────────────────
   if (ahChangePercent !== null) {
-    if (ahChangePercent >= 4) signals.push(`🟢 AH חיובי חזק: +${ahChangePercent.toFixed(1)}%`);
-    else if (ahChangePercent > 0) signals.push(`🟢 AH חיובי: +${ahChangePercent.toFixed(1)}%`);
+    if (ahChangePercent >= 4)       signals.push(`🟢 AH חיובי חזק: +${ahChangePercent.toFixed(1)}%`);
+    else if (ahChangePercent > 0)   signals.push(`🟢 AH חיובי: +${ahChangePercent.toFixed(1)}%`);
+    else if (ahChangePercent === 0)  signals.push(`⚪ AH ניטרלי: 0.0%`);
     else if (ahChangePercent <= -4) signals.push(`🔴 AH שלילי חזק: ${ahChangePercent.toFixed(1)}% - Market Negative Signal`);
-    else signals.push(`🟡 AH שלילי קל: ${ahChangePercent.toFixed(1)}%`);
+    else                            signals.push(`🟡 AH שלילי קל: ${ahChangePercent.toFixed(1)}%`);
   } else {
     signals.push(`⚪ AH: לא זמין`);
   }
 
-  // Volume signals
+  // ─── Volume ───────────────────────────────────────────────
   if (volumeRatio !== null) {
-    if (volumeRatio >= 3) signals.push(`🟢 נפח חריג: ×${volumeRatio.toFixed(1)} מהממוצע`);
+    if (volumeRatio >= 3)        signals.push(`🟢 נפח חריג: ×${volumeRatio.toFixed(1)} מהממוצע`);
     else if (volumeRatio >= 1.5) signals.push(`🟢 נפח מאשר: ×${volumeRatio.toFixed(1)} מהממוצע`);
-    else signals.push(`🟡 נפח חלש: ×${volumeRatio.toFixed(1)} מהממוצע - חוסר אישור`);
+    else                         signals.push(`🟡 נפח חלש: ×${volumeRatio.toFixed(1)} מהממוצע - חוסר אישור`);
+  }
+
+  // ─── Priced-In (חדש) ─────────────────────────────────────
+  if (pricedInClassification !== null && runUp60d !== null) {
+    if (pricedInClassification === "Fully")
+      signals.push(`🔴 Priced-In: מתומחר במלואו — Run-Up 60d: +${runUp60d.toFixed(1)}%`);
+    else if (pricedInClassification === "Partially")
+      signals.push(`🟡 Priced-In: מתומחר חלקית — Run-Up 60d: +${runUp60d.toFixed(1)}%`);
+    else
+      signals.push(`🟢 Priced-In: לא מתומחר — Run-Up 60d: ${runUp60d.toFixed(1)}%`);
   }
 
   return signals;

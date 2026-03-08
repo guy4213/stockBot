@@ -74,6 +74,28 @@ export function calculateDetailedScore(data: FullExtractionResponse): MiraScore 
     if (data.sentiment.overall === 'positive') { totalScore += 0.5; scoreBreakdown.push(`Sentiment positive → +0.5`); }
     else if (data.sentiment.overall === 'negative') { totalScore -= 0.5; scoreBreakdown.push(`Sentiment negative → -0.5`); negativeCount++; }
 
+
+
+    ///////////////////////////////////////////////////////////////////
+    // Priced-In Detector 
+    const pricedInScore = data.hardPreFilter?.pricedInScore ?? null;
+    const pricedInClass = data.hardPreFilter?.pricedInClassification ?? null;
+
+    if (pricedInScore !== null) {
+      totalScore += pricedInScore;
+      if (pricedInScore === -2) {
+        scoreBreakdown.push(`Priced-In: Fully (${pricedInClass}) → -2`);
+        negativeCount++;
+      } else if (pricedInScore === -1) {
+        scoreBreakdown.push(`Priced-In: Partially (${pricedInClass}) → -1`);
+        negativeCount++;
+      } else {
+        scoreBreakdown.push(`Priced-In: Not Priced-In → +1`);
+      }
+    } else {
+      scoreBreakdown.push(`Priced-In: N/A (נתונים חסרים) → 0`);
+    }
+  
     // ============================================
     // STEP 2: SMART EXCEPTION LAYER
     // ============================================
@@ -164,45 +186,47 @@ export function calculateDetailedScore(data: FullExtractionResponse): MiraScore 
 }
 export function calculateTradeParams(price: number, classification: string) {
     const safePrice = price || 0;
-    
-    // ✅ בדיקה ראשונית - אם אין מחיר בכלל
+
+    // אין מחיר
     if (safePrice === 0 || !safePrice) {
         logger.warn(`⚠️ Cannot calculate trade params - price is invalid: ${price}`);
-        return { 
-            direction: classification === "POSITIVE" ? "LONG 🟢" : 
-                      classification === "NEGATIVE" ? "SHORT 🔴" : "NEUTRAL ⚪", 
-            entryPrice: 0, 
-            targetPrice: 0, 
-            stopPrice: 0,
-            hasPriceData: false  // ✅ דגל שמציין שאין מחיר
+        const isLong  = classification === "POSITIVE"  || classification === "VERY_POSITIVE";
+        const isShort = classification === "NEGATIVE"  || classification === "VERY_NEGATIVE";
+        return {
+            direction: isLong ? "LONG 🟢" : isShort ? "SHORT 🔴" : "NEUTRAL ⚪",
+            entryPrice: 0, targetPrice: 0, stopPrice: 0,
+            hasPriceData: false
         };
     }
-    
-    // ✅ יש מחיר תקין
-    if (classification === "POSITIVE") {
+
+    // LONG — חיובי או חיובי מאוד
+    if (classification === "POSITIVE" || classification === "VERY_POSITIVE") {
         return {
             direction: "LONG 🟢",
-            entryPrice: Number((safePrice * 0.98).toFixed(2)),
+            entryPrice:  Number((safePrice * 0.98).toFixed(2)),
             targetPrice: Number((safePrice * 1.05).toFixed(2)),
-            stopPrice: Number((safePrice * 0.95).toFixed(2)),
-            hasPriceData: true
-        };
-    } else if (classification === "NEGATIVE") {
-        return {
-            direction: "SHORT 🔴",
-            entryPrice: Number((safePrice * 1.02).toFixed(2)),
-            targetPrice: Number((safePrice * 0.95).toFixed(2)),
-            stopPrice: Number((safePrice * 1.05).toFixed(2)),
+            stopPrice:   Number((safePrice * 0.95).toFixed(2)),
             hasPriceData: true
         };
     }
-    
-    // ✅ NEUTRAL - אבל עם מחיר תקין
-    return { 
-        direction: "NEUTRAL ⚪", 
-        entryPrice: Number(safePrice.toFixed(2)),   // ✅ שים את המחיר הנוכחי
-        targetPrice: Number((safePrice * 1.03).toFixed(2)),  // ✅ יעד קטן של 3%
-        stopPrice: Number((safePrice * 0.97).toFixed(2)),    // ✅ סטופ של 3%
-        hasPriceData: true  // ✅ יש מחיר!
+
+    // SHORT — שלילי או שלילי מאוד
+    if (classification === "NEGATIVE" || classification === "VERY_NEGATIVE") {
+        return {
+            direction: "SHORT 🔴",
+            entryPrice:  Number((safePrice * 1.02).toFixed(2)),
+            targetPrice: Number((safePrice * 0.95).toFixed(2)),
+            stopPrice:   Number((safePrice * 1.05).toFixed(2)),
+            hasPriceData: true
+        };
+    }
+
+    // NEUTRAL
+    return {
+        direction: "NEUTRAL ⚪",
+        entryPrice:  Number(safePrice.toFixed(2)),
+        targetPrice: Number((safePrice * 1.03).toFixed(2)),
+        stopPrice:   Number((safePrice * 0.97).toFixed(2)),
+        hasPriceData: true
     };
 }

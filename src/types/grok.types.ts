@@ -170,11 +170,16 @@ export interface AIRecommendation {
 
 
 export interface HardPreFilter {
-  runUp30d: number | null;          // % עלייה 30 יום לפני הדוח
-  volumeRatio: number | null;       // volume / avgVolume ביום הדוח
-  ahChangePercent: number | null;   // % תנועת AH (מגרוק)
-  ahPrice: number | null;           // מחיר AH בפועל
-  signals: string[];                // אזהרות טקסטואליות
+  runUp30d: number | null;         
+  volumeRatio: number | null;       // 
+  ahChangePercent: number | null
+  ahPrice: number | null
+  signals: string[];     
+   runUp60d: number | null;       
+  peExpansion: number | null;       
+  epsRevision: number | null;       
+  pricedInScore: number | null;   
+  pricedInClassification: "Fully" | "Partially" | "Not" | null;
 }
 
 export interface FullExtractionResponse {
