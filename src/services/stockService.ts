@@ -17,7 +17,12 @@ const stableBaseUrl = "https://financialmodelingprep.com/stable";
 const apiBaseUrl = "https://financialmodelingprep.com/api/v3";
 const apiV4BaseUrl = "https://financialmodelingprep.com/api/v4";
 
-
+export interface TrendFmpData {
+  prevQuarterEpsChange: number | null;
+  prevQuarterRevChange: number | null;
+  commonStockRepurchased: number | null;
+  commonDividendsPaid: number | null;
+}
 
 const SECTOR_ETF_MAP: Record<string, string> = {
   "Technology":             "XLK",
@@ -654,6 +659,77 @@ export async function getNewsMomentumSignal(
   }
 }
 
+
+
+
+
+export async function getTrendFmpData(
+  symbol: string,
+  currentEpsActual: number | null,
+  currentRevActual: number | null
+): Promise<TrendFmpData> {
+  const result: TrendFmpData = {
+    prevQuarterEpsChange: null,
+    prevQuarterRevChange: null,
+    commonStockRepurchased: null,
+    commonDividendsPaid: null,
+  };
+
+  try {
+    const [incomeRes, cashFlowRes] = await Promise.allSettled([
+      axios.get(`${stableBaseUrl}/income-statement?symbol=${symbol}&period=quarter&limit=6&apikey=${apiKey}`),
+      axios.get(`${stableBaseUrl}/cash-flow-statement?symbol=${symbol}&period=quarter&limit=2&apikey=${apiKey}`),
+    ]);
+
+    // ── Income Statement → YoY Acceleration ──────────────────
+    if (incomeRes.status === "fulfilled") {
+      const rows: any[] = Array.isArray(incomeRes.value.data) ? incomeRes.value.data : [];
+
+      // rows[0] = Q-1 (הרבעון הקודם — ה-current שלנו הוא ה-AI)
+      // rows[3] = Q-4 (שנה שעברה של הרבעון הנוכחי — כבר יש לנו ב-AI YoY)
+      // rows[4] = Q-5 (שנה שעברה של הרבעון הקודם)
+
+      const q1Eps = rows[0]?.epsDiluted ?? null;
+      const q5Eps = rows[4]?.epsDiluted ?? null;
+      const q1Rev = rows[0]?.revenue ?? null;
+      const q5Rev = rows[4]?.revenue ?? null;
+
+      // YoY של הרבעון הקודם: Q-1 vs Q-5
+      if (q1Eps !== null && q5Eps !== null && q5Eps !== 0) {
+        result.prevQuarterEpsChange = ((q1Eps - q5Eps) / Math.abs(q5Eps)) * 100;
+        logger.info(`   📊 prevQuarterEpsChange: ${q1Eps} vs ${q5Eps} = ${result.prevQuarterEpsChange.toFixed(1)}%`);
+      }
+
+      if (q1Rev !== null && q5Rev !== null && q5Rev !== 0) {
+        result.prevQuarterRevChange = ((q1Rev - q5Rev) / q5Rev) * 100;
+        logger.info(`   📊 prevQuarterRevChange: ${(q1Rev/1e9).toFixed(2)}B vs ${(q5Rev/1e9).toFixed(2)}B = ${result.prevQuarterRevChange.toFixed(1)}%`);
+      }
+    } else {
+      logger.warn(`   ⚠️ getTrendFmpData: income-statement failed for ${symbol}`);
+    }
+
+    // ── Cash Flow → Buybacks / Dividends ─────────────────────
+    if (cashFlowRes.status === "fulfilled") {
+      const cfRows: any[] = Array.isArray(cashFlowRes.value.data) ? cashFlowRes.value.data : [];
+      const latest = cfRows[0] ?? null;
+
+      if (latest) {
+        result.commonStockRepurchased = latest.commonStockRepurchased ?? null;
+        result.commonDividendsPaid = latest.commonDividendsPaid ?? null;
+        logger.info(`   📊 Buybacks: ${result.commonStockRepurchased} | Dividends: ${result.commonDividendsPaid}`);
+      }
+    } else {
+      logger.warn(`   ⚠️ getTrendFmpData: cash-flow-statement failed for ${symbol}`);
+    }
+
+  } catch (e: any) {
+    logger.warn(`   ⚠️ getTrendFmpData error for ${symbol}: ${e.message}`);
+  }
+
+  return result;
+}
+
+
 export const getEarningsCalendar = async (
   startDate: string,
   endDate: string
@@ -677,9 +753,9 @@ export const getEarnings = async (symbol: string) => {
   }
 };
 
-export const getCashFlow = async (symbol: string) => {
+export const getCashFlow = async (symbol: string,limit:number=1) => {
   try {
-    const url = `${stableBaseUrl}/cash-flow-statement?symbol=${symbol}&period=quarter&apikey=${apiKey}`;
+    const url = `${stableBaseUrl}/cash-flow-statement?symbol=${symbol}&period=quarter&limit=$${limit}&apikey=${apiKey}`;
     const response = await axios.get(url);
     return response.data;
   } catch (e) {
@@ -720,9 +796,9 @@ export const getQuote = async (symbol: string) => {
 };
 
 // 🆕 NEW: שליפת Income Statement למאר Margins
-export const getIncomeStatement = async (symbol: string) => {
+export const getIncomeStatement = async (symbol: string,limit:number=5) => {
   try {
-    const url = `${stableBaseUrl}/income-statement?${symbol}?period=quarter&limit=5&apikey=${apiKey}`;
+const url = `${stableBaseUrl}/income-statement?symbol=${symbol}&period=quarter&limit=${limit}&apikey=${apiKey}`;
     const response = await axios.get(url);
     
     if (!response.data || response.data.length === 0) {

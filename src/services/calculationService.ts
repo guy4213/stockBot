@@ -112,12 +112,13 @@ export function calcTrendPotential(data: FullExtractionResponse): TrendPotential
   } else {
     signals.push(`❌ Capital Return: none`);
   }
-
+const guidanceRaised = data.guidance.status === "raised";
+const dualBeat = epsBeat > 0 && revBeat > 0;
   // ── Final Classification ──────────────────────────────────
-  const classification: TrendClassification =
-    positiveCount >= 6 ? "High"
-    : positiveCount >= 4 ? "Medium"
-    : "Low";
+const classification =
+  positiveCount >= 5 && guidanceRaised && dualBeat ? "High"
+  : positiveCount >= 3 ? "Medium"
+  : "Low";
 
   logger.info(
     `📈 Trend Potential [${data.symbol}]: ${classification} (${positiveCount}/7 signals)`

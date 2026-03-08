@@ -822,15 +822,20 @@ logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
   // ============================================
   logger.info(`\n📊 Step 2: Fetching API Fallback Data...`);
 
-  const apiData = {
-    yoyEpsChange: null as number | null,
-    yoyRevenueChange: null as number | null,
-    netMargin: null as number | null,
-    operatingMargin: null as number | null,
-    fcf: null as number | null
+ const apiData = {
+    yoyEpsChange:           null as number | null,
+    yoyRevenueChange:       null as number | null,
+    netMargin:              null as number | null,
+    operatingMargin:        null as number | null,
+    fcf:                    null as number | null,
+    fcfQ4:                  null as number | null,  // ← חדש: FCF של שנה שעברה
+    fcfYoyChange:           null as number | null,  // fallback אם אין AI FCF
+    prevQuarterEpsChange:   null as number | null,
+    prevQuarterRevChange:   null as number | null,
+    commonStockRepurchased: null as number | null,
+    commonDividendsPaid:    null as number | null,
   };
-
-  // Finnhub Metrics
+ // Finnhub Metrics (fallback)
   try {
     const metrics = await getFinnhubMetrics(symbol);
     if (metrics) {
@@ -859,51 +864,50 @@ logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
     logger.warn(`   ⚠️ Finnhub Metrics failed: ${err.message}`);
   }
 
-  // FMP Quarterly
+ // ── 2C: FMP Cash Flow — limit=5 ──────────────────────────────────
+  // [0]=Q-1  [1]=Q-2  [2]=Q-3  [3]=Q-4  [4]=Q-5
   try {
-    const incomeStatement = await getIncomeStatement(symbol);
-    if (incomeStatement && incomeStatement.length >= 5) {
-      const currentQ = incomeStatement[0];
-      const priorQ = incomeStatement[4];
+    const cfRows = await getCashFlow(symbol, 5);
+    if (cfRows && cfRows.length > 0) {
+      const q1 = cfRows[0];
+      const q4 = cfRows[3] ?? null; // ← Q-4: שנה שעברה של הרבעון הנוכחי
+      const q5 = cfRows[4] ?? null;
 
-      if (currentQ.revenue && priorQ.revenue && priorQ.revenue !== 0) {
-        const yoyRev = ((currentQ.revenue - priorQ.revenue) / priorQ.revenue) * 100;
-        if (Math.abs(yoyRev) <= 150) {
-          apiData.yoyRevenueChange = yoyRev;
-          logger.info(`   ✅ YoY Revenue: ${yoyRev.toFixed(2)}% (FMP Quarterly - preferred)`);
+      // Fallback FCF (Q-1)
+      if (q1.operatingCashFlow != null && q1.capitalExpenditure != null) {
+        const fcfQ1 = q1.operatingCashFlow + q1.capitalExpenditure;
+        if (Math.abs(fcfQ1) <= 5e9) {
+          apiData.fcf = fcfQ1;
+          logger.info(`   ✅ FCF fallback (Q-1): $${(fcfQ1 / 1e6).toFixed(2)}M`);
         }
       }
 
-      if (currentQ.netIncome && currentQ.revenue && currentQ.revenue !== 0) {
-        apiData.netMargin = (currentQ.netIncome / currentQ.revenue) * 100;
-        logger.info(`   ✅ Net Margin: ${apiData.netMargin.toFixed(2)}% (FMP Q${q})`);
-      }
-      if (currentQ.operatingIncome && currentQ.revenue && currentQ.revenue !== 0) {
-        apiData.operatingMargin = (currentQ.operatingIncome / currentQ.revenue) * 100;
-        logger.info(`   ✅ Operating Margin: ${apiData.operatingMargin.toFixed(2)}% (FMP Q${q})`);
-      }
-    }
-  } catch (err: any) {
-    logger.warn(`   ⚠️ FMP Income Statement failed: ${err.message}`);
-  }
-
-  // FCF from FMP
-  try {
-    const cashFlow = await getCashFlow(symbol);
-    if (cashFlow && cashFlow.length > 0) {
-      const currentQ = cashFlow[0];
-      if (currentQ.operatingCashFlow && currentQ.capitalExpenditure) {
-        const fcf = currentQ.operatingCashFlow + currentQ.capitalExpenditure;
-        if (Math.abs(fcf) <= 5e9) {
-          apiData.fcf = fcf;
-          logger.info(`   ✅ FCF: $${(fcf / 1e6).toFixed(2)}M (FMP Q${q})`);
+      // FCF Q-4 — לשימוש ב-Step 4 להשוואה מול AI Q-0
+      if (q4?.operatingCashFlow != null && q4?.capitalExpenditure != null) {
+        const fcfQ4 = q4.operatingCashFlow + q4.capitalExpenditure;
+        if (Math.abs(fcfQ4) <= 5e9) {
+          apiData.fcfQ4 = fcfQ4;
+          logger.info(`   ✅ FCF Q-4 (לשוואה עם AI): $${(fcfQ4 / 1e6).toFixed(2)}M`);
         }
       }
+
+      // FCF YoY fallback: Q-1 vs Q-5 (יוחלף ב-Step 4 ע"י AI Q-0 vs Q-4)
+      if (apiData.fcf != null && q5?.operatingCashFlow != null && q5?.capitalExpenditure != null) {
+        const fcfQ5 = q5.operatingCashFlow + q5.capitalExpenditure;
+        if (fcfQ5 !== 0 && Math.abs(fcfQ5) <= 5e9) {
+          apiData.fcfYoyChange = ((apiData.fcf - fcfQ5) / Math.abs(fcfQ5)) * 100;
+          logger.info(`   ✅ FCF YoY fallback: ${apiData.fcfYoyChange.toFixed(1)}% (Q-1 vs Q-5)`);
+        }
+      }
+
+      // Stage 6: Buybacks / Capital Return
+      apiData.commonStockRepurchased = q1.commonStockRepurchased ?? null;
+      apiData.commonDividendsPaid    = q1.commonDividendsPaid    ?? null;
+      logger.info(`   ✅ Buybacks: ${apiData.commonStockRepurchased ?? 'N/A'} | Dividends: ${apiData.commonDividendsPaid ?? 'N/A'}`);
     }
   } catch (err: any) {
     logger.warn(`   ⚠️ FMP Cash Flow failed: ${err.message}`);
   }
-
   // ============================================
   // STEP 3: AI SUPPLEMENT - NOW WITH VERIFIED PDF URL!
   // ============================================
@@ -1266,6 +1270,11 @@ const finalOperatingMargin = aiData.pdfMetrics?.marginMetric?.value !== null && 
   ? aiData.pdfMetrics.cashFromOperations * 1e6
   : apiData.fcf;
 
+const finalFcfYoyChange =
+    finalFcf != null && apiData.fcfQ4 != null && apiData.fcfQ4 !== 0
+      ? ((finalFcf - apiData.fcfQ4) / Math.abs(apiData.fcfQ4)) * 100
+      : apiData.fcfYoyChange; 
+
   const data: FullExtractionResponse = {
     symbol,
     companyName,
@@ -1286,15 +1295,19 @@ const finalOperatingMargin = aiData.pdfMetrics?.marginMetric?.value !== null && 
     },
     guidance: aiData.guidance || { status: "unavailable", details: null },
     sentiment: aiData.sentiment || { overall: "neutral", reasoning: null },
-    yoyGrowth: {
-      epsChange: finalYoyEps,  // ✅ במקום apiData.yoyEpsChange
-      revenueChange: finalYoyRevenue,
-      revenueChangeType: aiData.pdfMetrics?.revenueYoY !== null ? "quarterly" : "TTM"
-    },
-    cashFlow: {
-      freeCashFlow: finalFcf,
-      yoyChange: null
-    },
+  yoyGrowth: {
+    epsChange: finalYoyEps,
+    revenueChange: finalYoyRevenue,
+    revenueChangeType: aiData.pdfMetrics?.revenueYoY !== null ? "quarterly" : "TTM",
+    prevQuarterEpsChange: apiData.prevQuarterEpsChange,  // ← חדש
+    prevQuarterRevChange: apiData.prevQuarterRevChange,  // ← חדש
+  },
+   cashFlow: {
+    freeCashFlow: finalFcf,
+    yoyChange: finalFcfYoyChange,
+    commonStockRepurchased: apiData.commonStockRepurchased,  // ← חדש
+    commonDividendsPaid:    apiData.commonDividendsPaid,     // ← חדש
+  },
     margins: {
       netMargin: finalNetMargin,
       operatingMargin: finalOperatingMargin,
