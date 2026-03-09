@@ -574,27 +574,165 @@ Answer with ONE WORD ONLY: YES or NO
   }
 }
 
+// export async function findIRCandidates(
+//   symbol: string,
+//   companyName: string
+// ): Promise<IRCandidate[]> {
+  
+//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
+//   if (!SERPER_API_KEY) {
+//     throw new Error("SERPER_API_KEY missing");
+//   }
+  
+//   const cleanName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '').trim();
+  
+//   const queries = [
+//     `${symbol} investor relations official site`,
+//     `"${cleanName}" investor relations website`,
+//     `${symbol} ${cleanName} IR site`,
+//     `${symbol} earnings investor relations`,
+//   ];
+  
+//   const allCandidates: IRCandidate[] = [];
+  
+//   const thirdPartyDomains = [
+//     'seekingalpha.com',
+//     'marketbeat.com',
+//     'zacks.com',
+//     'stocktitan.net',
+//     'alphaspread.com',
+//     'marketwatch.com',
+//     'yahoo.com',
+//     'finance.yahoo.com',
+//     'investing.com',
+//     'fool.com',
+//     'benzinga.com',
+//     'tipranks.com',
+//     'macrotrends.net',
+//     'stockanalysis.com',
+//     'sec.gov',
+//     'edgar',
+//     'nasdaq.com',        // ✅ הוסף!
+//     'morningstar.com',   // ✅ הוסף!
+//     'annualreports.com', // ✅ הוסף!
+//     'public.com',        // ✅ הוסף!
+//     'financialmodelingprep.com', // ✅ הוסף!
+//     'youtube.com',       // ✅ הוסף!
+//   ];
+  
+//   for (const query of queries) {
+//     logger.info(`   🔍 Query: "${query}"`);
+    
+//     try {
+//       const response = await axios.post(
+//         'https://google.serper.dev/search',
+//         { 
+//           q: query, 
+//           num: 20,
+//           gl: "us",
+//           hl: "en"
+//         },
+//         { 
+//           headers: { 
+//             'X-API-KEY': SERPER_API_KEY, 
+//             'Content-Type': 'application/json' 
+//           } 
+//         }
+//       );
+      
+//       const results = response.data.organic || [];
+//       logger.info(`   📊 Serper returned ${results.length} results`);
+      
+//       for (let i = 0; i < results.length; i++) {
+//         const result = results[i];
+//         const url = result.link.toLowerCase();
+//         const domain = new URL(result.link).hostname.toLowerCase();
+        
+     
+   
+        
+//         // בדיקה 1: צד שלישי?
+//         const isThirdParty = thirdPartyDomains.some(d => domain.includes(d));
+//         if (isThirdParty) {
+         
+//           continue;
+//         }
+        
+//         // ✅ בדיקה 2 - מתוקנת! בדוק גם את הדומיין!
+//         const isIRUrl = 
+//           // בדוק ב-URL:
+//           url.includes('/investor') || 
+//           url.includes('/ir/') ||
+//           url.includes('/ir-') ||
+//           // ✅ חדש! בדוק גם ב-DOMAIN:
+//           domain.startsWith('ir.') ||           // ir.company.com
+//           domain.startsWith('investor.') ||     // investor.company.com
+//           domain.startsWith('investors.') ||    // investors.company.com
+//           domain.includes('.ir.') ||            // www.ir.company.com
+//           domain.includes('.investor.') ||      // www.investor.company.com
+//           domain.includes('.investors.');       // www.investors.company.com
+        
+//         if (!isIRUrl) {
+//           logger.info(`      ❌ REJECTED: Not an IR URL/domain pattern`);
+//           continue;
+//         }
+        
+//         // ✅ עבר את כל הבדיקות!
+//         allCandidates.push({
+//           url: result.link,
+//           title: result.title,
+//           snippet: result.snippet || ''
+//         });
+//       }
+      
+//     } catch (e: any) {
+//       logger.warn(`   ⚠️ Serper error: ${e.message}`);
+//     }
+//   }
+  
+//   // Remove duplicates
+//   const uniqueCandidates = Array.from(
+//     new Map(allCandidates.map(c => [c.url.toLowerCase(), c])).values()
+//   );
+  
+//   logger.info(`\n📊 SUMMARY:`);
+//   logger.info(`   Total results checked: ${allCandidates.length}`);
+//   logger.info(`   Unique candidates: ${uniqueCandidates.length}`);
+  
+//   if (uniqueCandidates.length > 0) {
+//     logger.info(`\n   🎯 Final candidates:`);
+//     uniqueCandidates.forEach((c, i) => {
+//       logger.info(`   ${i + 1}. ${c.url}`);
+//     });
+//   } else {
+//     logger.warn(`   ⚠️ No IR candidates found after filtering`);
+//   }
+  
+//   return uniqueCandidates.slice(0, 10);
+// }
 export async function findIRCandidates(
   symbol: string,
   companyName: string
 ): Promise<IRCandidate[]> {
-  
+
   const SERPER_API_KEY = process.env.SERPER_API_KEY;
   if (!SERPER_API_KEY) {
     throw new Error("SERPER_API_KEY missing");
   }
-  
-  const cleanName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '').trim();
-  
+
+  const cleanName = companyName
+    .replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '')
+    .trim();
+
+  const cleanNameNormalized = cleanName.toLowerCase().replace(/\s+/g, '');
+
   const queries = [
     `${symbol} investor relations official site`,
     `"${cleanName}" investor relations website`,
     `${symbol} ${cleanName} IR site`,
     `${symbol} earnings investor relations`,
   ];
-  
-  const allCandidates: IRCandidate[] = [];
-  
+
   const thirdPartyDomains = [
     'seekingalpha.com',
     'marketbeat.com',
@@ -612,105 +750,144 @@ export async function findIRCandidates(
     'stockanalysis.com',
     'sec.gov',
     'edgar',
-    'nasdaq.com',        // ✅ הוסף!
-    'morningstar.com',   // ✅ הוסף!
-    'annualreports.com', // ✅ הוסף!
-    'public.com',        // ✅ הוסף!
-    'financialmodelingprep.com', // ✅ הוסף!
-    'youtube.com',       // ✅ הוסף!
+    'nasdaq.com',
+    'morningstar.com',
+    'annualreports.com',
+    'public.com',
+    'financialmodelingprep.com',
+    'youtube.com',
+    'stockinsights.ai',
+    'advfn.com',
+    'wsj.com',
+    'bloomberg.com',
+    'reuters.com',
+    'cnbc.com',
+    'businesswire.com',
+    'prnewswire.com',
+    'globenewswire.com',
+    'accessnewswire.com',
   ];
-  
+
+  const irCandidates: IRCandidate[] = [];
+  const domainFallbacks: IRCandidate[] = [];
+
+  // Track seen domains to avoid duplicates within fallbacks
+  const seenDomains = new Set<string>();
+
   for (const query of queries) {
     logger.info(`   🔍 Query: "${query}"`);
-    
+
     try {
       const response = await axios.post(
         'https://google.serper.dev/search',
-        { 
-          q: query, 
-          num: 20,
-          gl: "us",
-          hl: "en"
-        },
-        { 
-          headers: { 
-            'X-API-KEY': SERPER_API_KEY, 
-            'Content-Type': 'application/json' 
-          } 
+        { q: query, num: 20, gl: 'us', hl: 'en' },
+        {
+          headers: {
+            'X-API-KEY': SERPER_API_KEY,
+            'Content-Type': 'application/json',
+          },
         }
       );
-      
+
       const results = response.data.organic || [];
       logger.info(`   📊 Serper returned ${results.length} results`);
-      
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
+
+      for (const result of results) {
         const url = result.link.toLowerCase();
-        const domain = new URL(result.link).hostname.toLowerCase();
-        
-     
-   
-        
-        // בדיקה 1: צד שלישי?
+        let domain: string;
+
+        try {
+          domain = new URL(result.link).hostname.toLowerCase();
+        } catch {
+          continue;
+        }
+
+        // בדיקה 1: סנן צד שלישי
         const isThirdParty = thirdPartyDomains.some(d => domain.includes(d));
         if (isThirdParty) {
-         
+          logger.info(`      ⛔ THIRD PARTY: ${domain}`);
           continue;
         }
-        
-        // ✅ בדיקה 2 - מתוקנת! בדוק גם את הדומיין!
-        const isIRUrl = 
-          // בדוק ב-URL:
-          url.includes('/investor') || 
+
+        // בדיקה 2: האם זה URL ספציפי ל-IR?
+        const isIRUrl =
+          url.includes('/investor') ||
           url.includes('/ir/') ||
           url.includes('/ir-') ||
-          // ✅ חדש! בדוק גם ב-DOMAIN:
-          domain.startsWith('ir.') ||           // ir.company.com
-          domain.startsWith('investor.') ||     // investor.company.com
-          domain.startsWith('investors.') ||    // investors.company.com
-          domain.includes('.ir.') ||            // www.ir.company.com
-          domain.includes('.investor.') ||      // www.investor.company.com
-          domain.includes('.investors.');       // www.investors.company.com
-        
-        if (!isIRUrl) {
-          logger.info(`      ❌ REJECTED: Not an IR URL/domain pattern`);
+          domain.startsWith('ir.') ||
+          domain.startsWith('investor.') ||
+          domain.startsWith('investors.') ||
+          domain.includes('.ir.') ||
+          domain.includes('.investor.') ||
+          domain.includes('.investors.');
+
+        if (isIRUrl) {
+          logger.info(`      ✅ IR URL: ${result.link}`);
+          irCandidates.push({
+            url: result.link,
+            title: result.title,
+            snippet: result.snippet || '',
+          });
           continue;
         }
-        
-        // ✅ עבר את כל הבדיקות!
-        allCandidates.push({
-          url: result.link,
-          title: result.title,
-          snippet: result.snippet || ''
-        });
+
+        // בדיקה 3: fallback — האם זה הדומיין הרשמי של החברה?
+        const rootDomain = domain.replace(/^www\./, '');
+        const looksLikeCompany =
+          rootDomain.includes(cleanNameNormalized) ||
+          rootDomain.includes(symbol.toLowerCase());
+
+        if (looksLikeCompany && !seenDomains.has(rootDomain)) {
+          seenDomains.add(rootDomain);
+          // שמור את ה-root domain בלבד, לא sub-page ספציפי
+          const rootUrl = `https://${domain}`;
+          logger.info(`      🔄 COMPANY DOMAIN FALLBACK: ${rootUrl}`);
+          domainFallbacks.push({
+            url: rootUrl,
+            title: result.title,
+            snippet: result.snippet || '',
+          });
+        } else {
+          logger.info(`      ❌ REJECTED: ${result.link}`);
+        }
       }
-      
     } catch (e: any) {
       logger.warn(`   ⚠️ Serper error: ${e.message}`);
     }
   }
-  
-  // Remove duplicates
-  const uniqueCandidates = Array.from(
-    new Map(allCandidates.map(c => [c.url.toLowerCase(), c])).values()
+
+  // Remove duplicates from irCandidates
+  const uniqueIR = Array.from(
+    new Map(irCandidates.map(c => [c.url.toLowerCase(), c])).values()
   );
-  
+
+  // אם נמצאו IR URLs ספציפיים — החזר אותם בלבד
+  // אחרת — fallback לדומיין הרשמי של החברה
+  const finalCandidates =
+    uniqueIR.length > 0
+      ? uniqueIR
+      : domainFallbacks;
+
   logger.info(`\n📊 SUMMARY:`);
-  logger.info(`   Total results checked: ${allCandidates.length}`);
-  logger.info(`   Unique candidates: ${uniqueCandidates.length}`);
-  
-  if (uniqueCandidates.length > 0) {
+  logger.info(`   IR-specific URLs found: ${uniqueIR.length}`);
+  logger.info(`   Company domain fallbacks: ${domainFallbacks.length}`);
+  logger.info(
+    uniqueIR.length > 0
+      ? `   ✅ Using IR-specific URLs`
+      : `   🔄 Falling back to company domain(s)`
+  );
+
+  if (finalCandidates.length > 0) {
     logger.info(`\n   🎯 Final candidates:`);
-    uniqueCandidates.forEach((c, i) => {
+    finalCandidates.forEach((c, i) => {
       logger.info(`   ${i + 1}. ${c.url}`);
     });
   } else {
-    logger.warn(`   ⚠️ No IR candidates found after filtering`);
+    logger.warn(`   ⚠️ No candidates found at all`);
   }
-  
-  return uniqueCandidates.slice(0, 10);
-}
 
+  return finalCandidates.slice(0, 10);
+}
 
 export async function fullExtraction(
   symbol: string,
