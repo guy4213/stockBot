@@ -575,27 +575,166 @@ Answer with ONE WORD ONLY: YES or NO
   }
 }
 
+// export async function findIRCandidates(
+//   symbol: string,
+//   companyName: string
+// ): Promise<IRCandidate[]> {
+  
+//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
+//   if (!SERPER_API_KEY) {
+//     throw new Error("SERPER_API_KEY missing");
+//   }
+  
+//   const cleanName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '').trim();
+  
+//   const queries = [
+//     `${symbol} investor relations official site`,
+//     `"${cleanName}" investor relations website`,
+//     `${symbol} ${cleanName} IR site`,
+//     `${symbol} earnings investor relations`,
+//   ];
+  
+//   const allCandidates: IRCandidate[] = [];
+  
+//   const thirdPartyDomains = [
+//     'seekingalpha.com',
+//     'marketbeat.com',
+//     'zacks.com',
+//     'stocktitan.net',
+//     'alphaspread.com',
+//     'marketwatch.com',
+//     'yahoo.com',
+//     'finance.yahoo.com',
+//     'investing.com',
+//     'fool.com',
+//     'benzinga.com',
+//     'tipranks.com',
+//     'macrotrends.net',
+//     'stockanalysis.com',
+//     'sec.gov',
+//     'edgar',
+//     'nasdaq.com',        // ✅ הוסף!
+//     'morningstar.com',   // ✅ הוסף!
+//     'annualreports.com', // ✅ הוסף!
+//     'public.com',        // ✅ הוסף!
+//     'financialmodelingprep.com', // ✅ הוסף!
+//     'youtube.com',       // ✅ הוסף!
+//   ];
+  
+//   for (const query of queries) {
+//     logger.info(`   🔍 Query: "${query}"`);
+    
+//     try {
+//       const response = await axios.post(
+//         'https://google.serper.dev/search',
+//         { 
+//           q: query, 
+//           num: 20,
+//           gl: "us",
+//           hl: "en"
+//         },
+//         { 
+//           headers: { 
+//             'X-API-KEY': SERPER_API_KEY, 
+//             'Content-Type': 'application/json' 
+//           } 
+//         }
+//       );
+      
+//       const results = response.data.organic || [];
+//       logger.info(`   📊 Serper returned ${results.length} results`);
+      
+//       for (let i = 0; i < results.length; i++) {
+//         const result = results[i];
+//         const url = result.link.toLowerCase();
+//         const domain = new URL(result.link).hostname.toLowerCase();
+        
+     
+   
+        
+//         // בדיקה 1: צד שלישי?
+//         const isThirdParty = thirdPartyDomains.some(d => domain.includes(d));
+//         if (isThirdParty) {
+         
+//           continue;
+//         }
+        
+//         // ✅ בדיקה 2 - מתוקנת! בדוק גם את הדומיין!
+//         const isIRUrl = 
+//           // בדוק ב-URL:
+//           url.includes('/investor') || 
+//           url.includes('/ir/') ||
+//           url.includes('/ir-') ||
+//           // ✅ חדש! בדוק גם ב-DOMAIN:
+//           domain.startsWith('ir.') ||           // ir.company.com
+//           domain.startsWith('investor.') ||     // investor.company.com
+//           domain.startsWith('investors.') ||    // investors.company.com
+//           domain.includes('.ir.') ||            // www.ir.company.com
+//           domain.includes('.investor.') ||      // www.investor.company.com
+//           domain.includes('.investors.');       // www.investors.company.com
+        
+//         if (!isIRUrl) {
+//           logger.info(`      ❌ REJECTED: Not an IR URL/domain pattern`);
+//           continue;
+//         }
+        
+//         // ✅ עבר את כל הבדיקות!
+//         allCandidates.push({
+//           url: result.link,
+//           title: result.title,
+//           snippet: result.snippet || ''
+//         });
+//       }
+      
+//     } catch (e: any) {
+//       logger.warn(`   ⚠️ Serper error: ${e.message}`);
+//     }
+//   }
+  
+//   // Remove duplicates
+//   const uniqueCandidates = Array.from(
+//     new Map(allCandidates.map(c => [c.url.toLowerCase(), c])).values()
+//   );
+  
+//   logger.info(`\n📊 SUMMARY:`);
+//   logger.info(`   Total results checked: ${allCandidates.length}`);
+//   logger.info(`   Unique candidates: ${uniqueCandidates.length}`);
+  
+//   if (uniqueCandidates.length > 0) {
+//     logger.info(`\n   🎯 Final candidates:`);
+//     uniqueCandidates.forEach((c, i) => {
+//       logger.info(`   ${i + 1}. ${c.url}`);
+//     });
+//   } else {
+//     logger.warn(`   ⚠️ No IR candidates found after filtering`);
+//   }
+  
+//   return uniqueCandidates.slice(0, 10);
+// }
+
 export async function findIRCandidates(
   symbol: string,
   companyName: string
 ): Promise<IRCandidate[]> {
-  
+
   const SERPER_API_KEY = process.env.SERPER_API_KEY;
   if (!SERPER_API_KEY) {
     throw new Error("SERPER_API_KEY missing");
   }
-  
-  const cleanName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '').trim();
-  
+
+  const cleanName = companyName
+    .replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '')
+    .trim();
+
+  const cleanNameNormalized = cleanName.toLowerCase().replace(/\s+/g, '');
+
   const queries = [
     `${symbol} investor relations official site`,
     `"${cleanName}" investor relations website`,
     `${symbol} ${cleanName} IR site`,
     `${symbol} earnings investor relations`,
   ];
-  
-  const allCandidates: IRCandidate[] = [];
-  
+
   const thirdPartyDomains = [
     'seekingalpha.com',
     'marketbeat.com',
@@ -613,106 +752,144 @@ export async function findIRCandidates(
     'stockanalysis.com',
     'sec.gov',
     'edgar',
-    'nasdaq.com',        // ✅ הוסף!
-    'morningstar.com',   // ✅ הוסף!
-    'annualreports.com', // ✅ הוסף!
-    'public.com',        // ✅ הוסף!
-    'financialmodelingprep.com', // ✅ הוסף!
-    'youtube.com',       // ✅ הוסף!
+    'nasdaq.com',
+    'morningstar.com',
+    'annualreports.com',
+    'public.com',
+    'financialmodelingprep.com',
+    'youtube.com',
+    'stockinsights.ai',
+    'advfn.com',
+    'wsj.com',
+    'bloomberg.com',
+    'reuters.com',
+    'cnbc.com',
+    'businesswire.com',
+    'prnewswire.com',
+    'globenewswire.com',
+    'accessnewswire.com',
   ];
-  
+
+  const irCandidates: IRCandidate[] = [];
+  const domainFallbacks: IRCandidate[] = [];
+
+  // Track seen domains to avoid duplicates within fallbacks
+  const seenDomains = new Set<string>();
+
   for (const query of queries) {
     logger.info(`   🔍 Query: "${query}"`);
-    
+
     try {
       const response = await axios.post(
         'https://google.serper.dev/search',
-        { 
-          q: query, 
-          num: 20,
-          gl: "us",
-          hl: "en"
-        },
-        { 
-          headers: { 
-            'X-API-KEY': SERPER_API_KEY, 
-            'Content-Type': 'application/json' 
-          } 
+        { q: query, num: 20, gl: 'us', hl: 'en' },
+        {
+          headers: {
+            'X-API-KEY': SERPER_API_KEY,
+            'Content-Type': 'application/json',
+          },
         }
       );
-      
+
       const results = response.data.organic || [];
       logger.info(`   📊 Serper returned ${results.length} results`);
-      
-      for (let i = 0; i < results.length; i++) {
-        const result = results[i];
+
+      for (const result of results) {
         const url = result.link.toLowerCase();
-        const domain = new URL(result.link).hostname.toLowerCase();
-        
-     
-   
-        
-        // בדיקה 1: צד שלישי?
+        let domain: string;
+
+        try {
+          domain = new URL(result.link).hostname.toLowerCase();
+        } catch {
+          continue;
+        }
+
+        // בדיקה 1: סנן צד שלישי
         const isThirdParty = thirdPartyDomains.some(d => domain.includes(d));
         if (isThirdParty) {
-         
+          logger.info(`      ⛔ THIRD PARTY: ${domain}`);
           continue;
         }
-        
-        // ✅ בדיקה 2 - מתוקנת! בדוק גם את הדומיין!
-        const isIRUrl = 
-          // בדוק ב-URL:
-          url.includes('/investor') || 
+
+        // בדיקה 2: האם זה URL ספציפי ל-IR?
+        const isIRUrl =
+          url.includes('/investor') ||
           url.includes('/ir/') ||
           url.includes('/ir-') ||
-          // ✅ חדש! בדוק גם ב-DOMAIN:
-          domain.startsWith('ir.') ||           // ir.company.com
-          domain.startsWith('investor.') ||     // investor.company.com
-          domain.startsWith('investors.') ||    // investors.company.com
-          domain.includes('.ir.') ||            // www.ir.company.com
-          domain.includes('.investor.') ||      // www.investor.company.com
-          domain.includes('.investors.');       // www.investors.company.com
-        
-        if (!isIRUrl) {
-          logger.info(`      ❌ REJECTED: Not an IR URL/domain pattern`);
+          domain.startsWith('ir.') ||
+          domain.startsWith('investor.') ||
+          domain.startsWith('investors.') ||
+          domain.includes('.ir.') ||
+          domain.includes('.investor.') ||
+          domain.includes('.investors.');
+
+        if (isIRUrl) {
+          logger.info(`      ✅ IR URL: ${result.link}`);
+          irCandidates.push({
+            url: result.link,
+            title: result.title,
+            snippet: result.snippet || '',
+          });
           continue;
         }
-        
-        // ✅ עבר את כל הבדיקות!
-        allCandidates.push({
-          url: result.link,
-          title: result.title,
-          snippet: result.snippet || ''
-        });
+
+        // בדיקה 3: fallback — האם זה הדומיין הרשמי של החברה?
+        const rootDomain = domain.replace(/^www\./, '');
+        const looksLikeCompany =
+          rootDomain.includes(cleanNameNormalized) ||
+          rootDomain.includes(symbol.toLowerCase());
+
+        if (looksLikeCompany && !seenDomains.has(rootDomain)) {
+          seenDomains.add(rootDomain);
+          // שמור את ה-root domain בלבד, לא sub-page ספציפי
+          const rootUrl = `https://${domain}`;
+          logger.info(`      🔄 COMPANY DOMAIN FALLBACK: ${rootUrl}`);
+          domainFallbacks.push({
+            url: rootUrl,
+            title: result.title,
+            snippet: result.snippet || '',
+          });
+        } else {
+          logger.info(`      ❌ REJECTED: ${result.link}`);
+        }
       }
-      
     } catch (e: any) {
       logger.warn(`   ⚠️ Serper error: ${e.message}`);
     }
   }
-  
-  // Remove duplicates
-  const uniqueCandidates = Array.from(
-    new Map(allCandidates.map(c => [c.url.toLowerCase(), c])).values()
+
+  // Remove duplicates from irCandidates
+  const uniqueIR = Array.from(
+    new Map(irCandidates.map(c => [c.url.toLowerCase(), c])).values()
   );
-  
+
+  // אם נמצאו IR URLs ספציפיים — החזר אותם בלבד
+  // אחרת — fallback לדומיין הרשמי של החברה
+  const finalCandidates =
+    uniqueIR.length > 0
+      ? uniqueIR
+      : domainFallbacks;
+
   logger.info(`\n📊 SUMMARY:`);
-  logger.info(`   Total results checked: ${allCandidates.length}`);
-  logger.info(`   Unique candidates: ${uniqueCandidates.length}`);
-  
-  if (uniqueCandidates.length > 0) {
+  logger.info(`   IR-specific URLs found: ${uniqueIR.length}`);
+  logger.info(`   Company domain fallbacks: ${domainFallbacks.length}`);
+  logger.info(
+    uniqueIR.length > 0
+      ? `   ✅ Using IR-specific URLs`
+      : `   🔄 Falling back to company domain(s)`
+  );
+
+  if (finalCandidates.length > 0) {
     logger.info(`\n   🎯 Final candidates:`);
-    uniqueCandidates.forEach((c, i) => {
+    finalCandidates.forEach((c, i) => {
       logger.info(`   ${i + 1}. ${c.url}`);
     });
   } else {
-    logger.warn(`   ⚠️ No IR candidates found after filtering`);
+    logger.warn(`   ⚠️ No candidates found at all`);
   }
-  
-  return uniqueCandidates.slice(0, 10);
+
+  return finalCandidates.slice(0, 10);
 }
-
-
 export async function fullExtraction(
   symbol: string,
   companyName: string,
@@ -834,6 +1011,8 @@ logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
     prevQuarterRevChange:   null as number | null,
     commonStockRepurchased: null as number | null,
     commonDividendsPaid:    null as number | null,
+    prevNetMargin: null as number | null,  
+
   };
  // Finnhub Metrics (fallback)
   try {
@@ -876,7 +1055,7 @@ logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
       // Fallback FCF (Q-1)
       if (q1.operatingCashFlow != null && q1.capitalExpenditure != null) {
         const fcfQ1 = q1.operatingCashFlow + q1.capitalExpenditure;
-        if (Math.abs(fcfQ1) <= 5e9) {
+        if (Math.abs(fcfQ1) <= 100e9) {
           apiData.fcf = fcfQ1;
           logger.info(`   ✅ FCF fallback (Q-1): $${(fcfQ1 / 1e6).toFixed(2)}M`);
         }
@@ -885,7 +1064,7 @@ logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
       // FCF Q-4 — לשימוש ב-Step 4 להשוואה מול AI Q-0
       if (q4?.operatingCashFlow != null && q4?.capitalExpenditure != null) {
         const fcfQ4 = q4.operatingCashFlow + q4.capitalExpenditure;
-        if (Math.abs(fcfQ4) <= 5e9) {
+        if (Math.abs(fcfQ4) <= 100e9) {
           apiData.fcfQ4 = fcfQ4;
           logger.info(`   ✅ FCF Q-4 (לשוואה עם AI): $${(fcfQ4 / 1e6).toFixed(2)}M`);
         }
@@ -894,7 +1073,7 @@ logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
       // FCF YoY fallback: Q-1 vs Q-5 (יוחלף ב-Step 4 ע"י AI Q-0 vs Q-4)
       if (apiData.fcf != null && q5?.operatingCashFlow != null && q5?.capitalExpenditure != null) {
         const fcfQ5 = q5.operatingCashFlow + q5.capitalExpenditure;
-        if (fcfQ5 !== 0 && Math.abs(fcfQ5) <= 5e9) {
+        if (fcfQ5 !== 0 && Math.abs(fcfQ5) <= 100e9) {
           apiData.fcfYoyChange = ((apiData.fcf - fcfQ5) / Math.abs(fcfQ5)) * 100;
           logger.info(`   ✅ FCF YoY fallback: ${apiData.fcfYoyChange.toFixed(1)}% (Q-1 vs Q-5)`);
         }
@@ -908,6 +1087,54 @@ logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
   } catch (err: any) {
     logger.warn(`   ⚠️ FMP Cash Flow failed: ${err.message}`);
   }
+// ── 2D: FMP Income Statement — prevNetMargin ─────────────────────
+try {
+  const incRows = await getIncomeStatement(symbol, 2);
+  if (incRows && incRows.length >= 2) {
+    const prevRow = incRows[1]; // Q-2 — רבעון לפני הנוכחי
+ const prevNetIncome = prevRow.netIncome ?? prevRow.bottomLineNetIncome ?? null;
+const prevRevenue = prevRow.revenue ?? null;
+if (prevNetIncome != null && prevRevenue != null && prevRevenue !== 0) {
+  apiData.prevNetMargin = (prevNetIncome / prevRevenue) * 100;
+  logger.info(`   ✅ Prev Net Margin (Q-2): ${apiData.prevNetMargin.toFixed(2)}%`);
+}
+  }
+} catch (err: any) {
+  logger.warn(`   ⚠️ FMP Income Statement failed: ${err.message}`);
+}
+// ── 2E: FMP Earnings History — YoY Acceleration ──────────────────
+try {
+  const today = new Date().toISOString().split("T")[0];
+  const rawRows = await getEarnings(symbol); // שולף יותר כדי שיישאר 6 אחרי פילטר
+  
+  const earningsRows = (rawRows ?? []).filter(
+    (r: any) => r.date < today && r.epsActual != null
+  );
+  // earningsRows[0] = הרבעון האחרון שדווח בפועל
+  // earningsRows[1] = לפניו, earningsRows[5] = שנה שעברה של [1]
+
+  if (earningsRows.length >= 6) {
+    const q1 = earningsRows[1];
+    const q5 = earningsRows[5];
+
+    if (q1?.epsActual != null && q5?.epsActual != null && q5.epsActual !== 0) {
+      apiData.prevQuarterEpsChange =
+        ((q1.epsActual - q5.epsActual) / Math.abs(q5.epsActual)) * 100;
+      logger.info(`   ✅ Prev EPS YoY (Q1 vs Q5): ${apiData.prevQuarterEpsChange.toFixed(1)}%`);
+    }
+
+    if (q1?.revenueActual != null && q5?.revenueActual != null && q5.revenueActual !== 0) {
+      apiData.prevQuarterRevChange =
+        ((q1.revenueActual - q5.revenueActual) / Math.abs(q5.revenueActual)) * 100;
+      logger.info(`   ✅ Prev Rev YoY (Q1 vs Q5): ${apiData.prevQuarterRevChange.toFixed(1)}%`);
+    }
+  } else {
+    logger.warn(`   ⚠️ Not enough earnings history for ${symbol} (${earningsRows.length} rows after filter)`);
+  }
+} catch (err: any) {
+  logger.warn(`   ⚠️ Earnings History failed: ${err.message}`);
+}
+
   // ============================================
   // STEP 3: AI SUPPLEMENT - NOW WITH VERIFIED PDF URL!
   // ============================================
@@ -1275,6 +1502,12 @@ const finalFcfYoyChange =
       ? ((finalFcf - apiData.fcfQ4) / Math.abs(apiData.fcfQ4)) * 100
       : apiData.fcfYoyChange; 
 
+      const marginTrend: "improving" | "declining" | "stable" =
+  finalNetMargin != null && apiData.prevNetMargin != null
+    ? finalNetMargin > apiData.prevNetMargin + 1 ? "improving"
+    : finalNetMargin < apiData.prevNetMargin - 1 ? "declining"
+    : "stable"
+  : "stable";
   const data: FullExtractionResponse = {
     symbol,
     companyName,
@@ -1311,7 +1544,7 @@ const finalFcfYoyChange =
     margins: {
       netMargin: finalNetMargin,
       operatingMargin: finalOperatingMargin,
-      trend: "stable",
+      trend:marginTrend,
       isEfficiencyRatio: aiData.pdfMetrics?.marginMetric?.type === "efficiency_ratio"
     },
     highlights: aiData.highlights || ["Data extracted from earnings report", "See PDF for details"],
@@ -1493,7 +1726,7 @@ const trendLine = `📈 פוטנציאל מגמה: ${
 
   📊 פרטי דוח:
   - EPS: $${fullData.eps.actual} מול תחזית $${fullData.eps.estimate} (סטייה ${epsDeviation}%)
-  - Revenues: $${(fullData.revenue.actual / 1e6).toFixed(0)}M מול תחזית $${(fullData.revenue.estimate / 1e6).toFixed(0)}M (סטייה ${revenueDeviation}%)
+  - Revenues: $${(fullData.revenue.actual / 1e9).toFixed(2)}B מול תחזית $${(fullData.revenue.estimate / 1e9).toFixed(2)}B (סטייה ${revenueDeviation}%)
   - Guidance: ${fullData.guidance.status === 'raised' ? '🔺 הועלה' : fullData.guidance.status === 'lowered' ? '🔻 הופחת' : '➡️ נשמר'} ${fullData.guidance.details ? `(${fullData.guidance.details})` : ''}
   - שולי רווח: Net ${netMargin}% | ${opMarginLabel} ${opMargin}%
   - Free Cash Flow: ${fcfStatus}${fcfTrend}

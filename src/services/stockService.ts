@@ -152,8 +152,11 @@ logger.info(
 
   // ─── שלב 3: Multiple Expansion — P/E היום vs לפני 60 יום ─
   let peExpansion: number | null = null;
-  const peToday = quote?.pe ?? null;
-  const pe60dAgo = ratios?.pe60dAgo ?? null;
+const peToday =
+  quote?.pe ??
+  (quote?.price != null && quote?.eps != null && quote.eps !== 0
+    ? quote.price / quote.eps
+    : null);  const pe60dAgo = ratios?.pe60dAgo ?? null;
 
   if (peToday !== null && pe60dAgo !== null && pe60dAgo > 0 && peToday > 0) {
     peExpansion = ((peToday - pe60dAgo) / pe60dAgo) * 100;
@@ -434,22 +437,28 @@ export async function getSectorHeatData(symbol: string,companyName:string): Prom
   let peersAvgChange: number | null = null;
   if (peersResult.status === "fulfilled") {
     const peerData = peersResult.value.data;
-    const rawPeers: string[] =
-      Array.isArray(peerData) && peerData[0]?.peersList
-        ? peerData[0].peersList
-        : [];
+ const rawPeers: string[] = Array.isArray(peerData)
+  ? peerData[0]?.peersList                          // פורמט ישן
+    ?? peerData.map((p: any) => p.symbol).filter(Boolean) // פורמט חדש
+  : [];
 
     const peers = rawPeers.filter((p) => p !== symbol).slice(0, 10);
 
     if (peers.length > 0) {
       try {
-        const quoteRes = await axios.get(
-          `${stableBaseUrl}/quote?symbol=${peers.join(",")}&apikey=${apiKey}`
-        );
-        const quotes: any[] = Array.isArray(quoteRes.data) ? quoteRes.data : [];
-        const changes = quotes
-          .map((q: any) => q.changesPercentage)
-          .filter((c: any) => c != null && !isNaN(c));
+        const quoteResults = await Promise.allSettled(
+          peers.map((p) =>
+            axios.get(`${stableBaseUrl}/quote?symbol=${p}&apikey=${apiKey}`)
+          )
+        )
+        const quotes: any[] = quoteResults
+          .filter((r) => r.status === "fulfilled")
+          .map((r: any) => Array.isArray(r.value.data) ? r.value.data[0] : r.value.data)
+          .filter(Boolean);
+         const changes = quotes
+        .map((q: any) => q.changePercentage ?? q.changesPercentage)  // ← תומך בשני
+        .filter((c: any) => c != null && !isNaN(c));
+        logger.info(`🔍 DEBUG Peer quote sample: ${JSON.stringify(quotes[0])}`); // ← זמני
 
         if (changes.length > 0) {
           peersAvgChange =
@@ -524,9 +533,9 @@ export function calcSectorHeat(raw: SectorHeatRawData): {
 
   let classification: "Hot" | "Neutral" | "Cold";
 
-  if (positiveCount >= 3) classification = "Hot";
-  else if (negativeCount >= 3) classification = "Cold";
-  else classification = "Neutral";
+if (positiveCount >= 2 && negativeCount === 0) classification = "Hot";
+else if (negativeCount >= 2 && positiveCount === 0) classification = "Cold";
+else classification = "Neutral";
 
   const sectorHeatScore =
     classification === "Hot"  ? 1
@@ -559,7 +568,8 @@ export async function getEtfFlowSignal(
     const query = `${etfTicker} ETF flow today`;
     const response = await axios.post(
       "https://google.serper.dev/search",
-      { q: query, num: 8, tbs: "qdr:d", gl: "us", hl: "en" },
+      { q: query, num: 10, tbs: "qdr:w", gl: "us", hl: "en" }
+,
       {
         headers: { "X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json" },
         timeout: 8000,
@@ -615,8 +625,8 @@ export async function getNewsMomentumSignal(
     const query = `${symbol} ${companyName} earnings`;
     const response = await axios.post(
       "https://google.serper.dev/search",
-      { q: query, num: 10, tbs: "qdr:d", gl: "us", hl: "en" },
-      {
+{ q: query, num: 10, tbs: "qdr:w", gl: "us", hl: "en" }
+      ,{
         headers: { "X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json" },
         timeout: 8000,
       }
@@ -775,20 +785,20 @@ export const getQuote = async (symbol: string) => {
     
     const quote = response.data[0];
     
-    return {
-      symbol: quote.symbol,
-      name: quote.name,
-      price: quote.price,
-      marketCap: quote.marketCap,
-      avgVolume: quote.avgVolume,
-      volume: quote.volume,
-      change: quote.change,
-      changesPercentage: quote.changesPercentage,
-      eps: quote.eps,
-      pe: quote.pe,
-      open: quote.open ?? null,                      
-      previousClose: quote.previousClose ?? null,   
-    };
+  return {
+  symbol: quote.symbol,
+  name: quote.name,
+  price: quote.price,
+  marketCap: quote.marketCap,
+  avgVolume: quote.avgVolume,
+  volume: quote.volume,
+  change: quote.change,
+  changesPercentage: quote.changePercentage ?? quote.changesPercentage ?? null,
+  eps: quote.eps ?? null,
+  pe: quote.pe ?? null,
+  open: quote.open ?? null,
+  previousClose: quote.previousClose ?? null,
+};
   } catch (e) {
     logger.error(`getQuote error for ${symbol}:`, e);
     return null;
