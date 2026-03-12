@@ -1,7 +1,9 @@
 import { FullExtractionResponse, MiraScore } from "../types/grok.types";
 import logger from '../utils/structureLogger';
+import { getEarnings, getEtf3MReturn } from './stockService';
 
 export type IntradayClassification = "High" | "Medium" | "Low";
+
 
 export interface IntradayPotential {
   classification: IntradayClassification;
@@ -16,7 +18,22 @@ export interface TrendPotential {
   signals: string[];
 }
 
+export interface SupercycleCondition {
+  name: string;
+  passed: boolean;
+  detail: string;
+}
 
+export interface SupercycleResult {
+  confirmed: boolean;   // true אם 4/5 עברו
+  score: number;        // כמה תנאים עברו (0-5)
+  conditions: SupercycleCondition[];
+}
+
+export interface MarketTruthResult {
+  triggered: boolean;
+  reason: string | null;
+}
 export function calcTrendPotential(data: FullExtractionResponse): TrendPotential {
   let positiveCount = 0;
   const signals: string[] = [];
@@ -290,25 +307,22 @@ export function calculateDetailedScore(data: FullExtractionResponse): MiraScore 
     // STEP 3: FINAL CLASSIFICATION
     // ============================================
 
-    let classification = "NEUTRAL";
+const supercycleConfirmed = data.supercycle?.confirmed ?? false;
 
-    // Base classification
-    if (totalScore >= 5) classification = "VERY_POSITIVE";
-    else if (totalScore >= 2) classification = "POSITIVE";
-    else if (totalScore <= -5) classification = "VERY_NEGATIVE";
-    else if (totalScore <= -2) classification = "NEGATIVE";
+let classification = "NEUTRAL";
 
-    // Exception overrides
-    if (negativeCount >= 6) {
-      classification = "NEGATIVE";
-    }
+if (totalScore <= 0)      classification = "NEGATIVE";
+else if (totalScore < 5)  classification = "NEUTRAL";
+else if (totalScore < 7)  classification = "POSITIVE";
+else if (totalScore < 9)  classification = "STRONG";
+else                      classification = "STRONG"; // EXTREME נקבע בחוץ
 
-    if (epsChange > 10 && revChange > 10) {
-      if (classification === "NEUTRAL" || classification === "NEGATIVE") {
-        classification = "POSITIVE"; // Force positive for strong dual beat
-      }
-    }
+if (negativeCount >= 6)   classification = "NEGATIVE";
 
+if (epsChange > 10 && revChange > 10 &&
+   (classification === "NEUTRAL" || classification === "NEGATIVE")) {
+  classification = "POSITIVE";
+}
     return {
         totalScore: Math.round(totalScore * 100) / 100, // Round to 2 decimals
         classification,
@@ -326,50 +340,59 @@ export function calculateDetailedScore(data: FullExtractionResponse): MiraScore 
     };
 }
 export function calculateTradeParams(price: number, classification: string) {
-    const safePrice = price || 0;
+  const safePrice = price || 0;
 
-    // אין מחיר
-    if (safePrice === 0 || !safePrice) {
-        logger.warn(`⚠️ Cannot calculate trade params - price is invalid: ${price}`);
-        const isLong  = classification === "POSITIVE"  || classification === "VERY_POSITIVE";
-        const isShort = classification === "NEGATIVE"  || classification === "VERY_NEGATIVE";
-        return {
-            direction: isLong ? "LONG 🟢" : isShort ? "SHORT 🔴" : "NEUTRAL ⚪",
-            entryPrice: 0, targetPrice: 0, stopPrice: 0,
-            hasPriceData: false
-        };
-    }
-
-    // LONG — חיובי או חיובי מאוד
-    if (classification === "POSITIVE" || classification === "VERY_POSITIVE") {
-        return {
-            direction: "LONG 🟢",
-            entryPrice:  Number((safePrice * 0.98).toFixed(2)),
-            targetPrice: Number((safePrice * 1.05).toFixed(2)),
-            stopPrice:   Number((safePrice * 0.95).toFixed(2)),
-            hasPriceData: true
-        };
-    }
-
-    // SHORT — שלילי או שלילי מאוד
-    if (classification === "NEGATIVE" || classification === "VERY_NEGATIVE") {
-        return {
-            direction: "SHORT 🔴",
-            entryPrice:  Number((safePrice * 1.02).toFixed(2)),
-            targetPrice: Number((safePrice * 0.95).toFixed(2)),
-            stopPrice:   Number((safePrice * 1.05).toFixed(2)),
-            hasPriceData: true
-        };
-    }
-
-    // NEUTRAL
+  if (safePrice === 0) {
+    const isLong  = ["POSITIVE","STRONG","EXTREME"].includes(classification);
+    const isShort = classification === "NEGATIVE";
     return {
-        direction: "NEUTRAL ⚪",
-        entryPrice:  Number(safePrice.toFixed(2)),
-        targetPrice: Number((safePrice * 1.03).toFixed(2)),
-        stopPrice:   Number((safePrice * 0.97).toFixed(2)),
-        hasPriceData: true
+      direction: isLong ? "LONG 🟢" : isShort ? "SHORT 🔴" : "NEUTRAL ⚪",
+      entryPrice: 0, targetPrice: 0, targetPrice2: 0,
+      stopPrice: 0, riskReward: 0, hasPriceData: false
     };
+  }
+
+  if (["POSITIVE","STRONG","EXTREME"].includes(classification)) {
+    const entry  = Number((safePrice * 0.98).toFixed(2));
+    const target1 = Number((safePrice * 1.05).toFixed(2));
+    const target2 = Number((safePrice * 1.10).toFixed(2));
+    const stop   = Number((safePrice * 0.95).toFixed(2));
+    return {
+      direction: classification === "EXTREME" ? "LONG 🟢🟢🟢"
+               : classification === "STRONG"  ? "LONG 🟢🟢"
+               : "LONG 🟢",
+      entryPrice: entry, targetPrice: target1,
+      targetPrice2: target2,
+      stopPrice: stop,
+      riskReward: Number(((target1 - entry) / (entry - stop)).toFixed(2)),
+      hasPriceData: true
+    };
+  }
+
+  if (classification === "NEGATIVE") {
+    const entry  = Number((safePrice * 1.02).toFixed(2));
+    const target1 = Number((safePrice * 0.95).toFixed(2));
+    const target2 = Number((safePrice * 0.90).toFixed(2));
+    const stop   = Number((safePrice * 1.05).toFixed(2));
+    return {
+      direction: "SHORT 🔴",
+      entryPrice: entry, targetPrice: target1,
+      targetPrice2: target2,
+      stopPrice: stop,
+      riskReward: Number(((entry - target1) / (stop - entry)).toFixed(2)),
+      hasPriceData: true
+    };
+  }
+
+  return {
+    direction: "NEUTRAL ⚪",
+    entryPrice:  Number(safePrice.toFixed(2)),
+    targetPrice: Number((safePrice * 1.03).toFixed(2)),
+    targetPrice2: Number((safePrice * 1.06).toFixed(2)),
+    stopPrice:   Number((safePrice * 0.97).toFixed(2)),
+    riskReward:  1,
+    hasPriceData: true
+  };
 }
 
 
@@ -443,4 +466,126 @@ export function calcIntradayPotential(data: FullExtractionResponse): IntradayPot
   signals.forEach(s => logger.info(`   ${s}`));
 
   return { classification, score: positiveCount, signals };
+}
+
+
+
+export async function calcSupercycle(
+  data: FullExtractionResponse
+): Promise<SupercycleResult> {
+  const conditions: SupercycleCondition[] = [];
+
+  // ── תנאי 1: Strong Beat + Guidance ─────────────────────────
+  const epsBeat  = data.eps.beatPercent ?? 0;
+  const revBeat  = data.revenue.beatPercent ?? 0;
+  const guidance = data.guidance.status?.toLowerCase() ?? '';
+  const guidanceOk = guidance.includes('raised') || guidance.includes('positive');
+  const cond1 = epsBeat >= 10 && revBeat >= 5 && guidanceOk;
+  conditions.push({
+    name: 'Strong Beat + Guidance',
+    passed: cond1,
+    detail: `EPS ${epsBeat.toFixed(1)}% (≥10) | Rev ${revBeat.toFixed(1)}% (≥5) | Guidance: ${guidance}`
+  });
+
+  // ── תנאי 2: Structural Tailwind ──────────────────────────────
+  const sectorName = data.hardPreFilter?.sectorName ?? null;
+  let cond2 = false;
+  let cond2Detail = 'N/A (no sector)';
+  if (sectorName) {
+    const return3M = await getEtf3MReturn(sectorName);
+    cond2 = return3M !== null && return3M >= 5;
+    cond2Detail = return3M !== null ? `ETF 3M: ${return3M.toFixed(1)}% (≥5%)` : 'ETF data unavailable';
+  }
+  conditions.push({
+    name: 'Structural Tailwind',
+    passed: cond2,
+    detail: cond2Detail
+  });
+
+  // ── תנאי 3: Execution Consistency ────────────────────────────
+  let cond3 = false;
+  let cond3Detail = 'N/A';
+  try {
+    const earnings = await getEarnings(data.symbol, 5);
+    // Q0 תמיד null ביום הדוח — מדלגים, לוקחים Q1–Q4
+    const historical = (earnings ?? [])
+      .filter(r => r.epsActual !== null && r.revenueActual !== null)
+      .slice(0, 4);
+
+    if (historical.length >= 4) {
+      const epsBeats = historical.filter(
+        r => r.epsActual !== null && r.epsEstimated !== null && r.epsActual > r.epsEstimated
+      ).length;
+      const revBeats = historical.filter(
+        r => r.revenueActual !== null && r.revenueEstimated !== null && r.revenueActual > r.revenueEstimated
+      ).length;
+      cond3 = epsBeats >= 3 && revBeats >= 3;
+      cond3Detail = `EPS beats: ${epsBeats}/4 (≥3) | Rev beats: ${revBeats}/4 (≥3)`;
+    } else {
+      cond3Detail = `Insufficient history (${historical.length} quarters found)`;
+    }
+  } catch (e: any) {
+    cond3Detail = `Error: ${e.message}`;
+  }
+  conditions.push({
+    name: 'Execution Consistency',
+    passed: cond3,
+    detail: cond3Detail
+  });
+
+  // ── תנאי 4: Market Reaction + Volume ─────────────────────────
+  const ahChange    = data.hardPreFilter?.ahChangePercent ?? 0;
+  const volumeRatio = data.hardPreFilter?.volumeRatio ?? 0;
+  const cond4 = ahChange >= 2 && volumeRatio >= 2;
+  conditions.push({
+    name: 'Market Reaction + Volume',
+    passed: cond4,
+    detail: `AH: ${ahChange.toFixed(1)}% (≥2%) | Volume: ×${volumeRatio.toFixed(1)} (≥×2)`
+  });
+
+  // ── תנאי 5: Sector Confirmation ──────────────────────────────
+  const sectorChange = data.hardPreFilter?.sectorChange ?? null;
+  const cond5 = sectorChange !== null && sectorChange >= 0;
+  conditions.push({
+    name: 'Sector Confirmation',
+    passed: cond5,
+    detail: sectorChange !== null ? `Sector: ${sectorChange.toFixed(2)}% (≥0%)` : 'N/A'
+  });
+
+  // ── תוצאה סופית ──────────────────────────────────────────────
+  const score     = conditions.filter(c => c.passed).length;
+  const confirmed = score >= 4; // 4/5 מספיק
+
+  logger.info(`\n🔄 SUPERCYCLE [${data.symbol}]: ${score}/5 → ${confirmed ? '✅ CONFIRMED' : '❌ NOT CONFIRMED'}`);
+  conditions.forEach(c =>
+    logger.info(`   ${c.passed ? '✅' : '❌'} ${c.name}: ${c.detail}`)
+  );
+
+  return { confirmed, score, conditions };
+}
+
+
+export function calcMarketTruthOverride(
+   data: FullExtractionResponse,
+  recommendedDirection: string
+): MarketTruthResult {
+  const epsBeat     = data.eps.beatPercent ?? 0;
+  const ahChange    = data.hardPreFilter?.ahChangePercent ?? 0;
+  const sectorChange = data.hardPreFilter?.sectorChange ?? 0;
+  const isLong = recommendedDirection.includes("LONG");
+
+const triggered =
+  epsBeat > 0 &&
+  ahChange <= -3 &&
+  sectorChange <= -0.5 &&
+  isLong;
+
+  if (triggered) {
+    const reason = `Beat +${epsBeat.toFixed(1)}% אבל AH ${ahChange.toFixed(1)}% + Sector ${sectorChange.toFixed(1)}% → שוק דוחה את הדוח`;
+    logger.info(`⚠️  MARKET TRUTH OVERRIDE [${data.symbol}]: ${reason}`);
+    return { triggered: true, reason };
+  }
+
+  logger.info(`✅ Market Truth Override [${data.symbol}]: not triggered`);
+  return { triggered: false, reason: null };
 }

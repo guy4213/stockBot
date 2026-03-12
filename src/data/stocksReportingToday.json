@@ -7,8 +7,8 @@
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 1639295416004,
-      "volume": 38913091,
+      "marketCap": 1590910598774,
+      "volume": 6252913,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -18,9 +18,9 @@
       "fiscalYear": 2026,
       "finnhubData": {
         "epsActual": 2.05,
-        "epsEstimate": 2.0607,
+        "epsEstimate": 2.068,
         "revenueActual": 19311000000,
-        "revenueEstimate": 19519405878
+        "revenueEstimate": 19563982642
       },
       "sentToTelegram": true,
       "cachedIRPortal": {
@@ -32,37 +32,13 @@
       }
     },
     {
-      "symbol": "PDI",
-      "companyName": "PIMCO Dynamic Income Fund",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 7400504191,
-      "volume": 5399080,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 2,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
       "symbol": "RGTI",
       "companyName": "Rigetti Computing, Inc.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 5808458973,
-      "volume": 25990273,
+      "marketCap": 5339320123,
+      "volume": 10549618.96869,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -73,7 +49,7 @@
       "finnhubData": {
         "epsActual": -0.03,
         "epsEstimate": -0.0332,
-        "revenueActual": 1870000,
+        "revenueActual": 1868000,
         "revenueEstimate": 2385372
       },
       "sentToTelegram": true,
@@ -83,96 +59,6 @@
         "confidence": 0.9,
         "reason": "The URL 'https://investors.rigetti.com/' has the title 'Investor Relations | Rigetti & Co, LLC' and the snippet indicates it's the investor relations website for Rigetti & Co, LLC.",
         "verifiedAt": "2026-03-10T09:40:50.820Z"
-      }
-    },
-    {
-      "symbol": "PAGS",
-      "companyName": "PagSeguro Digital Ltd.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 2946094423,
-      "volume": 12663688,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 2.249631,
-        "epsEstimate": 2.2916,
-        "revenueActual": 5228090127,
-        "revenueEstimate": 5630619300
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": {
-        "url": "https://investors.pagbank.com/",
-        "domain": "investors.pagbank.com",
-        "confidence": 0.9,
-        "reason": "The URL contains 'investors.pagbank.com', the title is 'PagBank: Home Page', and the snippet mentions 'PAGS' and 'NYSE:PAGS', indicating it is the investor relations website for PagSeguro Digital Ltd.",
-        "verifiedAt": "2026-03-10T09:41:38.229Z"
-      }
-    },
-    {
-      "symbol": "BULL",
-      "companyName": "Webull Corporation Class A Ordinary Shares",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 2754974430,
-      "volume": 11914658,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.03,
-        "epsEstimate": 0.0408,
-        "revenueActual": 165200000,
-        "revenueEstimate": 159256680
-      },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://www.webullcorp.com/investor-relations",
-        "domain": "www.webullcorp.com",
-        "confidence": 0.9,
-        "reason": "The URL matches the company name (Webull Corporation) and explicitly states 'Investor Relations' in both the URL and title.",
-        "verifiedAt": "2026-03-10T09:42:15.194Z"
-      }
-    },
-    {
-      "symbol": "STUB",
-      "companyName": "StubHub Holdings, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 2640101494,
-      "volume": 9188046,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.06,
-        "epsEstimate": -0.0189,
-        "revenueActual": 449170000,
-        "revenueEstimate": 498814476
-      },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://investors.stubhub.com/",
-        "domain": "investors.stubhub.com",
-        "confidence": 0.9,
-        "reason": "The URL 'https://investors.stubhub.com/' has the title 'StubHub - Investor Relations' and the snippet mentions Investor FAQs, Contact Us, Investor Email Alerts, Press Releases, Overview, News, Events & Presentations, Financials, Quarterly, indicating it is the main investor relations page.",
-        "verifiedAt": "2026-03-10T09:53:12.799Z"
       }
     },
     {
@@ -200,36 +86,6 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "GENI",
-      "companyName": "Genius Sports Limited",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 1286690667,
-      "volume": 6716051,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.03,
-        "epsEstimate": 0.0289,
-        "revenueActual": 240500000,
-        "revenueEstimate": 238939834
-      },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://investors.geniussports.com/home/default.aspx",
-        "domain": "investors.geniussports.com",
-        "confidence": 0.95,
-        "reason": "The URL investors.geniussports.com appears consistently across multiple snippets as the official Investor Relations website. The home page confirms this.",
-        "verifiedAt": "2026-03-10T09:54:05.741Z"
-      }
-    },
-    {
       "symbol": "RAPT",
       "companyName": "RAPT Therapeutics, Inc.",
       "reportType": "AMC",
@@ -254,37 +110,13 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "GO",
-      "companyName": "Grocery Outlet Holding Corp.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 596674358,
-      "volume": 10417610,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.19,
-        "epsEstimate": 0.2186,
-        "revenueActual": 1215270000,
-        "revenueEstimate": 1259679617
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
       "symbol": "OCGN",
       "companyName": "Ocugen, Inc.",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 543351386,
-      "volume": 5400761,
+      "marketCap": 742686705,
+      "volume": 6694994.20396,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -295,35 +127,17 @@
       "finnhubData": {
         "epsActual": -0.06,
         "epsEstimate": -0.0592,
-        "revenueActual": -190000,
+        "revenueActual": -193000,
         "revenueEstimate": 877200
       },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "SES",
-      "companyName": "SES AI Corporation",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 420851106,
-      "volume": 7631638,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": -0.04,
-        "epsEstimate": -0.0505,
-        "revenueActual": 4560000,
-        "revenueEstimate": 6709763
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
+      "sentToTelegram": true,
+      "cachedIRPortal": {
+        "url": "https://ir.ocugen.com/",
+        "domain": "ir.ocugen.com",
+        "confidence": 0.9,
+        "reason": "The URL contains 'ir.ocugen.com' and the title indicates it's the Investor Relations website for Ocugen, Inc.",
+        "verifiedAt": "2026-03-12T15:08:09.431Z"
+      }
     },
     {
       "symbol": "BYND",
@@ -331,8 +145,8 @@
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 346028691,
-      "volume": 28289072,
+      "marketCap": 344305124,
+      "volume": 8423397,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -345,30 +159,6 @@
         "epsEstimate": -0.1326,
         "revenueActual": null,
         "revenueEstimate": 63820380
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "REI",
-      "companyName": "Ring Energy, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 310834766,
-      "volume": 8941957,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": 0.02,
-        "epsEstimate": 0.0354,
-        "revenueActual": 66879999,
-        "revenueEstimate": 76305500
       },
       "sentToTelegram": false,
       "cachedIRPortal": null

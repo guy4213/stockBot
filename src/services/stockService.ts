@@ -740,6 +740,39 @@ export async function getTrendFmpData(
 }
 
 
+//level 7 supercycle 
+
+// פונקציה חדשה — ETF 3M Return לתנאי 2:
+export async function getEtf3MReturn(sectorName: string): Promise<number | null> {
+  try {
+    const etfSymbol = SECTOR_ETF_MAP[sectorName];
+    if (!etfSymbol) {
+      logger.warn(`⚠️ getEtf3MReturn: no ETF mapped for sector "${sectorName}"`);
+      return null;
+    }
+
+    // 95 ימים = ~65 ימי מסחר = בטוח מכסה 3 חודשים
+    const prices = await getHistoricalPrices(etfSymbol, 95);
+    if (!prices || prices.length < 2) {
+      logger.warn(`⚠️ getEtf3MReturn: insufficient price data for ${etfSymbol}`);
+      return null;
+    }
+
+    const priceToday  = prices[0].price;                 // הכי חדש
+    const price90d    = prices[prices.length - 1].price; // הכי ישן
+
+    if (!priceToday || !price90d || price90d === 0) return null;
+
+    const return3M = ((priceToday - price90d) / price90d) * 100;
+    logger.info(`📈 ETF 3M Return [${etfSymbol}]: ${return3M.toFixed(2)}%`);
+    return return3M;
+  } catch (e: any) {
+    logger.warn(`⚠️ getEtf3MReturn error: ${e.message}`);
+    return null;
+  }
+}
+
+
 export const getEarningsCalendar = async (
   startDate: string,
   endDate: string
@@ -753,9 +786,9 @@ export const getEarningsCalendar = async (
   }
 };
 
-export const getEarnings = async (symbol: string) => {
+export const getEarnings = async (symbol: string, limit: number = 20) => {
   try {
-    const url = `${stableBaseUrl}/earnings?symbol=${symbol}&period=quarter&apikey=${apiKey}`;
+    const url = `${stableBaseUrl}/earnings?symbol=${symbol}&period=quarter&limit=${limit}&apikey=${apiKey}`;
     const response = await axios.get(url);
     return response.data as EarningRes[];
   } catch (e) {

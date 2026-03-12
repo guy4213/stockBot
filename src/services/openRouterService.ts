@@ -25,7 +25,7 @@ import {
 import fs from "fs";
 import path from "path";
 import { fetchContentWithJina } from "./contentExtractor";
-import { calcIntradayPotential, calcTrendPotential, calculateDetailedScore, calculateTradeParams } from "./calculationService";
+import { calcIntradayPotential, calcMarketTruthOverride, calcSupercycle, calcTrendPotential, calculateDetailedScore, calculateTradeParams } from "./calculationService";
 import { callGrokAPI, findEarningsPdf } from "./grokService";
 dotenv.config({ quiet: true });
 
@@ -1549,12 +1549,12 @@ const finalFcfYoyChange =
     },
     highlights: aiData.highlights || ["Data extracted from earnings report", "See PDF for details"],
     concerns: aiData.concerns || ["Data extracted from earnings report", "See PDF for details"],
-    marketData: {
-      price: currentPrice || null,
-      marketCap: null,
-      volume: null,
-      source: "FMP"
-    },
+  marketData: {
+    price: currentPrice || null,
+    marketCap: hardPreFilter?.marketCap ?? null,
+    volume: hardPreFilter?.volumeRatio && currentPrice ? hardPreFilter.volumeRatio : null,
+    source: "FMP"
+  },
     reportTime: "",
     managementCommentary: null,
     dataQuality: "high" as any,
@@ -1632,6 +1632,32 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
     ? ` (${fullData.cashFlow.yoyChange > 0 ? '+' : ''}${fullData.cashFlow.yoyChange.toFixed(1)}% YoY)`
     : '';
 
+
+const marketCapStr = fullData.marketData?.marketCap
+  ? fullData.marketData.marketCap >= 1e9
+    ? `$${(fullData.marketData.marketCap / 1e9).toFixed(1)}B`
+    : `$${(fullData.marketData.marketCap / 1e6).toFixed(0)}M`
+  : "לא זמין";
+
+const volumeStr = fullData.marketData?.volume
+  ? `${(fullData.marketData.volume / 1e6).toFixed(1)}M`
+  : "לא זמין";
+
+const fcfYoy = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
+  ? `${fullData.cashFlow.yoyChange > 0 ? "+" : ""}${fullData.cashFlow.yoyChange.toFixed(1)}%`
+  : "לא זמין";
+
+// % מהכניסה עבור יעד 1, יעד 2, סטופ
+const pctFromEntry = (price: number, entry: number) =>
+  entry > 0 ? `${((price - entry) / entry * 100) > 0 ? "+" : ""}${((price - entry) / entry * 100).toFixed(1)}%` : "";
+
+const target1Pct = tradeParams.hasPriceData ? pctFromEntry(tradeParams.targetPrice, tradeParams.entryPrice) : "";
+const target2Pct = tradeParams.hasPriceData && tradeParams.targetPrice2 ? pctFromEntry(tradeParams.targetPrice2, tradeParams.entryPrice) : "";
+const stopPct    = tradeParams.hasPriceData ? pctFromEntry(tradeParams.stopPrice, tradeParams.entryPrice) : "";
+
+
+
+
 const preFilterSection = preFilter
   ? `
 🔍 ניתוח שוק (Pre-Filter):
@@ -1676,98 +1702,259 @@ const trendLine = `📈 פוטנציאל מגמה: ${
   : trendPotential.classification === "Medium" ? "🟡 בינוני"
   : "🔴 נמוך — אין המלצת Swing"
 } (${trendPotential.score}/7)`;
-    const prompt = `
-  אתה Mira, אנליסט פיננסי AI מומחה.
-  צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
+   
+const supercycle = await calcSupercycle(fullData);
+fullData.supercycle = supercycle;
 
-  📊 נתונים גולמיים:
-  סימול: ${fullData.symbol}
-  שם: ${fullData.companyName}
-  תאריך: ${fullData.reportDate}
-  מחיר נוכחי: $${currentPrice}
+const supercycleLine = `🌀 Supercycle: ${
+  supercycle.confirmed ? "✅ מאושר"  : "❌ לא מאושר"
+} (${supercycle.score}/5)`;
 
-  ביצועים:
-  EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
-  הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
-  תחזית (Guidance): ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
-  FCF: ${fcfStatus}${fcfTrend}
-  צמיחה YoY: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth}
-  מרג'ין: Net ${netMargin} | ${opMarginLabel} ${opMargin}
-  סנטימנט: ${fullData.sentiment.overall}${fullData.sentiment.reasoning ? ` - ${fullData.sentiment.reasoning}` : ''}
 
-  ניקוד מערכת: ${miraScore.totalScore}
-  סיווג מערכת: ${miraScore.classification}
 
-  הוראות סיווג קריטיות:
-  - אם הסיווג "POSITIVE" → כיוון חייב להיות "LONG 🟢"
-  - אם הסיווג "NEGATIVE" → כיוון חייב להיות "SHORT 🔴"
-  - אם הסיווג "NEUTRAL" → כיוון "NEUTRAL ⚪" (צפה בזהירות)
+const marketTruth = calcMarketTruthOverride(fullData, tradeParams.direction);
+fullData.marketTruthOverride = marketTruth;
 
-  המלצת מסחר (מחושבת):
-  כיוון: ${tradeParams.direction}
-  ${tradeParams.hasPriceData ? `
-  כניסה: $${tradeParams.entryPrice}
-  יעד: $${tradeParams.targetPrice}
-  סטופ: $${tradeParams.stopPrice}
-  ` : 'מחיר לא זמין'}
+// אם מופעל — דורס את כיוון המסחר ל-NO TRADE
+const finalDirection = marketTruth.triggered
+  ? "NO TRADE ❌"
+  : tradeParams.direction;
 
-  הדגשים: ${fullData.highlights.join(', ')}
-  דאגות: ${fullData.concerns.join(', ')}
+const marketTruthLine = marketTruth.triggered
+  ? `⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}`
+  : null;
 
-  המשימה שלך:
-  כתוב את ההודעה הסופית לטלגרם בדיוק בפורמט הבא.
-  השתמש בשפה מקצועית, פיננסית, בעברית רהוטה.
+if (miraScore.totalScore >= 9 && supercycle.confirmed) {
+  miraScore.classification = "EXTREME";
+}
+
+// const prompt = `
+//   אתה Mira, אנליסט פיננסי AI מומחה.
+//   צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
+
+//   📊 נתונים גולמיים:
+//   סימול: ${fullData.symbol}
+//   שם: ${fullData.companyName}
+//   תאריך: ${fullData.reportDate}
+//   מחיר נוכחי: $${currentPrice}
+
+//   ביצועים:
+//   EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
+//   הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
+//   תחזית (Guidance): ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
+//   FCF: ${fcfStatus}${fcfTrend}
+//   צמיחה YoY: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth}
+//   מרג'ין: Net ${netMargin} | ${opMarginLabel} ${opMargin}
+//   סנטימנט: ${fullData.sentiment.overall}${fullData.sentiment.reasoning ? ` - ${fullData.sentiment.reasoning}` : ''}
+
+//   ניקוד מערכת: ${miraScore.totalScore}
+//   סיווג מערכת: ${miraScore.classification}
+
+//   הוראות סיווג קריטיות:
+//   - אם הסיווג "POSITIVE" → כיוון חייב להיות "LONG 🟢"
+//   - אם הסיווג "STRONG" → כיוון חייב להיות "LONG 🟢🟢"
+//   - אם הסיווג "EXTREME" → כיוון חייב להיות "LONG 🟢🟢🟢"
+//   - אם הסיווג "NEGATIVE" → כיוון חייב להיות "SHORT 🔴"
+//   - אם הסיווג "NEUTRAL" → כיוון "NEUTRAL ⚪" (צפה בזהירות)
+//   - אם Market Truth Override מופעל → כיוון חייב להיות "NO TRADE ❌"
+
+//   המלצת מסחר (מחושבת):
+//   כיוון: ${finalDirection}
+//   ${tradeParams.hasPriceData ? `
+//   כניסה: $${tradeParams.entryPrice}
+//   יעד: $${tradeParams.targetPrice}
+//   סטופ: $${tradeParams.stopPrice}
+//   ` : 'מחיר לא זמין'}
+
+//   הדגשים: ${fullData.highlights.join(', ')}
+//   דאגות: ${fullData.concerns.join(', ')}
+
+//   המשימה שלך:
+//   כתוב את ההודעה הסופית לטלגרם בדיוק בפורמט הבא.
+//   השתמש בשפה מקצועית, פיננסית, בעברית רהוטה.
   
-  פורמט נדרש:
+//   פורמט נדרש:
   
-  📌 סימול: ${fullData.symbol}
-  📅 תאריך דוח: ${fullData.reportDate}
-  💰 מחיר נוכחי: $${currentPrice}
+//   📌 סימול: ${fullData.symbol}
+//   📅 תאריך דוח: ${fullData.reportDate}
+//   💰 מחיר נוכחי: $${currentPrice}
 
-  📊 פרטי דוח:
-  - EPS: $${fullData.eps.actual} מול תחזית $${fullData.eps.estimate} (סטייה ${epsDeviation}%)
-  - Revenues: $${(fullData.revenue.actual / 1e9).toFixed(2)}B מול תחזית $${(fullData.revenue.estimate / 1e9).toFixed(2)}B (סטייה ${revenueDeviation}%)
-  - Guidance: ${fullData.guidance.status === 'raised' ? '🔺 הועלה' : fullData.guidance.status === 'lowered' ? '🔻 הופחת' : '➡️ נשמר'} ${fullData.guidance.details ? `(${fullData.guidance.details})` : ''}
-  - שולי רווח: Net ${netMargin}% | ${opMarginLabel} ${opMargin}%
-  - Free Cash Flow: ${fcfStatus}${fcfTrend}
-  - YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
-  - סנטימנט הנהלה: ${fullData.sentiment.overall === 'positive' ? 'חיובי' : fullData.sentiment.overall === 'negative' ? 'שלילי' : 'ניטרלי'}
+//   📊 פרטי דוח:
+//   - EPS: $${fullData.eps.actual} מול תחזית $${fullData.eps.estimate} (סטייה ${epsDeviation}%)
+//   - Revenues: $${(fullData.revenue.actual / 1e9).toFixed(2)}B מול תחזית $${(fullData.revenue.estimate / 1e9).toFixed(2)}B (סטייה ${revenueDeviation}%)
+//   - Guidance: ${fullData.guidance.status === 'raised' ? '🔺 הועלה' : fullData.guidance.status === 'lowered' ? '🔻 הופחת' : '➡️ נשמר'} ${fullData.guidance.details ? `(${fullData.guidance.details})` : ''}
+//   - שולי רווח: Net ${netMargin}% | ${opMarginLabel} ${opMargin}%
+//   - Free Cash Flow: ${fcfStatus}${fcfTrend}
+//   - YoY Growth: EPS ${yoyEpsGrowth}% | Revenue ${yoyRevGrowth}%
+//   - סנטימנט הנהלה: ${fullData.sentiment.overall === 'positive' ? 'חיובי' : fullData.sentiment.overall === 'negative' ? 'שלילי' : 'ניטרלי'}
 
-  ⚖ ניקוד כולל: ${miraScore.totalScore}
-  ⚖ סיווג סופי: ${miraScore.classification === 'POSITIVE' || miraScore.classification === 'VERY_POSITIVE' ? 'חיובי' : miraScore.classification === 'NEGATIVE' || miraScore.classification === 'VERY_NEGATIVE' ? 'שלילי' : 'ניטרלי'}
-  ${miraScore.exceptions && miraScore.exceptions.length > 0 ? `🔍 חריגים: ${miraScore.exceptions.join(', ')}` : ''}
+//   ⚖ ניקוד כולל: ${miraScore.totalScore}
+//   ⚖ סיווג סופי: ${
+//     miraScore.classification === 'EXTREME'  ? '🟢🟢🟢 Extreme' :
+//     miraScore.classification === 'STRONG'   ? '🟢🟢 Strong' :
+//     miraScore.classification === 'POSITIVE' ? '🟢 Positive' :
+//     miraScore.classification === 'NEGATIVE' ? '❌ Negative' :
+//     '❌ Neutral'
+//   }
+//   ${miraScore.exceptions && miraScore.exceptions.length > 0 ? `🔍 חריגים: ${miraScore.exceptions.join(', ')}` : ''}
 
-  ${preFilterSection}
+//   ${preFilterSection}
 
-  ${sectorHeatLine}
+//   ${sectorHeatLine}
 
-  ${intradayLine}
+//   ${intradayLine}
   
-  ${trendLine}
-  
-  📈 המלצת מסחר:
-  כיוון: ${tradeParams.direction}
-  מחיר נוכחי: $${currentPrice}
-  ${tradeParams.hasPriceData ? `
-  ${tradeParams.direction === "NEUTRAL ⚪" ? `
-  נקודות ניטור (עבור NEUTRAL):
-  - מחיר בסיס: $${tradeParams.entryPrice}
-  - יעד זהיר: $${tradeParams.targetPrice}
-  - סטופ הגנה: $${tradeParams.stopPrice}
-  ` : `
-  כניסה מומלצת: $${tradeParams.entryPrice}
-  יעד רווח: $${tradeParams.targetPrice}
-  סטופ לוס: $${tradeParams.stopPrice}
-  `}
-  ` : `⚠️ אין מחיר`}
+//   ${trendLine}
 
-  🧩 שיקול דעת AI:
-  [כאן כתוב ניתוח של 3-4 שורות בעברית. הסבר למה המניה קיבלה את הציון והסיווג הזה. שלב נתונים מהדוח (הכנסות, רווח, תחזית) והסבר את המשמעות למשקיע.]
+//   ${supercycleLine}
 
-  📝 מסקנה:
-  [משפט סיכום אחד חזק וברור התואם את ההמלצה (${tradeParams.direction}).]
-  `;
+//   ${marketTruthLine ? `${marketTruthLine}` : ''}
 
+//   📈 המלצת מסחר:
+//   כיוון: ${finalDirection}
+//   מחיר נוכחי: $${currentPrice}
+//   ${tradeParams.hasPriceData ? `
+//   ${finalDirection === "NEUTRAL ⚪" ? `
+//   נקודות ניטור (עבור NEUTRAL):
+//   - מחיר בסיס: $${tradeParams.entryPrice}
+//   - יעד זהיר: $${tradeParams.targetPrice}
+//   - סטופ הגנה: $${tradeParams.stopPrice}
+//   ` : finalDirection === "NO TRADE ❌" ? `
+//   ⚠️ אין כניסה — השוק דוחה את הדוח למרות הביט
+//   ` : `
+//   כניסה מומלצת: $${tradeParams.entryPrice}
+//   יעד רווח: $${tradeParams.targetPrice}
+//   סטופ לוס: $${tradeParams.stopPrice}
+//   `}
+//   ` : `⚠️ אין מחיר`}
+
+//   🧩 שיקול דעת AI:
+//   [כאן כתוב ניתוח של 3-4 שורות בעברית. הסבר למה המניה קיבלה את הציון והסיווג הזה. שלב נתונים מהדוח (הכנסות, רווח, תחזית) והסבר את המשמעות למשקיע.]
+
+//   📝 מסקנה:
+//   [משפט סיכום אחד חזק וברור התואם את ההמלצה (${finalDirection}).]
+//   `;
+const prompt = `
+אתה Mira, אנליסט פיננסי AI מומחה.
+צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
+
+📊 נתונים גולמיים:
+סימול: ${fullData.symbol}
+שם: ${fullData.companyName}
+תאריך: ${fullData.reportDate}
+מחיר נוכחי: $${currentPrice}
+שווי שוק: ${marketCapStr}
+נפח מסחר: ${volumeStr}
+
+ביצועים:
+EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
+הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
+תחזית (Guidance): ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
+FCF: ${fcfStatus}${fcfTrend}
+צמיחה YoY: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth} | FCF ${fcfYoy}
+מרג'ין: Net ${netMargin} | ${opMarginLabel} ${opMargin}
+סנטימנט: ${fullData.sentiment.overall}${fullData.sentiment.reasoning ? ` - ${fullData.sentiment.reasoning}` : ''}
+
+ניקוד מערכת: ${miraScore.totalScore}
+סיווג מערכת: ${miraScore.classification}
+
+הוראות סיווג קריטיות:
+- אם הסיווג "POSITIVE" → כיוון חייב להיות "LONG 🟢"
+- אם הסיווג "STRONG" → כיוון חייב להיות "LONG 🟢🟢"
+- אם הסיווג "EXTREME" → כיוון חייב להיות "LONG 🟢🟢🟢"
+- אם הסיווג "NEGATIVE" → כיוון חייב להיות "SHORT 🔴"
+- אם הסיווג "NEUTRAL" → כיוון "NEUTRAL ⚪" (צפה בזהירות)
+- אם Market Truth Override מופעל → כיוון חייב להיות "NO TRADE ❌"
+
+המלצת מסחר (מחושבת):
+כיוון: ${finalDirection}
+${tradeParams.hasPriceData ? `
+כניסה: $${tradeParams.entryPrice}
+יעד 1: $${tradeParams.targetPrice} (${target1Pct})
+יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
+סטופ: $${tradeParams.stopPrice} (${stopPct})
+סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}
+` : 'מחיר לא זמין'}
+
+הדגשים: ${fullData.highlights.join(', ')}
+דאגות: ${fullData.concerns.join(', ')}
+
+המשימה שלך:
+כתוב את ההודעה הסופית לטלגרם בדיוק בפורמט הבא.
+השתמש בשפה מקצועית, פיננסית, בעברית רהוטה.
+
+פורמט נדרש:
+
+📌 סימול: ${fullData.symbol}
+🏢 חברה: ${fullData.companyName}
+💰 מחיר: $${currentPrice}
+📊 שווי שוק: ${marketCapStr}
+📈 נפח מסחר: ${volumeStr}
+
+📊 תוצאות רבעוניות:
+• EPS: $${fullData.eps.actual} (צפי: $${fullData.eps.estimate}) — סטייה ${epsDeviation}%
+• הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) — סטייה ${revenueDeviation}%
+• Guidance: ${fullData.guidance.status === 'raised' ? '🔺 הועלה' : fullData.guidance.status === 'lowered' ? '🔻 הופחת' : '➡️ נשמר'} ${fullData.guidance.details ? `(${fullData.guidance.details})` : ''}
+• שולי רווח: Net ${netMargin} | ${opMarginLabel} ${opMargin}
+• FCF: ${fcfStatus}${fcfTrend}
+• סנטימנט הנהלה: ${fullData.sentiment.overall === 'positive' ? 'חיובי' : fullData.sentiment.overall === 'negative' ? 'שלילי' : 'ניטרלי'}
+
+📈 צמיחה שנתית (YoY):
+• EPS: ${yoyEpsGrowth}
+• הכנסות: ${yoyRevGrowth}
+• FCF: ${fcfYoy}
+
+${preFilterSection}
+
+${sectorHeatLine}
+
+⚡ פוטנציאל יומי: ${
+  intradayPotential.classification === "High"   ? "🟢 גבוה"
+  : intradayPotential.classification === "Medium" ? "🟡 בינוני"
+  : "🔴 נמוך"
+} (${intradayPotential.score}/6)
+
+📈 פוטנציאל מגמה: ${
+  trendPotential.classification === "High"   ? "🟢 גבוה"
+  : trendPotential.classification === "Medium" ? "🟡 בינוני"
+  : "🔴 נמוך"
+} (${trendPotential.score}/7)
+
+🌀 Supercycle: ${supercycle.confirmed ? "✅ מאושר" : "❌ לא מאושר"} (${supercycle.score}/5)
+
+📊 ניקוד: ${miraScore.totalScore}
+🎯 סיווג: ${
+  miraScore.classification === 'EXTREME'  ? '🟢🟢🟢 Extreme' :
+  miraScore.classification === 'STRONG'   ? '🟢🟢 Strong' :
+  miraScore.classification === 'POSITIVE' ? '🟢 Positive' :
+  miraScore.classification === 'NEGATIVE' ? '❌ Negative' :
+  '❌ Neutral'
+}
+${miraScore.exceptions && miraScore.exceptions.length > 0 ? `🔍 חריגים: ${miraScore.exceptions.join(', ')}` : ''}
+
+${marketTruthLine ? `⚠️ ${marketTruthLine}` : ''}
+
+💼 תוכנית מסחר:
+כיוון: ${finalDirection}
+${tradeParams.hasPriceData ? `
+${finalDirection === "NO TRADE ❌" ? `⚠️ אין כניסה — השוק דוחה את הדוח` :
+  finalDirection === "NEUTRAL ⚪" ? `
+כניסה: $${tradeParams.entryPrice}
+יעד 1: $${tradeParams.targetPrice} (${target1Pct})
+יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
+סטופ: $${tradeParams.stopPrice} (${stopPct})
+סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}
+` : `
+כניסה: $${tradeParams.entryPrice}
+יעד 1: $${tradeParams.targetPrice} (${target1Pct})
+יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
+סטופ: $${tradeParams.stopPrice} (${stopPct})
+סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}
+`}` : `⚠️ אין מחיר`}
+
+📝 סיכום:
+[כתוב משפט אחד-שניים חדים בעברית. הסבר את הסיווג ואת כיוון המסחר על בסיס הנתונים.]
+`;
   try {
     // 🔥 השינוי הגדול: שימוש ב-Gemini Flash דרך OpenRouter
     const telegramMessage = await callOpenRouterAPI(
