@@ -1549,12 +1549,12 @@ const finalFcfYoyChange =
     },
     highlights: aiData.highlights || ["Data extracted from earnings report", "See PDF for details"],
     concerns: aiData.concerns || ["Data extracted from earnings report", "See PDF for details"],
-  marketData: {
-    price: currentPrice || null,
-    marketCap: hardPreFilter?.marketCap ?? null,
-    volume: hardPreFilter?.volumeRatio && currentPrice ? hardPreFilter.volumeRatio : null,
-    source: "FMP"
-  },
+      marketData: {
+        price: currentPrice || null,
+        marketCap: hardPreFilter?.marketCap ?? null, 
+        volume: hardPreFilter?.volume ?? null,          
+        source: "FMP"
+      },
     reportTime: "",
     managementCommentary: null,
     dataQuality: "high" as any,

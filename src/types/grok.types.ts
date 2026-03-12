@@ -177,6 +177,7 @@ export interface HardPreFilter {
   runUp30d: number | null;         
   volumeRatio: number | null;     
   marketCap?: number | null;  
+  volume?: number | null;
   ahChangePercent: number | null
   ahPrice: number | null
   signals: string[];     

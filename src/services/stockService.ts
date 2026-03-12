@@ -198,26 +198,28 @@ const peToday =
 
   const signals = buildPreFilterSignals(runUp30d, ahChangePercent, volumeRatio, epsBeatPercent, pricedInClassification, runUp60d);
 
-  return {
-    runUp30d,
-    volumeRatio,
-    ahChangePercent,
-    ahPrice,
-    signals,
-    runUp60d,
-    peExpansion,
-    epsRevision,
-    pricedInScore,
-    pricedInClassification,
-    sectorHeatClassification: sectorHeat.sectorHeatClassification ?? null,
-    sectorHeatScore: sectorHeat.sectorHeatScore ?? null,
-    sectorChange: sectorRaw?.sectorChange ?? null,
-    peersAvgChange: sectorRaw?.peersAvgChange ?? null,
-    sectorName: sectorRaw?.sectorName ?? null,
-    sectorLongBlocked: sectorHeat.sectorLongBlocked,
-    etfFlowSignal: sectorRaw?.etfFlowSignal ?? null,
-    newsMomentumSignal: sectorRaw?.newsMomentumSignal ?? null,
-  };
+ return {
+  runUp30d,
+  volumeRatio,
+  ahChangePercent,
+  ahPrice,
+  signals,
+  runUp60d,
+  peExpansion,
+  epsRevision,
+  pricedInScore,
+  pricedInClassification,
+  sectorHeatClassification: sectorHeat.sectorHeatClassification ?? null,
+  sectorHeatScore: sectorHeat.sectorHeatScore ?? null,
+  sectorChange: sectorRaw?.sectorChange ?? null,
+  peersAvgChange: sectorRaw?.peersAvgChange ?? null,
+  sectorName: sectorRaw?.sectorName ?? null,
+  sectorLongBlocked: sectorHeat.sectorLongBlocked,
+  etfFlowSignal: sectorRaw?.etfFlowSignal ?? null,
+  newsMomentumSignal: sectorRaw?.newsMomentumSignal ?? null,
+  marketCap: quote?.marketCap ?? null,   // ← חדש
+  volume: quote?.volume ?? null,          // ← חדש
+};
 }
 
 // ============================================

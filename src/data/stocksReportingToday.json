@@ -7,8 +7,8 @@
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 1590910598774,
-      "volume": 6252913,
+      "marketCap": 1600916582256,
+      "volume": 8510969,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -37,8 +37,8 @@
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 5339320123,
-      "volume": 10549618.96869,
+      "marketCap": 5419036433,
+      "volume": 12742610,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -60,6 +60,54 @@
         "reason": "The URL 'https://investors.rigetti.com/' has the title 'Investor Relations | Rigetti & Co, LLC' and the snippet indicates it's the investor relations website for Rigetti & Co, LLC.",
         "verifiedAt": "2026-03-10T09:40:50.820Z"
       }
+    },
+    {
+      "symbol": "BULL",
+      "companyName": "Webull Corporation Class A Ordinary Shares",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 2797844205,
+      "volume": 5070660,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 0.027,
+        "epsEstimate": 0.0408,
+        "revenueActual": 165199000,
+        "revenueEstimate": 159256680
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "AMPX",
+      "companyName": "Amprius Technologies, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 2423084872,
+      "volume": 5360293,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": -0.18,
+        "epsEstimate": -0.0398,
+        "revenueActual": 25234000,
+        "revenueEstimate": 23432082
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "MLNK",
@@ -115,8 +163,8 @@
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 742686705,
-      "volume": 6694994.20396,
+      "marketCap": 759081555,
+      "volume": 8001234.83928,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -145,8 +193,8 @@
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 344305124,
-      "volume": 8423397,
+      "marketCap": 341356918,
+      "volume": 11754726,
       "confidence": 100,
       "sources": [
         "Finnhub",
