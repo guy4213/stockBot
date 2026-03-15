@@ -2066,19 +2066,19 @@ export class StockProcessor {
     
     const currentMinutesFromMidnight = currentHour * 60 + currentMinute;
     
-    // if (reportType === "BMO") {
-    //   // BMO: 6:00 AM - 9:30 AM
-    //   const checkStart = 6 * 60; // 360
-    //   const checkEnd = 9 * 60 + 30; // 570
-    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    // }
+    if (reportType === "BMO") {
+      // BMO: 6:00 AM - 9:30 AM
+      const checkStart = 6 * 60; // 360
+      const checkEnd = 9 * 60 + 30; // 570
+      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    }
     
-    // if (reportType === "AMC") {
-    //   // AMC: 4:00 PM - 8:00 PM
-    //   const checkStart = 16 * 60; // 960
-    //   const checkEnd = 20 * 60; // 1200
-    //   return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
-    // }
+    if (reportType === "AMC") {
+      // AMC: 4:00 PM - 8:00 PM
+      const checkStart = 16 * 60; // 960
+      const checkEnd = 20 * 60; // 1200
+      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+    }
     
     return true;
   } catch (error) {
