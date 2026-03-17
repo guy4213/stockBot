@@ -36,7 +36,7 @@ export const DELAY_BETWEEN_STOCKS_MS = 5000; // 5 seconds between individual sto
 export const MAX_CHECK_ATTEMPTS = 10; // Stop checking after 10 failed attempts
 export const WINDOW_BUFFER_HOURS = 3; // Check stocks ±3 hours from their window
 export const MIN_MARKET_CAP = 300_000_000; 
-export const MIN_VOLUME = 5_000_000; 
+export const MIN_VOLUME = 3_500_000; 
 interface ExtendedStock extends Stock {
     quarter?: number;
     fiscalYear?: number;
