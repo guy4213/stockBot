@@ -44,6 +44,7 @@ export const runDailyCheck = async (req?: Request, res?: Response) => {
             const existingStock = existingData.stocks?.find((s: any) => s.symbol === stock.symbol);
             return {
               ...stock,
+              cachedIRPortal: existingStock?.cachedIRPortal || null, // ✅ Restore cached IR Portal if exists
               sentToTelegram: existingStock?.sentToTelegram || false
             };
           });

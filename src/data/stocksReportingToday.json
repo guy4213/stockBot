@@ -1,0 +1,131 @@
+{
+  "date": "2026-03-17",
+  "stocks": [
+    {
+      "symbol": "TME",
+      "companyName": "Tencent Music Entertainment Group",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 23132749067,
+      "volume": 13866084,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": 1.583987,
+        "epsEstimate": 1.614,
+        "revenueActual": 8512208400,
+        "revenueEstimate": 8511718743
+      },
+      "sentToTelegram": true,
+      "cachedIRPortal": {
+        "url": "https://ir.tencentmusic.com/",
+        "domain": "ir.tencentmusic.com",
+        "confidence": 0.9,
+        "reason": "The URL 'https://ir.tencentmusic.com/' has the title 'Tencent Music: IR Home' and the snippet mentions 'investors of Tencent music ir , tencent music investor relation', suggesting it is the main IR page.",
+        "verifiedAt": "2026-03-17T12:56:29.371Z"
+      }
+    },
+    {
+      "symbol": "GIS",
+      "companyName": "General Mills, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 20799029517,
+      "volume": 10166024,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 3,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.7334,
+        "revenueActual": null,
+        "revenueEstimate": 4461510844
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "DOCU",
+      "companyName": "DocuSign, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 9376781860,
+      "volume": 3882424,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.9655,
+        "revenueActual": null,
+        "revenueEstimate": 844397758
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "OKLO",
+      "companyName": "Oklo Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 9326387907,
+      "volume": 6259154,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.1729,
+        "revenueActual": null,
+        "revenueEstimate": 0
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "SCPH",
+      "companyName": "scPharmaceuticals Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 302201435,
+      "volume": 10898632,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.1734,
+        "revenueActual": null,
+        "revenueEstimate": 26101545
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    }
+  ]
+}
