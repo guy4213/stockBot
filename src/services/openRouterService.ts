@@ -711,143 +711,10 @@ Answer with ONE WORD ONLY: YES or NO
   
 //   return uniqueCandidates.slice(0, 10);
 // }
+<<<<<<< HEAD
 
-// export async function findIRCandidates(
-//   symbol: string,
-//   companyName: string
-// ): Promise<IRCandidate[]> {
-  
-//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
-//   if (!SERPER_API_KEY) {
-//     throw new Error("SERPER_API_KEY missing");
-//   }
-  
-//   const cleanName = companyName.replace(/,?\s*(Inc\.?|Corp\.?|Corporation|Company|Ltd\.?|LLC)$/i, '').trim();
-  
-//   const queries = [
-//     `${symbol} investor relations official site`,
-//     `"${cleanName}" investor relations website`,
-//     `${symbol} ${cleanName} IR site`,
-//     `${symbol} earnings investor relations`,
-//   ];
-  
-//   const allCandidates: IRCandidate[] = [];
-  
-//   const thirdPartyDomains = [
-//     'seekingalpha.com',
-//     'marketbeat.com',
-//     'zacks.com',
-//     'stocktitan.net',
-//     'alphaspread.com',
-//     'marketwatch.com',
-//     'yahoo.com',
-//     'finance.yahoo.com',
-//     'investing.com',
-//     'fool.com',
-//     'benzinga.com',
-//     'tipranks.com',
-//     'macrotrends.net',
-//     'stockanalysis.com',
-//     'sec.gov',
-//     'edgar',
-//     'nasdaq.com',        // ✅ הוסף!
-//     'morningstar.com',   // ✅ הוסף!
-//     'annualreports.com', // ✅ הוסף!
-//     'public.com',        // ✅ הוסף!
-//     'financialmodelingprep.com', // ✅ הוסף!
-//     'youtube.com',       // ✅ הוסף!
-//   ];
-  
-//   for (const query of queries) {
-//     logger.info(`   🔍 Query: "${query}"`);
-    
-//     try {
-//       const response = await axios.post(
-//         'https://google.serper.dev/search',
-//         { 
-//           q: query, 
-//           num: 20,
-//           gl: "us",
-//           hl: "en"
-//         },
-//         { 
-//           headers: { 
-//             'X-API-KEY': SERPER_API_KEY, 
-//             'Content-Type': 'application/json' 
-//           } 
-//         }
-//       );
-      
-//       const results = response.data.organic || [];
-//       logger.info(`   📊 Serper returned ${results.length} results`);
-      
-//       for (let i = 0; i < results.length; i++) {
-//         const result = results[i];
-//         const url = result.link.toLowerCase();
-//         const domain = new URL(result.link).hostname.toLowerCase();
-        
-     
-   
-        
-//         // בדיקה 1: צד שלישי?
-//         const isThirdParty = thirdPartyDomains.some(d => domain.includes(d));
-//         if (isThirdParty) {
-         
-//           continue;
-//         }
-        
-//         // ✅ בדיקה 2 - מתוקנת! בדוק גם את הדומיין!
-//         const isIRUrl = 
-//           // בדוק ב-URL:
-//           url.includes('/investor') || 
-//           url.includes('/ir/') ||
-//           url.includes('/ir-') ||
-//           // ✅ חדש! בדוק גם ב-DOMAIN:
-//           domain.startsWith('ir.') ||           // ir.company.com
-//           domain.startsWith('investor.') ||     // investor.company.com
-//           domain.startsWith('investors.') ||    // investors.company.com
-//           domain.includes('.ir.') ||            // www.ir.company.com
-//           domain.includes('.investor.') ||      // www.investor.company.com
-//           domain.includes('.investors.');       // www.investors.company.com
-        
-//         if (!isIRUrl) {
-//           logger.info(`      ❌ REJECTED: Not an IR URL/domain pattern`);
-//           continue;
-//         }
-        
-//         // ✅ עבר את כל הבדיקות!
-//         allCandidates.push({
-//           url: result.link,
-//           title: result.title,
-//           snippet: result.snippet || ''
-//         });
-//       }
-      
-//     } catch (e: any) {
-//       logger.warn(`   ⚠️ Serper error: ${e.message}`);
-//     }
-//   }
-  
-//   // Remove duplicates
-//   const uniqueCandidates = Array.from(
-//     new Map(allCandidates.map(c => [c.url.toLowerCase(), c])).values()
-//   );
-  
-//   logger.info(`\n📊 SUMMARY:`);
-//   logger.info(`   Total results checked: ${allCandidates.length}`);
-//   logger.info(`   Unique candidates: ${uniqueCandidates.length}`);
-  
-//   if (uniqueCandidates.length > 0) {
-//     logger.info(`\n   🎯 Final candidates:`);
-//     uniqueCandidates.forEach((c, i) => {
-//       logger.info(`   ${i + 1}. ${c.url}`);
-//     });
-//   } else {
-//     logger.warn(`   ⚠️ No IR candidates found after filtering`);
-//   }
-  
-//   return uniqueCandidates.slice(0, 10);
-// }
+=======
+>>>>>>> 8dc7370102bedae509bc663f291ea5c826defbf7
 export async function findIRCandidates(
   symbol: string,
   companyName: string
@@ -1026,7 +893,6 @@ export async function findIRCandidates(
 
   return finalCandidates.slice(0, 10);
 }
-
 
 export async function fullExtraction(
   symbol: string,
