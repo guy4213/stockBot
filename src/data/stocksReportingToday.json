@@ -1,14 +1,38 @@
 {
-  "date": "2026-03-17",
+  "date": "2026-03-18",
   "stocks": [
     {
-      "symbol": "TME",
-      "companyName": "Tencent Music Entertainment Group",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 23132749067,
-      "volume": 13866084,
+      "symbol": "MU",
+      "companyName": "Micron Technology, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 519636370711,
+      "volume": 42078368,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 2,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 9.3297,
+        "revenueActual": null,
+        "revenueEstimate": 20237347588
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "PDD",
+      "companyName": "PDD Holdings Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 146044826297,
+      "volume": 4377841,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -17,28 +41,22 @@
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": 1.583987,
-        "epsEstimate": 1.614,
-        "revenueActual": 8512208400,
-        "revenueEstimate": 8511718743
+        "epsActual": null,
+        "epsEstimate": 21.0496,
+        "revenueActual": null,
+        "revenueEstimate": 125743282495
       },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://ir.tencentmusic.com/",
-        "domain": "ir.tencentmusic.com",
-        "confidence": 0.9,
-        "reason": "The URL 'https://ir.tencentmusic.com/' has the title 'Tencent Music: IR Home' and the snippet mentions 'investors of Tencent music ir , tencent music investor relation', suggesting it is the main IR page.",
-        "verifiedAt": "2026-03-17T12:56:29.371Z"
-      }
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
-      "symbol": "GIS",
-      "companyName": "General Mills, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 20799029517,
-      "volume": 10166024,
+      "symbol": "NKE",
+      "companyName": "NIKE, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 81457602602,
+      "volume": 7926762,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -48,21 +66,69 @@
       "fiscalYear": 2026,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 0.7334,
+        "epsEstimate": 0.2918,
         "revenueActual": null,
-        "revenueEstimate": 4461510844
+        "revenueEstimate": 11345988610
       },
       "sentToTelegram": false,
       "cachedIRPortal": null
     },
     {
-      "symbol": "DOCU",
-      "companyName": "DocuSign, Inc.",
+      "symbol": "JBL",
+      "companyName": "Jabil Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 28025003818,
+      "volume": 1924381,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 2,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 2.5329,
+        "revenueActual": null,
+        "revenueEstimate": 7821388267
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "PHYS",
+      "companyName": "Sprott Physical Gold Trust",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 9376781860,
-      "volume": 3882424,
+      "marketCap": 18230093795,
+      "volume": 3563291,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "SAIL",
+      "companyName": "SailPoint, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 8261514930,
+      "volume": 3901907,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -72,21 +138,21 @@
       "fiscalYear": 2026,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 0.9655,
+        "epsEstimate": 0.0811,
         "revenueActual": null,
-        "revenueEstimate": 844397758
+        "revenueEstimate": 298462526
       },
       "sentToTelegram": false,
       "cachedIRPortal": null
     },
     {
-      "symbol": "OKLO",
-      "companyName": "Oklo Inc.",
+      "symbol": "EQPT",
+      "companyName": "EquipmentShare.com Inc.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 9326387907,
-      "volume": 6259154,
+      "marketCap": 6231815672,
+      "volume": 1541946,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -96,7 +162,103 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": -0.1729,
+        "epsEstimate": 0.1868,
+        "revenueActual": null,
+        "revenueEstimate": 1582841742
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "DLO",
+      "companyName": "DLocal Limited",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 3385344192,
+      "volume": 1121527,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0.1779,
+        "revenueActual": null,
+        "revenueEstimate": 300252800
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "HTFL",
+      "companyName": "Heartflow, Inc. Common Stock",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 1917774352,
+      "volume": 1578374,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.1722,
+        "revenueActual": null,
+        "revenueEstimate": 47430000
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "RCAT",
+      "companyName": "Red Cat Holdings, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 1521972235,
+      "volume": 14209101,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.153,
+        "revenueActual": null,
+        "revenueEstimate": 24396696
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "EVEX",
+      "companyName": "Eve Holding, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 773266740,
+      "volume": 1611817,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.1591,
         "revenueActual": null,
         "revenueEstimate": 0
       },
@@ -104,13 +266,13 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "SCPH",
-      "companyName": "scPharmaceuticals Inc.",
+      "symbol": "SLS",
+      "companyName": "SELLAS Life Sciences Group, Inc.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 302201435,
-      "volume": 10898632,
+      "marketCap": 717907680,
+      "volume": 6327893,
       "confidence": 100,
       "sources": [
         "Finnhub",
@@ -120,9 +282,57 @@
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": -0.1734,
+        "epsEstimate": -0.0657,
         "revenueActual": null,
-        "revenueEstimate": 26101545
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "GROY",
+      "companyName": "Gold Royalty Corp.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 655134114,
+      "volume": 1464931,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": 0,
+        "revenueActual": null,
+        "revenueEstimate": 4590000
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "LRMR",
+      "companyName": "Larimar Therapeutics, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 374831868,
+      "volume": 1306915,
+      "confidence": 100,
+      "sources": [
+        "Finnhub",
+        "FMP"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.5171,
+        "revenueActual": null,
+        "revenueEstimate": 0
       },
       "sentToTelegram": false,
       "cachedIRPortal": null
