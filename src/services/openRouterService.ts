@@ -2072,7 +2072,7 @@ export class StockProcessor {
       // BMO: 6:00 AM - 9:30 AM
       const checkStart = 6 * 60; // 360
       // const checkEnd = 9 * 60 + 30; // 570
-      const checkEnd = 10; // 570
+      const checkEnd = 10*60; // 570
 
       return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
     }
