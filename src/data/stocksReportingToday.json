@@ -7,12 +7,12 @@
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 519636370711,
-      "volume": 42078368,
+      "marketCap": 249993894792,
+      "volume": 14609886,
       "confidence": 100,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Finnhub"
       ],
       "quarter": 2,
       "fiscalYear": 2026,
@@ -26,73 +26,23 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "PDD",
-      "companyName": "PDD Holdings Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 146044826297,
-      "volume": 4377841,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": 21.0496,
-        "revenueActual": null,
-        "revenueEstimate": 125743282495
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "NKE",
-      "companyName": "NIKE, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 81457602602,
-      "volume": 7926762,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 3,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": 0.2918,
-        "revenueActual": null,
-        "revenueEstimate": 11345988610
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "JBL",
-      "companyName": "Jabil Inc.",
+      "symbol": "GIS",
+      "companyName": "General Mills, Inc.",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 28025003818,
-      "volume": 1924381,
-      "confidence": 100,
+      "marketCap": 25863459480,
+      "volume": 5907765,
+      "confidence": 80,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Grok"
       ],
-      "quarter": 2,
-      "fiscalYear": 2026,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 2.5329,
+        "epsEstimate": null,
         "revenueActual": null,
-        "revenueEstimate": 7821388267
+        "revenueEstimate": null
       },
       "sentToTelegram": false,
       "cachedIRPortal": null
@@ -103,12 +53,12 @@
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 18230093795,
-      "volume": 3563291,
+      "marketCap": 14121658347,
+      "volume": 3710364,
       "confidence": 100,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Finnhub"
       ],
       "quarter": 4,
       "fiscalYear": 2025,
@@ -122,97 +72,111 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "SAIL",
-      "companyName": "SailPoint, Inc.",
+      "symbol": "PSLV",
+      "companyName": "Sprott Physical Silver Trust",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 8972731820,
+      "volume": 7335023,
+      "confidence": 80,
+      "sources": [
+        "FMP",
+        "Grok"
+      ],
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "NGD",
+      "companyName": "New Gold Inc.",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 8261514930,
-      "volume": 3901907,
-      "confidence": 100,
+      "marketCap": 5826912000,
+      "volume": 17225694,
+      "confidence": 80,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Grok"
       ],
-      "quarter": 4,
-      "fiscalYear": 2026,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 0.0811,
+        "epsEstimate": null,
         "revenueActual": null,
-        "revenueEstimate": 298462526
+        "revenueEstimate": null
       },
       "sentToTelegram": false,
       "cachedIRPortal": null
     },
     {
-      "symbol": "EQPT",
-      "companyName": "EquipmentShare.com Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 6231815672,
-      "volume": 1541946,
-      "confidence": 100,
+      "symbol": "M",
+      "companyName": "Macy's, Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 5247379324,
+      "volume": 5467880,
+      "confidence": 80,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Grok"
       ],
-      "quarter": 4,
-      "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 0.1868,
+        "epsEstimate": null,
         "revenueActual": null,
-        "revenueEstimate": 1582841742
+        "revenueEstimate": null
       },
       "sentToTelegram": false,
       "cachedIRPortal": null
     },
     {
-      "symbol": "DLO",
-      "companyName": "DLocal Limited",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 3385344192,
-      "volume": 1121527,
-      "confidence": 100,
+      "symbol": "PPTA",
+      "companyName": "Perpetua Resources Corp.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 2710760472,
+      "volume": 3047569,
+      "confidence": 80,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Grok"
       ],
-      "quarter": 4,
-      "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": 0.1779,
+        "epsEstimate": null,
         "revenueActual": null,
-        "revenueEstimate": 300252800
+        "revenueEstimate": null
       },
       "sentToTelegram": false,
       "cachedIRPortal": null
     },
     {
-      "symbol": "HTFL",
-      "companyName": "Heartflow, Inc. Common Stock",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 1917774352,
-      "volume": 1578374,
-      "confidence": 100,
+      "symbol": "LU",
+      "companyName": "Lufax Holding Ltd",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 1173333848,
+      "volume": 2396452,
+      "confidence": 80,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Grok"
       ],
-      "quarter": 4,
-      "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": -0.1722,
+        "epsEstimate": null,
         "revenueActual": null,
-        "revenueEstimate": 47430000
+        "revenueEstimate": null
       },
       "sentToTelegram": false,
       "cachedIRPortal": null
@@ -223,12 +187,12 @@
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 1521972235,
-      "volume": 14209101,
+      "marketCap": 1053291719,
+      "volume": 13074909,
       "confidence": 100,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Finnhub"
       ],
       "quarter": 4,
       "fiscalYear": 2025,
@@ -242,47 +206,21 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "EVEX",
-      "companyName": "Eve Holding, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 773266740,
-      "volume": 1611817,
-      "confidence": 100,
-      "sources": [
-        "Finnhub",
-        "FMP"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": -0.1591,
-        "revenueActual": null,
-        "revenueEstimate": 0
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "SLS",
-      "companyName": "SELLAS Life Sciences Group, Inc.",
+      "symbol": "ASPI",
+      "companyName": "ASP Isotopes Inc. Common Stock",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 717907680,
-      "volume": 6327893,
-      "confidence": 100,
+      "marketCap": 989438953,
+      "volume": 7012326,
+      "confidence": 80,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Grok"
       ],
-      "quarter": 4,
-      "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": -0.0657,
+        "epsEstimate": null,
         "revenueActual": null,
         "revenueEstimate": null
       },
@@ -295,12 +233,12 @@
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 655134114,
-      "volume": 1464931,
+      "marketCap": 641867382,
+      "volume": 3270657,
       "confidence": 100,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Finnhub"
       ],
       "quarter": 4,
       "fiscalYear": 2025,
@@ -314,25 +252,23 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "LRMR",
-      "companyName": "Larimar Therapeutics, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 374831868,
-      "volume": 1306915,
-      "confidence": 100,
+      "symbol": "KOPN",
+      "companyName": "Kopin Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 555168460,
+      "volume": 2201144,
+      "confidence": 80,
       "sources": [
-        "Finnhub",
-        "FMP"
+        "FMP",
+        "Grok"
       ],
-      "quarter": 4,
-      "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": -0.5171,
+        "epsEstimate": null,
         "revenueActual": null,
-        "revenueEstimate": 0
+        "revenueEstimate": null
       },
       "sentToTelegram": false,
       "cachedIRPortal": null

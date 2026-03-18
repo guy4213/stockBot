@@ -24,6 +24,8 @@ export interface TrendFmpData {
   commonDividendsPaid: number | null;
 }
 
+let usStocksCache: Map<string, CachedStock> | null = null;
+
 const SECTOR_ETF_MAP: Record<string, string> = {
   "Technology":             "XLK",
   "Healthcare":             "XLV",

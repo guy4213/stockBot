@@ -8,7 +8,8 @@ import {
   getFinnhubMetrics,
   getIncomeStatement,
   getCashFlow,
-  runHardPreFilter
+  runHardPreFilter,
+  getEarningsCalendar
 } from "./stockService"; 
 import {
   GrokResponse,
@@ -36,7 +37,7 @@ export const DELAY_BETWEEN_STOCKS_MS = 5000; // 5 seconds between individual sto
 export const MAX_CHECK_ATTEMPTS = 10; // Stop checking after 10 failed attempts
 export const WINDOW_BUFFER_HOURS = 3; // Check stocks ±3 hours from their window
 export const MIN_MARKET_CAP = 300_000_000; 
-export const MIN_VOLUME = 2_000_000; 
+export const MIN_VOLUME = 1_000_000; 
 interface ExtendedStock extends Stock {
     quarter?: number;
     fiscalYear?: number;
@@ -300,144 +301,400 @@ async function checkFinnhubUpdates(symbol: string, date: string): Promise<boolea
     }
 }
 //verification service(to anything that doesnt use open router)
-export async function morningIntelligence(date: string): Promise<MorningIntelligenceResponse> {
-  logger.info(`🌅 Running Morning Intelligence (Hybrid) for ${date}...`);
+// export async function morningIntelligence(date: string): Promise<MorningIntelligenceResponse> {
+//   logger.info(`🌅 Running Morning Intelligence (Hybrid) for ${date}...`);
 
-  const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY; 
-  if (!FINNHUB_API_KEY) throw new Error("Missing FINNHUB_API_KEY");
+//   const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY; 
+//   if (!FINNHUB_API_KEY) throw new Error("Missing FINNHUB_API_KEY");
 
-  logger.info(`📡 Calling Finnhub API (Range: ${date} - ${date})...`);
+//   logger.info(`📡 Calling Finnhub API (Range: ${date} - ${date})...`);
   
-  const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
-    `https://finnhub.io/api/v1/calendar/earnings`, 
-    { params: { from: date, to: date, token: FINNHUB_API_KEY } }
-  );
+//   const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
+//     `https://finnhub.io/api/v1/calendar/earnings`, 
+//     { params: { from: date, to: date, token: FINNHUB_API_KEY } }
+//   );
 
-  const rawList = response.data.earningsCalendar || [];
-  logger.info(`✅ Finnhub returned ${rawList.length} raw entries.`);
+//   const rawList = response.data.earningsCalendar || [];
+//   logger.info(`✅ Finnhub returned ${rawList.length} raw entries.`);
 
-  const validatedStocks: ExtendedStock[] = [];
-  const processedSymbols = new Set<string>();
+//   const validatedStocks: ExtendedStock[] = [];
+//   const processedSymbols = new Set<string>();
 
-  for (const entry of rawList) {
-    const symbol = entry.symbol.toUpperCase();
-    if (processedSymbols.has(symbol)) continue;
-    processedSymbols.add(symbol);
+//   for (const entry of rawList) {
+//     const symbol = entry.symbol.toUpperCase();
+//     if (processedSymbols.has(symbol)) continue;
+//     processedSymbols.add(symbol);
 
  
 
-    try {
-      // ✅ שלב 1: בדיקת שווי שוק ונפח (FMP Quote)
-      const quote = await getQuote(symbol);
+//     try {
+//       // ✅ שלב 1: בדיקת שווי שוק ונפח (FMP Quote)
+//       const quote = await getQuote(symbol);
       
-      if (!quote || !quote.marketCap || quote.marketCap < MIN_MARKET_CAP) {
-          logger.info(`⚠️ ${symbol} - Market cap too low ($${quote?.marketCap ? (quote.marketCap / 1e6).toFixed(1) + 'M' : 'N/A'}). Skipping.`);
-          continue;
-      }
+//       if (!quote || !quote.marketCap || quote.marketCap < MIN_MARKET_CAP) {
+//           logger.info(`⚠️ ${symbol} - Market cap too low ($${quote?.marketCap ? (quote.marketCap / 1e6).toFixed(1) + 'M' : 'N/A'}). Skipping.`);
+//           continue;
+//       }
       
-      if (!quote || !quote.volume || quote.volume < MIN_VOLUME) {
-          logger.info(`⚠️ ${symbol} - Volume too low (${quote?.volume ? (quote.volume / 1e6).toFixed(1) + 'M' : 'N/A'}). Skipping.`);
-          continue;
-      }
+//       if (!quote || !quote.volume || quote.volume < MIN_VOLUME) {
+//           logger.info(`⚠️ ${symbol} - Volume too low (${quote?.volume ? (quote.volume / 1e6).toFixed(1) + 'M' : 'N/A'}). Skipping.`);
+//           continue;
+//       }
 
-      // ✅ שלב 2: אימות תאריך דיווח (רק אחרי שעבר שווי+נפח!)
-  const isDateValid = await verifyEarningsDate(symbol, date);
-  if (!isDateValid) {
-      logger.warn(`⚠️ ${symbol} - FMP date mismatch (not blocking - Finnhub is more current)`);
-      // ⚠️ DON'T skip - Finnhub is the source of truth for TODAY
+//       // ✅ שלב 2: אימות תאריך דיווח (רק אחרי שעבר שווי+נפח!)
+//   const isDateValid = await verifyEarningsDate(symbol, date);
+//   if (!isDateValid) {
+//       logger.warn(`⚠️ ${symbol} - FMP date mismatch (not blocking - Finnhub is more current)`);
+//       // ⚠️ DON'T skip - Finnhub is the source of truth for TODAY
+//   }
+//       let reportType: "BMO" | "AMC" = entry.hour.toLowerCase() === 'bmo' ? "BMO" : "AMC";
+//       let windowStart = reportType === "BMO" ? "07:00" : "16:00";
+//       let windowEnd = reportType === "BMO" ? "09:30" : "20:00";
+      
+//       logger.info(`💎 Found: ${symbol} (${quote.name}) | Q${entry.quarter} ${entry.year} | Cap: $${(quote.marketCap / 1e9).toFixed(2)}B | Volume: ${(quote.volume / 1e6).toFixed(1)}M`);
+
+//       validatedStocks.push({
+//           symbol: symbol,
+//           companyName: quote.name || symbol,
+//           reportType: reportType,
+//           windowStart: windowStart,
+//           windowEnd: windowEnd,
+//           marketCap: quote.marketCap,
+//           volume: quote.volume || 0,
+//           confidence: 100,
+//           sources: ["Finnhub", "FMP"],
+//           quarter: entry.quarter,
+//           fiscalYear: entry.year,
+//           // ✅ שמור את הנתונים מ-Finnhub!
+//           finnhubData: {
+//               epsActual: entry.epsActual ?? null,
+//               epsEstimate: entry.epsEstimate ?? null,
+//               revenueActual: entry.revenueActual ?? null,
+//               revenueEstimate: entry.revenueEstimate ?? null
+//           }
+//       });
+      
+//       await delay(500);
+
+//     } catch (err: any) {
+//       logger.error(`⚠️ CRASH processing ${symbol}: ${err.message}`);
+//     }
+//   }
+
+//   validatedStocks.sort((a, b) => b.marketCap - a.marketCap);
+//   logger.info(`✅ Final List: ${validatedStocks.length} stocks.`);
+//   return { date, stocks: validatedStocks };
+// }
+  interface CachedStock {
+  symbol: string;
+  name: string;
+  marketCap: number;
+  volume: number;
+  exchange: string;
+  price: number;
+  eps?: number;
+  pe?: number;
+}
+let usStocksCache: Map<string, CachedStock> | null = null;
+
+function loadUsStocksCache(): Map<string, CachedStock> {
+  if (usStocksCache) return usStocksCache;
+
+  try {
+    const cachePath = path.join(process.cwd(), "src/data/us_stocks_cache.json");
+    const raw = fs.readFileSync(cachePath, "utf-8");
+    const parsed = JSON.parse(raw);
+
+    const stocks: any[] = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed.stocks)
+      ? parsed.stocks
+      : [];
+
+    usStocksCache = new Map<string, CachedStock>(
+      stocks.map(s => [s.symbol.toUpperCase(), s as CachedStock])
+    );
+
+    logger.info(`✅ US Stocks Cache loaded: ${usStocksCache.size} symbols`);
+  } catch (err: any) {
+    logger.error(`❌ Failed to load us_stocks_cache.json: ${err.message}`);
+    usStocksCache = new Map();
   }
-      let reportType: "BMO" | "AMC" = entry.hour.toLowerCase() === 'bmo' ? "BMO" : "AMC";
-      let windowStart = reportType === "BMO" ? "07:00" : "16:00";
-      let windowEnd = reportType === "BMO" ? "09:30" : "20:00";
-      
-      logger.info(`💎 Found: ${symbol} (${quote.name}) | Q${entry.quarter} ${entry.year} | Cap: $${(quote.marketCap / 1e9).toFixed(2)}B | Volume: ${(quote.volume / 1e6).toFixed(1)}M`);
 
-      validatedStocks.push({
-          symbol: symbol,
-          companyName: quote.name || symbol,
-          reportType: reportType,
-          windowStart: windowStart,
-          windowEnd: windowEnd,
-          marketCap: quote.marketCap,
-          volume: quote.volume || 0,
-          confidence: 100,
-          sources: ["Finnhub", "FMP"],
-          quarter: entry.quarter,
-          fiscalYear: entry.year,
-          // ✅ שמור את הנתונים מ-Finnhub!
-          finnhubData: {
-              epsActual: entry.epsActual ?? null,
-              epsEstimate: entry.epsEstimate ?? null,
-              revenueActual: entry.revenueActual ?? null,
-              revenueEstimate: entry.revenueEstimate ?? null
-          }
-      });
-      
-      await delay(500);
+  return usStocksCache;
+}
 
-    } catch (err: any) {
-      logger.error(`⚠️ CRASH processing ${symbol}: ${err.message}`);
+export async function morningIntelligence(date: string): Promise<MorningIntelligenceResponse> {
+  logger.info(`🌅 Running Morning Intelligence (FMP-Primary + Cache + Finnhub/Grok) for ${date}...`);
+
+  // ══════════════════════════════════════════
+  // STEP 1: Load cache + FMP Calendar
+  // ══════════════════════════════════════════
+  const cache = loadUsStocksCache();
+
+  logger.info(`📡 [Step 1] FMP Earnings Calendar (${date})...`);
+  const fmpCalendar = await getEarningsCalendar(date, date);
+  const fmpList: any[] = Array.isArray(fmpCalendar) ? fmpCalendar : [];
+  logger.info(`✅ FMP returned ${fmpList.length} entries.`);
+
+  if (fmpList.length === 0) {
+    logger.warn(`⚠️ FMP returned 0 entries for ${date}.`);
+    return { date, stocks: [] };
+  }
+
+  // Deduplicate symbols
+  const symbolsRaw = [...new Set<string>(
+    fmpList.map(e => ((e.symbol as string) ?? "").toUpperCase()).filter(Boolean)
+  )];
+  logger.info(`📋 Unique symbols: ${symbolsRaw.length}`);
+
+  // ══════════════════════════════════════════
+  // STEP 2: Filter via Cache — zero API calls
+  // ══════════════════════════════════════════
+  logger.info(`🗂️ [Step 2] Filtering via us_stocks_cache.json...`);
+
+  const passedStocks: Array<{ symbol: string; cached: CachedStock }> = [];
+
+  for (const symbol of symbolsRaw) {
+    const cached = cache.get(symbol);
+
+    if (!cached) {
+      logger.info(`⚠️ ${symbol} - Not in US cache. Skipping.`);
+      continue;
     }
+
+    if (!cached.marketCap || cached.marketCap < MIN_MARKET_CAP) {
+      logger.info(`⚠️ ${symbol} - MarketCap too low ($${
+        cached.marketCap ? (cached.marketCap / 1e6).toFixed(1) + 'M' : 'N/A'
+      }). Skipping.`);
+      continue;
+    }
+
+    if (!cached.volume || cached.volume < MIN_VOLUME) {
+      logger.info(`⚠️ ${symbol} - Volume too low (${
+        cached.volume ? (cached.volume / 1e6).toFixed(1) + 'M' : 'N/A'
+      }). Skipping.`);
+      continue;
+    }
+
+    passedStocks.push({ symbol, cached });
+  }
+
+  logger.info(`✅ ${passedStocks.length}/${symbolsRaw.length} stocks passed filter.`);
+
+  if (passedStocks.length === 0) return { date, stocks: [] };
+
+  // ══════════════════════════════════════════
+  // STEP 3: Finnhub — single call, build map
+  // ══════════════════════════════════════════
+  const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
+  const finnhubMap = new Map<string, FinnhubEarningsEntry>();
+
+  if (FINNHUB_API_KEY) {
+    try {
+      logger.info(`📡 [Step 3] Finnhub Calendar (${date})...`);
+      const finnhubResp = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
+        `https://finnhub.io/api/v1/calendar/earnings`,
+        { params: { from: date, to: date, token: FINNHUB_API_KEY } }
+      );
+      const finnhubList = finnhubResp.data.earningsCalendar ?? [];
+      logger.info(`✅ Finnhub returned ${finnhubList.length} entries.`);
+      for (const e of finnhubList) {
+        finnhubMap.set(e.symbol.toUpperCase(), e);
+      }
+    } catch (err: any) {
+      logger.warn(`⚠️ Finnhub failed: ${err.message} — Grok fallback for all.`);
+    }
+  } else {
+    logger.warn(`⚠️ FINNHUB_API_KEY missing — Grok fallback for all.`);
+  }
+
+  // ══════════════════════════════════════════
+  // STEP 4: Collect unmatched → ONE Grok call
+  // ══════════════════════════════════════════
+  const unmatchedSymbols = passedStocks
+    .map(s => s.symbol)
+    .filter(sym => !finnhubMap.has(sym));
+
+  let grokMap = new Map<string, "BMO" | "AMC">();
+  if (unmatchedSymbols.length > 0) {
+    logger.info(`📡 [Step 4] Grok batch for ${unmatchedSymbols.length} unmatched: ${unmatchedSymbols.join(", ")}`);
+    grokMap = await askGrokReportTimeBatch(unmatchedSymbols, date);
+  }
+
+  // ══════════════════════════════════════════
+  // STEP 5: Build final list
+  // ══════════════════════════════════════════
+  const validatedStocks: ExtendedStock[] = [];
+
+  for (const { symbol, cached } of passedStocks) {
+    const finnhubEntry = finnhubMap.get(symbol);
+
+    let reportType: "BMO" | "AMC";
+    let finnhubData: ExtendedStock["finnhubData"];
+    let quarter: number | undefined;
+    let fiscalYear: number | undefined;
+    let sources: string[];
+
+    if (finnhubEntry) {
+      const hourRaw = (finnhubEntry.hour ?? "").toLowerCase().trim();
+      reportType = hourRaw === "bmo" ? "BMO" : "AMC";
+      quarter    = finnhubEntry.quarter;
+      fiscalYear = finnhubEntry.year;
+      finnhubData = {
+        epsActual:       finnhubEntry.epsActual       ?? null,
+        epsEstimate:     finnhubEntry.epsEstimate     ?? null,
+        revenueActual:   finnhubEntry.revenueActual   ?? null,
+        revenueEstimate: finnhubEntry.revenueEstimate ?? null,
+      };
+      sources = ["FMP", "Finnhub"];
+    } else {
+      reportType  = grokMap.get(symbol) ?? "AMC";
+      finnhubData = { epsActual: null, epsEstimate: null, revenueActual: null, revenueEstimate: null };
+      sources     = ["FMP", "Grok"];
+    }
+
+    const windowStart = reportType === "BMO" ? "07:00" : "16:00";
+    const windowEnd   = reportType === "BMO" ? "09:30" : "20:00";
+
+    logger.info(
+      `💎 ${symbol} (${cached.name}) | ` +
+      `$${(cached.marketCap / 1e9).toFixed(2)}B | ` +
+      `${(cached.volume / 1e6).toFixed(1)}M vol | ` +
+      `${reportType} | ${sources.join("+")}`
+    );
+
+    validatedStocks.push({
+      symbol,
+      companyName:  cached.name || symbol,
+      reportType,
+      windowStart,
+      windowEnd,
+      marketCap:    cached.marketCap,
+      volume:       cached.volume,
+      confidence:   finnhubEntry ? 100 : 80,
+      sources,
+      quarter,
+      fiscalYear,
+      finnhubData,
+    });
   }
 
   validatedStocks.sort((a, b) => b.marketCap - a.marketCap);
   logger.info(`✅ Final List: ${validatedStocks.length} stocks.`);
   return { date, stocks: validatedStocks };
 }
-
 // ============================================
 // Helper: Verify Earnings Date with FMP
 // ============================================
 
 //verification service(to anything that doesnt use open router)
-async function verifyEarningsDate(symbol: string, expectedDate: string): Promise<boolean> {
-    try {
-        logger.info(`🔍 Verifying earnings date for ${symbol} (expected: ${expectedDate})`);
+// async function verifyEarningsDate(symbol: string, expectedDate: string): Promise<boolean> {
+//     try {
+//         logger.info(`🔍 Verifying earnings date for ${symbol} (expected: ${expectedDate})`);
         
-        const earnings = await getEarnings(symbol);
+//         const earnings = await getEarnings(symbol);
         
-        if (!earnings || earnings.length === 0) {
-            logger.warn(`⚠️ No FMP data for ${symbol} - trusting Finnhub date`);
-            return true;  // ✅ אם אין נתוני FMP - סמוך על Finnhub!
-        }
+//         if (!earnings || earnings.length === 0) {
+//             logger.warn(`⚠️ No FMP data for ${symbol} - trusting Finnhub date`);
+//             return true;  // ✅ אם אין נתוני FMP - סמוך על Finnhub!
+//         }
 
-        const sortedEarnings = earnings.sort((a, b) => 
-            new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime()
-        );
+//         const sortedEarnings = earnings.sort((a, b) => 
+//             new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime()
+//         );
 
-        const recentEarnings = sortedEarnings.slice(0, 3);
+//         const recentEarnings = sortedEarnings.slice(0, 3);
         
-        logger.info(`📊 Latest 3 earnings for ${symbol}:`);
-        recentEarnings.forEach((e, i) => {
-            logger.info(`  ${i + 1}. Date: ${e.date} | Last Updated: ${e.lastUpdated}`);
-        });
+//         logger.info(`📊 Latest 3 earnings for ${symbol}:`);
+//         recentEarnings.forEach((e, i) => {
+//             logger.info(`  ${i + 1}. Date: ${e.date} | Last Updated: ${e.lastUpdated}`);
+//         });
 
-        const matchingEarning = recentEarnings.find(e => e.date === expectedDate);
+//         const matchingEarning = recentEarnings.find(e => e.date === expectedDate);
 
-        if (matchingEarning) {
-            logger.info(`✅ MATCH FOUND: ${symbol} has earnings on ${expectedDate}`);
-            return true;
-        }
+//         if (matchingEarning) {
+//             logger.info(`✅ MATCH FOUND: ${symbol} has earnings on ${expectedDate}`);
+//             return true;
+//         }
 
-        // ✅ חדש: בדוק אם ה-FMP data ישן מדי (>7 ימים)
-        const mostRecent = recentEarnings[0];
-        const daysSinceUpdate = Math.floor(
-            (new Date().getTime() - new Date(mostRecent.lastUpdated).getTime()) / (1000 * 60 * 60 * 24)
-        );
+//         // ✅ חדש: בדוק אם ה-FMP data ישן מדי (>7 ימים)
+//         const mostRecent = recentEarnings[0];
+//         const daysSinceUpdate = Math.floor(
+//             (new Date().getTime() - new Date(mostRecent.lastUpdated).getTime()) / (1000 * 60 * 60 * 24)
+//         );
 
-        if (daysSinceUpdate > 7) {
-            logger.warn(`⚠️ FMP data is stale (${daysSinceUpdate} days old) - trusting Finnhub`);
-            return true;  // ✅ FMP לא מעודכן - סמוך על Finnhub
-        }
+//         if (daysSinceUpdate > 7) {
+//             logger.warn(`⚠️ FMP data is stale (${daysSinceUpdate} days old) - trusting Finnhub`);
+//             return true;  // ✅ FMP לא מעודכן - סמוך על Finnhub
+//         }
 
-        const closestDate = recentEarnings[0].date;
-        logger.warn(`❌ NO MATCH: ${symbol} FMP says ${closestDate}, Finnhub says ${expectedDate}`);
-        return false;  // ⚠️ רק אם FMP עדכני ולא תואם
+//         const closestDate = recentEarnings[0].date;
+//         logger.warn(`❌ NO MATCH: ${symbol} FMP says ${closestDate}, Finnhub says ${expectedDate}`);
+//         return false;  // ⚠️ רק אם FMP עדכני ולא תואם
 
-    } catch (error: any) {
-        logger.error(`❌ Error verifying earnings date for ${symbol}:`, error.message);
-        return true;  // ✅ במקרה של שגיאה - סמוך על Finnhub
+//     } catch (error: any) {
+//         logger.error(`❌ Error verifying earnings date for ${symbol}:`, error.message);
+//         return true;  // ✅ במקרה של שגיאה - סמוך על Finnhub
+//     }
+// }
+
+// ============================================
+// Helper: Ask Grok for BMO/AMC when Finnhub has no match
+// ============================================
+async function askGrokReportTimeBatch(
+  symbols: string[],
+  date: string
+): Promise<Map<string, "BMO" | "AMC">> {
+  const result = new Map<string, "BMO" | "AMC">();
+  if (symbols.length === 0) return result;
+
+  try {
+    const symbolList = symbols.join(", ");
+    const messages: GrokMessage[] = [
+      {
+        role: "user",
+        content: `For the following stocks reporting earnings on ${date}, determine if each report is released BEFORE market open (BMO) or AFTER market close (AMC).
+
+Stocks: ${symbolList}
+
+Return ONLY a JSON object with symbol as key and "BMO" or "AMC" as value. No explanation. Example:
+{"AAPL":"AMC","MSFT":"BMO"}`
+      }
+    ];
+
+    logger.info(`🤖 Grok batch BMO/AMC lookup for ${symbols.length} symbols: ${symbolList}`);
+    const response = await callGrokAPI(messages, 0.1, 500, true);
+
+    // Parse JSON from response
+    const jsonMatch = response.match(/\{[^}]+\}/s);
+    if (!jsonMatch) {
+      logger.warn(`⚠️ Grok batch: no JSON found in response — defaulting all to AMC`);
+      symbols.forEach(s => result.set(s, "AMC"));
+      return result;
     }
+
+    const parsed: Record<string, string> = JSON.parse(jsonMatch[0]);
+
+    for (const sym of symbols) {
+      const val = (parsed[sym] ?? "").toUpperCase().trim();
+      result.set(sym, val === "BMO" ? "BMO" : "AMC");
+      logger.info(`   🤖 Grok resolved ${sym}: ${result.get(sym)}`);
+    }
+
+    // Fill any missing symbols with AMC
+    for (const sym of symbols) {
+      if (!result.has(sym)) {
+        logger.warn(`   ⚠️ Grok didn't return result for ${sym} — defaulting AMC`);
+        result.set(sym, "AMC");
+      }
+    }
+  } catch (err: any) {
+    logger.warn(`⚠️ askGrokReportTimeBatch failed: ${err.message} — defaulting all to AMC`);
+    symbols.forEach(s => result.set(s, "AMC"));
+  }
+
+  return result;
 }
 
 export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {
