@@ -108,36 +108,49 @@ async function scrapeYahooEarningsPlaywright(
   const PAGE_SIZE = 25;
   const MAX_PAGES = 8;
 
-const browser = await chromium.launch({
-  headless: true,
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--single-process',
-    '--no-zygote',
-    '--renderer-process-limit=1',
-    '--js-flags=--max-old-space-size=128',
-    '--disable-extensions',
-    '--disable-background-networking',
-    '--disable-default-apps',
-    '--disable-sync',
-    '--disable-translate',
-    '--hide-scrollbars',
-    '--mute-audio',
-    '--no-first-run',
-  ]
-});
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--single-process',
+      '--no-zygote',
+      '--renderer-process-limit=1',
+      '--js-flags=--max-old-space-size=128',
+      '--disable-extensions',
+      '--disable-background-networking',
+      '--disable-default-apps',
+      '--disable-sync',
+      '--disable-translate',
+      '--hide-scrollbars',
+      '--mute-audio',
+      '--no-first-run',
+    ]
+  });
+
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    // ✅ מגדיר locale אמריקאי — מונע consent popups אירופאיים
     locale: 'en-US',
+    // ✅ viewport קטן — פחות RAM
+    viewport: { width: 800, height: 600 },
     extraHTTPHeaders: {
       'Accept-Language': 'en-US,en;q=0.9'
     }
   });
+
   const page = await context.newPage();
+
+  // ✅ חסום תמונות, CSS, fonts — הכי משמעותי לחיסכון ב-RAM
+  await context.route('**/*', (route) => {
+    const type = route.request().resourceType();
+    if (['image', 'stylesheet', 'font', 'media', 'other'].includes(type)) {
+      route.abort();
+    } else {
+      route.continue();
+    }
+  });
 
   try {
     for (let p = 0; p < MAX_PAGES; p++) {
@@ -162,27 +175,13 @@ const browser = await chromium.launch({
         // אין popup — בסדר
       }
 
-      // ✅ debug — שמור screenshot לראות מה רואים
-      if (p === 0) {
-        await page.screenshot({ path: `yahoo_page_${date}.png` });
-        logger.info(`  📸 Screenshot saved: yahoo_page_${date}.png`);
-        
-        // הדפס את ה-HTML לlog
-        const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 500));
-        logger.info(`  🔍 Page content preview: ${bodyText}`);
-      }
-
-      // מחכה לטבלה עם timeout ארוך יותר
+      // מחכה לטבלה
       const tableExists = await page.waitForSelector('table tbody tr', { timeout: 20000 })
         .then(() => true)
         .catch(() => false);
 
       if (!tableExists) {
         logger.warn(`  ⚠️ Page ${p + 1}: No table found — stopping.`);
-
-        // ✅ debug — הדפס מה כן יש בדף
-        const html = await page.content();
-        logger.warn(`  🔍 Page HTML snippet: ${html.substring(0, 1000)}`);
         break;
       }
 
@@ -215,11 +214,15 @@ const browser = await chromium.launch({
 
       logger.info(`  📄 Page ${p + 1}: ${newOnPage} new stocks (total: ${results.length})`);
 
+      // ✅ הדף האחרון — סגור page מיד לשחרור RAM
       if (pageRows.length < PAGE_SIZE) {
         logger.info(`  ✅ Done. ${results.length} total across ${p + 1} page(s).`);
+        await page.close();
         break;
       }
 
+      // ✅ נקה memory בין דפים
+      await page.evaluate(() => { (window as any).gc && (window as any).gc(); });
       await page.waitForTimeout(600);
     }
 
@@ -227,6 +230,7 @@ const browser = await chromium.launch({
     logger.error(`  ❌ Playwright failed: ${err.message}`);
     await browser.close();
     return await scrapeYahooEarningsHTML(date);
+
   } finally {
     await browser.close();
   }
