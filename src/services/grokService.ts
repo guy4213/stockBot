@@ -111,12 +111,17 @@ async function scrapeYahooEarningsPlaywright(
 const browser = await chromium.launch({
   headless: true,
   args: [
-    '--no-sandbox',              // ✅ חובה על Linux/Render
-    '--disable-setuid-sandbox',  // ✅ חובה על Linux/Render
-    '--disable-dev-shm-usage',   // ✅ מונע crash מ-RAM נמוך
-    '--disable-gpu',             // ✅ אין GPU בserver
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--single-process',          // ✅ מוריד RAM משמעותית
+    '--no-zygote',               // ✅ מוריד RAM משמעותית
+    '--renderer-process-limit=1',
+    '--js-flags=--max-old-space-size=128'
   ]
-});  const context = await browser.newContext({
+});
+  const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     // ✅ מגדיר locale אמריקאי — מונע consent popups אירופאיים
     locale: 'en-US',
