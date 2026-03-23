@@ -27,7 +27,7 @@ import fs from "fs";
 import path from "path";
 import { fetchContentWithJina } from "./contentExtractor";
 import { calcIntradayPotential, calcMarketTruthOverride, calcSupercycle, calcTrendPotential, calculateDetailedScore, calculateTradeParams } from "./calculationService";
-import { callGrokAPI, findEarningsPdfCandidates, grokScanEarningsToday } from "./grokService";
+import { callGrokAPI, deriveFiscalPeriod, findEarningsPdfCandidates, grokScanEarningsToday } from "./grokService";
 dotenv.config({ quiet: true });
 
 export const GROK_API_KEY = process.env.GROK_API_KEY;
@@ -477,6 +477,9 @@ Return ONLY a JSON object with symbol as key and "BMO" or "AMC" as value. No exp
 
   return result;
 }
+
+
+
 export async function morningIntelligence(date: string): Promise<MorningIntelligenceResponse> {
   logger.info(`🚀 Starting Daily Check Process for ${date}`);
 
@@ -485,11 +488,17 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
   // ══════════════════════════════════════════
   logger.info(`\n🔍 [Step 1] Grok scanning confirmed earnings for ${date}...`);
 
-  let rawStocks: Array<{ ticker: string; name: string; time: "BMO" | "AMC" }> = [];
+  let rawStocks: Array<{ ticker: string; name: string; time: "BMO" | "AMC"; quarter?: number; fiscalYear?: number }> = [];
 
   try {
     const scraped = await grokScanEarningsToday(date);
-    rawStocks = scraped.map(s => ({ ticker: s.ticker, name: s.name, time: s.time }));
+    rawStocks = scraped.map(s => ({
+      ticker:     s.ticker,
+      name:       s.name,
+      time:       s.time,
+      quarter:    s.quarter,
+      fiscalYear: s.fiscalYear
+    }));
     logger.info(`✅ Grok found ${rawStocks.length} confirmed stocks`);
   } catch (e: any) {
     logger.error(`❌ Grok scan failed: ${e.message}`);
@@ -508,11 +517,13 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
 
   const cache = loadUsStocksCache();
   const passedStocks: Array<{
-    symbol:    string;
-    name:      string;
-    marketCap: number;
-    volume:    number;
-    time:      "BMO" | "AMC"; // שמור זמן מ-Yahoo — ישמש כברירת מחדל
+    symbol:      string;
+    name:        string;
+    marketCap:   number;
+    volume:      number;
+    time:        "BMO" | "AMC";
+    quarter?:    number;
+    fiscalYear?: number;
   }> = [];
 
   for (const s of rawStocks) {
@@ -528,7 +539,15 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
         continue;
       }
       logger.info(`💎 ${s.ticker} (${cached.name}) — $${(cached.marketCap/1e9).toFixed(1)}B | cache`);
-      passedStocks.push({ symbol: s.ticker, name: cached.name || s.name, marketCap: cached.marketCap, volume: cached.volume, time: s.time });
+      passedStocks.push({
+        symbol:     s.ticker,
+        name:       cached.name || s.name,
+        marketCap:  cached.marketCap,
+        volume:     cached.volume,
+        time:       s.time,
+        quarter:    s.quarter,
+        fiscalYear: s.fiscalYear
+      });
       continue;
     }
 
@@ -544,7 +563,15 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
         continue;
       }
       logger.info(`💎 ${s.ticker} (${quote.name}) — $${(quote.marketCap/1e9).toFixed(1)}B | FMP`);
-      passedStocks.push({ symbol: s.ticker, name: quote.name || s.name, marketCap: quote.marketCap, volume: quote.volume, time: s.time });
+      passedStocks.push({
+        symbol:     s.ticker,
+        name:       quote.name || s.name,
+        marketCap:  quote.marketCap,
+        volume:     quote.volume,
+        time:       s.time,
+        quarter:    s.quarter,    // ✅
+        fiscalYear: s.fiscalYear  // ✅
+      });
       await new Promise(r => setTimeout(r, 300));
     } catch (e: any) {
       logger.warn(`⚠️ FMP quote failed for ${s.ticker}: ${e.message}`);
@@ -556,7 +583,6 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
 
   // ══════════════════════════════════════════
   // STEP 3: Grok → אמת זמן BMO/AMC
-  // רק על המניות שעברו validation (~10-30)
   // ══════════════════════════════════════════
   logger.info(`\n🤖 [Step 3] Grok timing validation for ${passedStocks.length} stocks...`);
 
@@ -596,20 +622,22 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
 
   // ══════════════════════════════════════════
   // STEP 5: Build final list
-  // זמן: Grok → Yahoo → AMC (סדר עדיפויות)
+  // quarter/fiscalYear: Finnhub → Yahoo → deriveFiscalPeriod
   // ══════════════════════════════════════════
   logger.info(`\n📋 [Step 5] Building final list...`);
   const validatedStocks: ExtendedStock[] = [];
 
+  // ✅ fallback אחרון — תמיד מחושב נכון לפי תאריך
+  const { quarter: derivedQ, fiscalYear: derivedFY } = deriveFiscalPeriod(date);
+
   for (const stock of passedStocks) {
-    // ✅ זמן — Grok קודם, אם אין → Yahoo, אם אין → AMC
+    // זמן: Grok → Yahoo → AMC
     const reportType: "BMO" | "AMC" =
       grokTimingMap.get(stock.symbol) ?? stock.time ?? "AMC";
 
     const windowStart = reportType === "BMO" ? "07:00" : "16:00";
     const windowEnd   = reportType === "BMO" ? "09:30" : "20:00";
 
-    // EPS/Revenue — Finnhub אם קיים
     const finnhubEntry = finnhubMap.get(stock.symbol);
     const finnhubData = {
       epsActual:       finnhubEntry?.epsActual       ?? null,
@@ -618,9 +646,14 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
       revenueEstimate: finnhubEntry?.revenueEstimate ?? null,
     };
 
+    // ✅ סדר עדיפויות: Finnhub → Yahoo → deriveFiscalPeriod — לעולם לא undefined
+    const quarter    = finnhubEntry?.quarter ?? stock.quarter    ?? derivedQ;
+    const fiscalYear = finnhubEntry?.year    ?? stock.fiscalYear ?? derivedFY;
+
     const timeSource = grokTimingMap.has(stock.symbol) ? 'Grok' : 'Yahoo';
     logger.info(
       `💎 ${stock.symbol} (${stock.name}) | ` +
+      `Q${quarter} FY${fiscalYear} | ` +
       `$${(stock.marketCap/1e9).toFixed(1)}B | ` +
       `${reportType} (${timeSource}) | ` +
       `EPS est: ${finnhubData.epsEstimate ?? 'N/A'}`
@@ -638,8 +671,8 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
       sources:     finnhubEntry
                      ? ["Yahoo", "Grok", "Finnhub"]
                      : ["Yahoo", "Grok"],
-      quarter:     finnhubEntry?.quarter,
-      fiscalYear:  finnhubEntry?.year,
+      quarter,
+      fiscalYear,
       finnhubData,
     });
   }
@@ -649,145 +682,188 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
   return { date, stocks: validatedStocks };
 }
 
-
-
-
-export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {
-  const dateObj = new Date();
-  const now = dateObj.toISOString();
-  const today = now.split("T")[0];
+// export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {
+//   const dateObj = new Date();
+//   const now = dateObj.toISOString();
+//   const today = now.split("T")[0];
   
-  const SERPER_API_KEY = process.env.SERPER_API_KEY;
-  if (!SERPER_API_KEY) throw new Error("SERPER_API_KEY is missing");
-  const specificTerm = (quarter && fiscalYear) ? `Q${quarter} ${fiscalYear}` : "Quarterly";
+//   const SERPER_API_KEY = process.env.SERPER_API_KEY;
+//   if (!SERPER_API_KEY) throw new Error("SERPER_API_KEY is missing");
+//   const specificTerm = (quarter && fiscalYear) ? `Q${quarter} ${fiscalYear}` : "Quarterly";
 
-  const query = `${symbol} ${companyName} ${specificTerm} earnings release`;
-  let searchResults: any[] = [];
-// ✅ ערכי default חכמים
-  const currentYear = new Date().getFullYear();
-  const currentQuarter = Math.ceil((new Date().getMonth() + 1) / 3);
-  const targetQuarter = quarter ?? currentQuarter;
-  const targetYear = fiscalYear ?? currentYear;
-  const previousQuarter = targetQuarter === 1 ? 4 : targetQuarter - 1;
-  const previousYear = targetQuarter === 1 ? targetYear - 1 : targetYear;
+//   const query = `${symbol} ${companyName} ${specificTerm} earnings release`;
+//   let searchResults: any[] = [];
+// // ✅ ערכי default חכמים
+//   const currentYear = new Date().getFullYear();
+//   const currentQuarter = Math.ceil((new Date().getMonth() + 1) / 3);
+//   const targetQuarter = quarter ?? currentQuarter;
+//   const targetYear = fiscalYear ?? currentYear;
+//   const previousQuarter = targetQuarter === 1 ? 4 : targetQuarter - 1;
+//   const previousYear = targetQuarter === 1 ? targetYear - 1 : targetYear;
   
-  try {
-    const response = await axios.post(
-      'https://google.serper.dev/search',
-      {
-        q: query,
-        num: 10,
-        tbs: "qdr:w",
-        gl: "us",
-        hl: "en"
-      },
-      { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' }, timeout: 10000 }
-    );
+//   try {
+//     const response = await axios.post(
+//       'https://google.serper.dev/search',
+//       {
+//         q: query,
+//         num: 10,
+//         tbs: "qdr:w",
+//         gl: "us",
+//         hl: "en"
+//       },
+//       { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' }, timeout: 10000 }
+//     );
     
-    searchResults = [...(response.data.news || []), ...(response.data.organic || [])];
-    logger.info(`🔍 [MiniCheck] Serper returned ${searchResults.length} results for ${symbol}`);
+//     searchResults = [...(response.data.news || []), ...(response.data.organic || [])];
+//     logger.info(`🔍 [MiniCheck] Serper returned ${searchResults.length} results for ${symbol}`);
 
-  } catch (err: any) {
-    logger.warn(`⚠️ [MiniCheck] Serper failed: ${err.message}`);
-  }
+//   } catch (err: any) {
+//     logger.warn(`⚠️ [MiniCheck] Serper failed: ${err.message}`);
+//   }
 
-  // ═══════════════════════════════════════════════════════════
-  // FALLBACK: קווירי פשוט אם לא מצאנו כלום
-  // ═══════════════════════════════════════════════════════════
-  if (searchResults.length === 0) {
-    logger.info(`🔄 [MiniCheck] Retrying with simpler query for ${symbol}`);
-    try {
-      const simpleQuery = `${symbol} earnings`;
-      const retryResponse = await axios.post(
-        'https://google.serper.dev/search',
-        { q: simpleQuery, num: 8, gl: "us" },
-        { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' } }
-      );
+//   // ═══════════════════════════════════════════════════════════
+//   // FALLBACK: קווירי פשוט אם לא מצאנו כלום
+//   // ═══════════════════════════════════════════════════════════
+//   if (searchResults.length === 0) {
+//     logger.info(`🔄 [MiniCheck] Retrying with simpler query for ${symbol}`);
+//     try {
+//       const simpleQuery = `${symbol} earnings`;
+//       const retryResponse = await axios.post(
+//         'https://google.serper.dev/search',
+//         { q: simpleQuery, num: 8, gl: "us" },
+//         { headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' } }
+//       );
       
-      searchResults = [...(retryResponse.data.news || []), ...(retryResponse.data.organic || [])];
-      logger.info(`🔄 [MiniCheck] Retry found ${searchResults.length} results`);
-    } catch (retryErr: any) {
-      logger.error(`❌ [MiniCheck] Retry failed: ${retryErr.message}`);
-      return { symbol, checkTime: now, result: "UNSURE" };
-    }
-  }
+//       searchResults = [...(retryResponse.data.news || []), ...(retryResponse.data.organic || [])];
+//       logger.info(`🔄 [MiniCheck] Retry found ${searchResults.length} results`);
+//     } catch (retryErr: any) {
+//       logger.error(`❌ [MiniCheck] Retry failed: ${retryErr.message}`);
+//       return { symbol, checkTime: now, result: "UNSURE" };
+//     }
+//   }
 
-  if (searchResults.length === 0) {
-    logger.warn(`⚠️ [MiniCheck] No results found for ${symbol}`);
+//   if (searchResults.length === 0) {
+//     logger.warn(`⚠️ [MiniCheck] No results found for ${symbol}`);
+//     return { symbol, checkTime: now, result: "UNSURE" };
+//   }
+
+//   // ═══════════════════════════════════════════════════════════
+//   // 🔥 CRITICAL: פרומפט מחוזק שבודק תאריך ורבעון!
+//   // ═══════════════════════════════════════════════════════════
+  
+//   const snippetsText = searchResults.map((r, i) => 
+//     `[${i+1}] Title: ${r.title}
+// Snippet: ${r.snippet}
+// Date: ${r.date || 'N/A'}
+// Link: ${r.link}`
+//   ).join('\n---\n');
+
+// const prompt = `
+// You are validating if a SPECIFIC earnings report has been published.
+
+// TARGET REPORT:
+// - Company: ${symbol} (${companyName})
+// - Quarter: ${specificTerm}
+// - Today's Date: ${today}
+
+// SEARCH RESULTS:
+// ${snippetsText}
+
+// CRITICAL VALIDATION RULES:
+// 1. Must mention "${specificTerm}" or "Q${targetQuarter} ${targetYear}" or "fourth quarter ${targetYear}"
+// 2. Must have actual earnings numbers (EPS, Revenue)
+// 3. Must be published recently (within last 7 days)
+// 4. IGNORE old quarters (Q${previousQuarter} ${previousYear}, Q${targetQuarter} ${targetYear - 1}, etc.)
+// 5. IGNORE previews, estimates, or "scheduled for" announcements
+
+// EXAMPLES OF WHAT TO ACCEPT:
+// ✅ "${symbol} Reports Q${targetQuarter} ${targetYear} Earnings"
+// ✅ "Fourth Quarter ${targetYear} Results"
+// ✅ "Q${targetQuarter} ${targetYear} EPS: $X.XX, Revenue: $XXM"
+
+// EXAMPLES OF WHAT TO REJECT:
+// ❌ "Q${previousQuarter} ${previousYear} Results" (wrong quarter)
+// ❌ "Q${targetQuarter} ${targetYear - 1} Results" (wrong year)
+// ❌ "${symbol} to Report Earnings on..." (preview, not actual)
+// ❌ "Analysts Estimate..." (estimate, not actual)
+
+// QUESTION: Has ${symbol} published the ACTUAL ${specificTerm} earnings report?
+
+// Answer with ONE WORD ONLY: YES or NO
+// `;
+
+//   try {
+//     const res = await callOpenRouterAPI(
+//       [{ role: "user", content: prompt }],
+//       "google/gemini-2.0-flash-001",
+//       0.1,
+//       100  // ⬅️ יותר טוקנים למקרה שצריך
+//     );
+
+//     const cleanRes = res.trim().toUpperCase().replace(/[^A-Z]/g, '');
+//     let finalResult: MiniCheckResult = "UNSURE";
+
+//     if (cleanRes.includes("YES")) finalResult = "YES";
+//     else if (cleanRes.includes("NO")) finalResult = "NO";
+
+//     logger.info(`🤖 [MiniCheck] AI decision for ${symbol} ${specificTerm}: "${res.trim()}" → ${finalResult}`);
+
+//     stockLog.miniCheck(symbol, finalResult);
+//     return { symbol, checkTime: now, result: finalResult };
+
+//   } catch (e: any) { 
+//     logger.error(`❌ [MiniCheck] AI failed: ${e.message}`);
+//     return { symbol, checkTime: now, result: "UNSURE" }; 
+//   }
+// }
+
+export async function miniCheck(
+  symbol: string, 
+  companyName: string, 
+  quarter?: number, 
+  fiscalYear?: number
+): Promise<MiniCheckResponse> {
+
+  const now = new Date().toISOString();
+  const today = now.split("T")[0];
+  const specificTerm = (quarter && fiscalYear) ? `Q${quarter} ${fiscalYear}` : "latest quarterly";
+
+  logger.info(`🤖 [MiniCheck] Grok web search for ${symbol} ${specificTerm}...`);
+
+  const prompt = `Search the web right now for "${symbol} ${companyName} earnings results ${specificTerm}".
+
+Has ${symbol} (${companyName}) published their ACTUAL ${specificTerm} earnings report today (${today}) or in the last 48 hours?
+
+Rules:
+- Must be ACTUAL results (EPS + Revenue numbers), not a preview or estimate
+- Must be ${specificTerm} specifically, not an older quarter
+- Check press releases, IR websites, financial news
+
+Answer with ONE WORD ONLY: YES or NO`;
+
+  try {
+    // ✅ Grok עם web search — הכי אמין
+    const res = await callGrokAPI(
+      [{ role: 'user', content: prompt }],
+      0.1,
+      50,
+      true  // ← web search enabled
+    );
+
+    const clean = res.trim().toUpperCase().replace(/[^A-Z]/g, '');
+    let result: MiniCheckResult = "UNSURE";
+    if (clean.includes("YES")) result = "YES";
+    else if (clean.includes("NO")) result = "NO";
+
+    logger.info(`🤖 [MiniCheck] Grok decision for ${symbol}: ${result}`);
+    stockLog.miniCheck(symbol, result);
+    return { symbol, checkTime: now, result };
+
+  } catch (e: any) {
+    logger.error(`❌ [MiniCheck] Grok failed: ${e.message}`);
     return { symbol, checkTime: now, result: "UNSURE" };
   }
-
-  // ═══════════════════════════════════════════════════════════
-  // 🔥 CRITICAL: פרומפט מחוזק שבודק תאריך ורבעון!
-  // ═══════════════════════════════════════════════════════════
-  
-  const snippetsText = searchResults.map((r, i) => 
-    `[${i+1}] Title: ${r.title}
-Snippet: ${r.snippet}
-Date: ${r.date || 'N/A'}
-Link: ${r.link}`
-  ).join('\n---\n');
-
-const prompt = `
-You are validating if a SPECIFIC earnings report has been published.
-
-TARGET REPORT:
-- Company: ${symbol} (${companyName})
-- Quarter: ${specificTerm}
-- Today's Date: ${today}
-
-SEARCH RESULTS:
-${snippetsText}
-
-CRITICAL VALIDATION RULES:
-1. Must mention "${specificTerm}" or "Q${targetQuarter} ${targetYear}" or "fourth quarter ${targetYear}"
-2. Must have actual earnings numbers (EPS, Revenue)
-3. Must be published recently (within last 7 days)
-4. IGNORE old quarters (Q${previousQuarter} ${previousYear}, Q${targetQuarter} ${targetYear - 1}, etc.)
-5. IGNORE previews, estimates, or "scheduled for" announcements
-
-EXAMPLES OF WHAT TO ACCEPT:
-✅ "${symbol} Reports Q${targetQuarter} ${targetYear} Earnings"
-✅ "Fourth Quarter ${targetYear} Results"
-✅ "Q${targetQuarter} ${targetYear} EPS: $X.XX, Revenue: $XXM"
-
-EXAMPLES OF WHAT TO REJECT:
-❌ "Q${previousQuarter} ${previousYear} Results" (wrong quarter)
-❌ "Q${targetQuarter} ${targetYear - 1} Results" (wrong year)
-❌ "${symbol} to Report Earnings on..." (preview, not actual)
-❌ "Analysts Estimate..." (estimate, not actual)
-
-QUESTION: Has ${symbol} published the ACTUAL ${specificTerm} earnings report?
-
-Answer with ONE WORD ONLY: YES or NO
-`;
-
-  try {
-    const res = await callOpenRouterAPI(
-      [{ role: "user", content: prompt }],
-      "google/gemini-2.0-flash-001",
-      0.1,
-      100  // ⬅️ יותר טוקנים למקרה שצריך
-    );
-
-    const cleanRes = res.trim().toUpperCase().replace(/[^A-Z]/g, '');
-    let finalResult: MiniCheckResult = "UNSURE";
-
-    if (cleanRes.includes("YES")) finalResult = "YES";
-    else if (cleanRes.includes("NO")) finalResult = "NO";
-
-    logger.info(`🤖 [MiniCheck] AI decision for ${symbol} ${specificTerm}: "${res.trim()}" → ${finalResult}`);
-
-    stockLog.miniCheck(symbol, finalResult);
-    return { symbol, checkTime: now, result: finalResult };
-
-  } catch (e: any) { 
-    logger.error(`❌ [MiniCheck] AI failed: ${e.message}`);
-    return { symbol, checkTime: now, result: "UNSURE" }; 
-  }
 }
-
-
 
 export async function findIRCandidates(
   symbol: string,

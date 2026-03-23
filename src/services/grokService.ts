@@ -45,7 +45,7 @@ function parseYahooTime(rawTime: string): "BMO" | "AMC" {
 }
 
 // ─── Helper: derive quarter + fiscalYear from report date ─────────────────
-function deriveFiscalPeriod(date: string): { quarter: number; fiscalYear: number } {
+export function deriveFiscalPeriod(date: string): { quarter: number; fiscalYear: number } {
   const d     = new Date(date + 'T12:00:00Z');
   const month = d.getMonth() + 1;
   const year  = d.getFullYear();
