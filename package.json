@@ -7,7 +7,7 @@
     "copy-data": "cp -r src/data dist/data",
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-  "postinstall": "npm run build && npx playwright install chromium"
+  "postinstall": "npm run build && PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium"
   },
   "keywords": [],
   "author": "",
