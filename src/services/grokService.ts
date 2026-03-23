@@ -115,10 +115,18 @@ const browser = await chromium.launch({
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
-    '--single-process',          // ✅ מוריד RAM משמעותית
-    '--no-zygote',               // ✅ מוריד RAM משמעותית
+    '--single-process',
+    '--no-zygote',
     '--renderer-process-limit=1',
-    '--js-flags=--max-old-space-size=128'
+    '--js-flags=--max-old-space-size=128',
+    '--disable-extensions',
+    '--disable-background-networking',
+    '--disable-default-apps',
+    '--disable-sync',
+    '--disable-translate',
+    '--hide-scrollbars',
+    '--mute-audio',
+    '--no-first-run',
   ]
 });
   const context = await browser.newContext({
