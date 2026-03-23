@@ -27,7 +27,7 @@ import fs from "fs";
 import path from "path";
 import { fetchContentWithJina } from "./contentExtractor";
 import { calcIntradayPotential, calcMarketTruthOverride, calcSupercycle, calcTrendPotential, calculateDetailedScore, calculateTradeParams } from "./calculationService";
-import { callGrokAPI, findEarningsPdf } from "./grokService";
+import { callGrokAPI, findEarningsPdfCandidates, grokScanEarningsToday } from "./grokService";
 dotenv.config({ quiet: true });
 
 export const GROK_API_KEY = process.env.GROK_API_KEY;
@@ -423,225 +423,6 @@ function loadUsStocksCache(): Map<string, CachedStock> {
 
   return usStocksCache;
 }
-
-export async function morningIntelligence(date: string): Promise<MorningIntelligenceResponse> {
-  logger.info(`🌅 Running Morning Intelligence (FMP-Primary + Cache + Finnhub/Grok) for ${date}...`);
-
-  // ══════════════════════════════════════════
-  // STEP 1: Load cache + FMP Calendar
-  // ══════════════════════════════════════════
-  const cache = loadUsStocksCache();
-
-  logger.info(`📡 [Step 1] FMP Earnings Calendar (${date})...`);
-  const fmpCalendar = await getEarningsCalendar(date, date);
-  const fmpList: any[] = Array.isArray(fmpCalendar) ? fmpCalendar : [];
-  logger.info(`✅ FMP returned ${fmpList.length} entries.`);
-
-  if (fmpList.length === 0) {
-    logger.warn(`⚠️ FMP returned 0 entries for ${date}.`);
-    return { date, stocks: [] };
-  }
-
-  // Deduplicate symbols
-  const symbolsRaw = [...new Set<string>(
-    fmpList.map(e => ((e.symbol as string) ?? "").toUpperCase()).filter(Boolean)
-  )];
-  logger.info(`📋 Unique symbols: ${symbolsRaw.length}`);
-
-  // ══════════════════════════════════════════
-  // STEP 2: Filter via Cache — zero API calls
-  // ══════════════════════════════════════════
-  logger.info(`🗂️ [Step 2] Filtering via us_stocks_cache.json...`);
-
-  const passedStocks: Array<{ symbol: string; cached: CachedStock }> = [];
-
-  for (const symbol of symbolsRaw) {
-    const cached = cache.get(symbol);
-
-    if (!cached) {
-      logger.info(`⚠️ ${symbol} - Not in US cache. Skipping.`);
-      continue;
-    }
-
-    if (!cached.marketCap || cached.marketCap < MIN_MARKET_CAP) {
-      logger.info(`⚠️ ${symbol} - MarketCap too low ($${
-        cached.marketCap ? (cached.marketCap / 1e6).toFixed(1) + 'M' : 'N/A'
-      }). Skipping.`);
-      continue;
-    }
-
-    if (!cached.volume || cached.volume < MIN_VOLUME) {
-      logger.info(`⚠️ ${symbol} - Volume too low (${
-        cached.volume ? (cached.volume / 1e6).toFixed(1) + 'M' : 'N/A'
-      }). Skipping.`);
-      continue;
-    }
-
-    passedStocks.push({ symbol, cached });
-  }
-
-  logger.info(`✅ ${passedStocks.length}/${symbolsRaw.length} stocks passed filter.`);
-
-  if (passedStocks.length === 0) return { date, stocks: [] };
-
-  // ══════════════════════════════════════════
-  // STEP 3: Finnhub — single call, build map
-  // ══════════════════════════════════════════
-  const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
-  const finnhubMap = new Map<string, FinnhubEarningsEntry>();
-
-  if (FINNHUB_API_KEY) {
-    try {
-      logger.info(`📡 [Step 3] Finnhub Calendar (${date})...`);
-      const finnhubResp = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
-        `https://finnhub.io/api/v1/calendar/earnings`,
-        { params: { from: date, to: date, token: FINNHUB_API_KEY } }
-      );
-      const finnhubList = finnhubResp.data.earningsCalendar ?? [];
-      logger.info(`✅ Finnhub returned ${finnhubList.length} entries.`);
-      for (const e of finnhubList) {
-        finnhubMap.set(e.symbol.toUpperCase(), e);
-      }
-    } catch (err: any) {
-      logger.warn(`⚠️ Finnhub failed: ${err.message} — Grok fallback for all.`);
-    }
-  } else {
-    logger.warn(`⚠️ FINNHUB_API_KEY missing — Grok fallback for all.`);
-  }
-
-  // ══════════════════════════════════════════
-  // STEP 4: Collect unmatched → ONE Grok call
-  // ══════════════════════════════════════════
-  const unmatchedSymbols = passedStocks
-    .map(s => s.symbol)
-    .filter(sym => !finnhubMap.has(sym));
-
-  let grokMap = new Map<string, "BMO" | "AMC">();
-  if (unmatchedSymbols.length > 0) {
-    logger.info(`📡 [Step 4] Grok batch for ${unmatchedSymbols.length} unmatched: ${unmatchedSymbols.join(", ")}`);
-    grokMap = await askGrokReportTimeBatch(unmatchedSymbols, date);
-  }
-
-  // ══════════════════════════════════════════
-  // STEP 5: Build final list
-  // ══════════════════════════════════════════
-  const validatedStocks: ExtendedStock[] = [];
-
-  for (const { symbol, cached } of passedStocks) {
-    const finnhubEntry = finnhubMap.get(symbol);
-
-    let reportType: "BMO" | "AMC";
-    let finnhubData: ExtendedStock["finnhubData"];
-    let quarter: number | undefined;
-    let fiscalYear: number | undefined;
-    let sources: string[];
-
-    if (finnhubEntry) {
-      const hourRaw = (finnhubEntry.hour ?? "").toLowerCase().trim();
-      reportType = hourRaw === "bmo" ? "BMO" : "AMC";
-      quarter    = finnhubEntry.quarter;
-      fiscalYear = finnhubEntry.year;
-      finnhubData = {
-        epsActual:       finnhubEntry.epsActual       ?? null,
-        epsEstimate:     finnhubEntry.epsEstimate     ?? null,
-        revenueActual:   finnhubEntry.revenueActual   ?? null,
-        revenueEstimate: finnhubEntry.revenueEstimate ?? null,
-      };
-      sources = ["FMP", "Finnhub"];
-    } else {
-      reportType  = grokMap.get(symbol) ?? "AMC";
-      finnhubData = { epsActual: null, epsEstimate: null, revenueActual: null, revenueEstimate: null };
-      sources     = ["FMP", "Grok"];
-    }
-
-    const windowStart = reportType === "BMO" ? "07:00" : "16:00";
-    const windowEnd   = reportType === "BMO" ? "09:30" : "20:00";
-
-    logger.info(
-      `💎 ${symbol} (${cached.name}) | ` +
-      `$${(cached.marketCap / 1e9).toFixed(2)}B | ` +
-      `${(cached.volume / 1e6).toFixed(1)}M vol | ` +
-      `${reportType} | ${sources.join("+")}`
-    );
-
-    validatedStocks.push({
-      symbol,
-      companyName:  cached.name || symbol,
-      reportType,
-      windowStart,
-      windowEnd,
-      marketCap:    cached.marketCap,
-      volume:       cached.volume,
-      confidence:   finnhubEntry ? 100 : 80,
-      sources,
-      quarter,
-      fiscalYear,
-      finnhubData,
-    });
-  }
-
-  validatedStocks.sort((a, b) => b.marketCap - a.marketCap);
-  logger.info(`✅ Final List: ${validatedStocks.length} stocks.`);
-  return { date, stocks: validatedStocks };
-}
-// ============================================
-// Helper: Verify Earnings Date with FMP
-// ============================================
-
-//verification service(to anything that doesnt use open router)
-// async function verifyEarningsDate(symbol: string, expectedDate: string): Promise<boolean> {
-//     try {
-//         logger.info(`🔍 Verifying earnings date for ${symbol} (expected: ${expectedDate})`);
-        
-//         const earnings = await getEarnings(symbol);
-        
-//         if (!earnings || earnings.length === 0) {
-//             logger.warn(`⚠️ No FMP data for ${symbol} - trusting Finnhub date`);
-//             return true;  // ✅ אם אין נתוני FMP - סמוך על Finnhub!
-//         }
-
-//         const sortedEarnings = earnings.sort((a, b) => 
-//             new Date(b.lastUpdated).getTime() - new Date(a.lastUpdated).getTime()
-//         );
-
-//         const recentEarnings = sortedEarnings.slice(0, 3);
-        
-//         logger.info(`📊 Latest 3 earnings for ${symbol}:`);
-//         recentEarnings.forEach((e, i) => {
-//             logger.info(`  ${i + 1}. Date: ${e.date} | Last Updated: ${e.lastUpdated}`);
-//         });
-
-//         const matchingEarning = recentEarnings.find(e => e.date === expectedDate);
-
-//         if (matchingEarning) {
-//             logger.info(`✅ MATCH FOUND: ${symbol} has earnings on ${expectedDate}`);
-//             return true;
-//         }
-
-//         // ✅ חדש: בדוק אם ה-FMP data ישן מדי (>7 ימים)
-//         const mostRecent = recentEarnings[0];
-//         const daysSinceUpdate = Math.floor(
-//             (new Date().getTime() - new Date(mostRecent.lastUpdated).getTime()) / (1000 * 60 * 60 * 24)
-//         );
-
-//         if (daysSinceUpdate > 7) {
-//             logger.warn(`⚠️ FMP data is stale (${daysSinceUpdate} days old) - trusting Finnhub`);
-//             return true;  // ✅ FMP לא מעודכן - סמוך על Finnhub
-//         }
-
-//         const closestDate = recentEarnings[0].date;
-//         logger.warn(`❌ NO MATCH: ${symbol} FMP says ${closestDate}, Finnhub says ${expectedDate}`);
-//         return false;  // ⚠️ רק אם FMP עדכני ולא תואם
-
-//     } catch (error: any) {
-//         logger.error(`❌ Error verifying earnings date for ${symbol}:`, error.message);
-//         return true;  // ✅ במקרה של שגיאה - סמוך על Finnhub
-//     }
-// }
-
-// ============================================
-// Helper: Ask Grok for BMO/AMC when Finnhub has no match
-// ============================================
 async function askGrokReportTimeBatch(
   symbols: string[],
   date: string
@@ -696,6 +477,180 @@ Return ONLY a JSON object with symbol as key and "BMO" or "AMC" as value. No exp
 
   return result;
 }
+export async function morningIntelligence(date: string): Promise<MorningIntelligenceResponse> {
+  logger.info(`🚀 Starting Daily Check Process for ${date}`);
+
+  // ══════════════════════════════════════════
+  // STEP 1: Yahoo (Playwright) → רשימה מאושרת
+  // ══════════════════════════════════════════
+  logger.info(`\n🔍 [Step 1] Grok scanning confirmed earnings for ${date}...`);
+
+  let rawStocks: Array<{ ticker: string; name: string; time: "BMO" | "AMC" }> = [];
+
+  try {
+    const scraped = await grokScanEarningsToday(date);
+    rawStocks = scraped.map(s => ({ ticker: s.ticker, name: s.name, time: s.time }));
+    logger.info(`✅ Grok found ${rawStocks.length} confirmed stocks`);
+  } catch (e: any) {
+    logger.error(`❌ Grok scan failed: ${e.message}`);
+    return { date, stocks: [] };
+  }
+
+  if (rawStocks.length === 0) {
+    logger.warn(`⚠️ Grok returned 0 stocks for ${date}`);
+    return { date, stocks: [] };
+  }
+
+  // ══════════════════════════════════════════
+  // STEP 2: Validation — Cache + FMP Quote
+  // ══════════════════════════════════════════
+  logger.info(`\n📊 [Step 2] Validating ${rawStocks.length} stocks via FMP...`);
+
+  const cache = loadUsStocksCache();
+  const passedStocks: Array<{
+    symbol:    string;
+    name:      string;
+    marketCap: number;
+    volume:    number;
+    time:      "BMO" | "AMC"; // שמור זמן מ-Yahoo — ישמש כברירת מחדל
+  }> = [];
+
+  for (const s of rawStocks) {
+    const cached = cache.get(s.ticker);
+
+    if (cached) {
+      if (!cached.marketCap || cached.marketCap < MIN_MARKET_CAP) {
+        logger.info(`⚠️ ${s.ticker} — marketCap too low (cache), skipping`);
+        continue;
+      }
+      if (!cached.volume || cached.volume < MIN_VOLUME) {
+        logger.info(`⚠️ ${s.ticker} — volume too low (cache), skipping`);
+        continue;
+      }
+      logger.info(`💎 ${s.ticker} (${cached.name}) — $${(cached.marketCap/1e9).toFixed(1)}B | cache`);
+      passedStocks.push({ symbol: s.ticker, name: cached.name || s.name, marketCap: cached.marketCap, volume: cached.volume, time: s.time });
+      continue;
+    }
+
+    // לא בcache — FMP quote
+    try {
+      const quote = await getQuote(s.ticker);
+      if (!quote?.marketCap || quote.marketCap < MIN_MARKET_CAP) {
+        logger.info(`⚠️ ${s.ticker} — marketCap too low (FMP), skipping`);
+        continue;
+      }
+      if (!quote?.volume || quote.volume < MIN_VOLUME) {
+        logger.info(`⚠️ ${s.ticker} — volume too low (FMP), skipping`);
+        continue;
+      }
+      logger.info(`💎 ${s.ticker} (${quote.name}) — $${(quote.marketCap/1e9).toFixed(1)}B | FMP`);
+      passedStocks.push({ symbol: s.ticker, name: quote.name || s.name, marketCap: quote.marketCap, volume: quote.volume, time: s.time });
+      await new Promise(r => setTimeout(r, 300));
+    } catch (e: any) {
+      logger.warn(`⚠️ FMP quote failed for ${s.ticker}: ${e.message}`);
+    }
+  }
+
+  logger.info(`✅ ${passedStocks.length}/${rawStocks.length} stocks passed validation`);
+  if (passedStocks.length === 0) return { date, stocks: [] };
+
+  // ══════════════════════════════════════════
+  // STEP 3: Grok → אמת זמן BMO/AMC
+  // רק על המניות שעברו validation (~10-30)
+  // ══════════════════════════════════════════
+  logger.info(`\n🤖 [Step 3] Grok timing validation for ${passedStocks.length} stocks...`);
+
+  let grokTimingMap = new Map<string, "BMO" | "AMC">();
+  try {
+    grokTimingMap = await askGrokReportTimeBatch(
+      passedStocks.map(s => s.symbol),
+      date
+    );
+    logger.info(`✅ Grok timing: ${grokTimingMap.size}/${passedStocks.length} resolved`);
+  } catch (e: any) {
+    logger.warn(`⚠️ Grok timing failed: ${e.message} — using Yahoo times as fallback`);
+  }
+
+  // ══════════════════════════════════════════
+  // STEP 4: Finnhub → EPS/Revenue estimates בלבד
+  // ══════════════════════════════════════════
+  const finnhubMap = new Map<string, FinnhubEarningsEntry>();
+  const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
+
+  if (FINNHUB_API_KEY) {
+    try {
+      logger.info(`\n📡 [Step 4] Finnhub estimates for ${passedStocks.length} stocks...`);
+      const finnhubResp = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
+        `https://finnhub.io/api/v1/calendar/earnings`,
+        { params: { from: date, to: date, token: FINNHUB_API_KEY } }
+      );
+      const finnhubList = finnhubResp.data.earningsCalendar ?? [];
+      logger.info(`✅ Finnhub returned ${finnhubList.length} entries`);
+      for (const e of finnhubList) {
+        finnhubMap.set(e.symbol.toUpperCase(), e);
+      }
+    } catch (err: any) {
+      logger.warn(`⚠️ Finnhub failed: ${err.message}`);
+    }
+  }
+
+  // ══════════════════════════════════════════
+  // STEP 5: Build final list
+  // זמן: Grok → Yahoo → AMC (סדר עדיפויות)
+  // ══════════════════════════════════════════
+  logger.info(`\n📋 [Step 5] Building final list...`);
+  const validatedStocks: ExtendedStock[] = [];
+
+  for (const stock of passedStocks) {
+    // ✅ זמן — Grok קודם, אם אין → Yahoo, אם אין → AMC
+    const reportType: "BMO" | "AMC" =
+      grokTimingMap.get(stock.symbol) ?? stock.time ?? "AMC";
+
+    const windowStart = reportType === "BMO" ? "07:00" : "16:00";
+    const windowEnd   = reportType === "BMO" ? "09:30" : "20:00";
+
+    // EPS/Revenue — Finnhub אם קיים
+    const finnhubEntry = finnhubMap.get(stock.symbol);
+    const finnhubData = {
+      epsActual:       finnhubEntry?.epsActual       ?? null,
+      epsEstimate:     finnhubEntry?.epsEstimate     ?? null,
+      revenueActual:   finnhubEntry?.revenueActual   ?? null,
+      revenueEstimate: finnhubEntry?.revenueEstimate ?? null,
+    };
+
+    const timeSource = grokTimingMap.has(stock.symbol) ? 'Grok' : 'Yahoo';
+    logger.info(
+      `💎 ${stock.symbol} (${stock.name}) | ` +
+      `$${(stock.marketCap/1e9).toFixed(1)}B | ` +
+      `${reportType} (${timeSource}) | ` +
+      `EPS est: ${finnhubData.epsEstimate ?? 'N/A'}`
+    );
+
+    validatedStocks.push({
+      symbol:      stock.symbol,
+      companyName: stock.name,
+      reportType,
+      windowStart,
+      windowEnd,
+      marketCap:   stock.marketCap,
+      volume:      stock.volume,
+      confidence:  finnhubEntry ? 100 : 90,
+      sources:     finnhubEntry
+                     ? ["Yahoo", "Grok", "Finnhub"]
+                     : ["Yahoo", "Grok"],
+      quarter:     finnhubEntry?.quarter,
+      fiscalYear:  finnhubEntry?.year,
+      finnhubData,
+    });
+  }
+
+  validatedStocks.sort((a, b) => b.marketCap - a.marketCap);
+  logger.info(`\n✅ Final List: ${validatedStocks.length} stocks.`);
+  return { date, stocks: validatedStocks };
+}
+
+
+
 
 export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {
   const dateObj = new Date();
@@ -1012,279 +967,23 @@ export async function findIRCandidates(
 
   return finalCandidates.slice(0, 10);
 }
-
-export async function fullExtraction(
+async function extractWithGemini(
+  rawContent: string,
   symbol: string,
   companyName: string,
+  q: number,
+  yr: number,
+  finnhubEpsEstimate: number | null,
+  finnhubRevEstimate: number | null,
+  hasFinnhubData: boolean,
   reportDate: string,
-  currentPrice?: number,
-  finnhubData?: {
-    epsActual: number | null;
-    epsEstimate: number | null | undefined;
-    revenueActual: number | null;
-    revenueEstimate: number | null;
-  },
-  quarter?: number,
-  fiscalYear?: number,
-  cachedIRPortal?: IRPortal | null ,
-    onIRPortalFound?: (portal: IRPortal) => void ,
-    reportType: "BMO" | "AMC" = "BMO"   // ✅ הוסף בסוף עם default
-
-
-): Promise<FullExtractionResponse> {
-  logger.info(`\n${"=".repeat(70)}`);
-  logger.info(`📊 FULL EXTRACTION: ${symbol} (${companyName})`);
-  logger.info(`📅 Report Date: ${reportDate} | Quarter: Q${quarter || 'TBD'} ${fiscalYear || 'TBD'}`);
-  logger.info(`💰 Current Price: $${currentPrice || 'N/A'}`);
-  logger.info(`${"=".repeat(70)}`);
-
-  const q = quarter || Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
-  const yr = fiscalYear || new Date(reportDate).getFullYear();
-
-  // ============================================
-  // 🔥 NEW: STEP 0 - RELIABLE PDF DISCOVERY WITH SERPER
-  // ============================================
-  logger.info(`\n🔍 Step 0: Finding earnings report PDF using Serper.dev...`);
-  
-  //now free
-const validatedPdfUrl = await findEarningsPdf(
-    symbol,
-    companyName,
-    q,
-    yr,
-    reportDate,
-    cachedIRPortal,
-    onIRPortalFound  
-  );
-
-if (!validatedPdfUrl) {
-  logger.error(`❌ CRITICAL: Could not find a valid earnings PDF for ${symbol} Q${q} ${yr}`);
-  logger.error(`   Possible reasons:`);
-  logger.error(`   1. Report not published yet`);
-  logger.error(`   2. PDF not indexed by Google yet`);
-  logger.error(`   3. Company uses non-standard URL patterns`);
-  logger.error(`   🚫 ABORTING EXTRACTION`);
-  
-  throw new Error(`Earnings PDF not found for ${symbol} Q${q} ${yr} - report may not be published`);
-}
-
- const epsBeatForPreFilter = finnhubData?.epsActual != null && finnhubData?.epsEstimate != null && finnhubData.epsEstimate !== 0
-    ? ((finnhubData.epsActual - finnhubData.epsEstimate) / Math.abs(finnhubData.epsEstimate)) * 100
-    : null;
-const hardPreFilter = await runHardPreFilter(symbol, companyName, reportType, epsBeatForPreFilter,reportDate);
-
-
-
-
-logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
-  logger.info(`   Proceeding with extraction...\n`);
-
-  // ============================================
-  // STEP 1: CHECK FINNHUB DATA
-  // ============================================
-  const hasEPS = finnhubData?.epsActual !== null && finnhubData?.epsActual !== undefined;
-  const hasRevenue = finnhubData?.revenueActual !== null && finnhubData?.revenueActual !== undefined;
-  const hasFinnhubData = hasEPS && hasRevenue;
-
-  logger.info(`\n🔍 Step 1: Data Source Check`);
-  logger.info(`   Finnhub EPS: ${hasEPS ? '✅' : '❌'}`);
-  logger.info(`   Finnhub Revenue: ${hasRevenue ? '✅' : '❌'}`);
-  logger.info(`   Mode: ${hasFinnhubData ? 'Finnhub + PDF Supplement' : 'Full PDF Extraction'}`);
-
-  let epsActual: number | null = null;
-  let epsEstimate: number | null = null;
-  let revenueActual: number | null = null;
-  let revenueEstimate: number | null = null;
-  let epsBeatPercent: number = 0;
-  let revBeatPercent: number = 0;
-
-  if (hasFinnhubData) {
-    epsActual = Math.round(finnhubData.epsActual! * 100) / 100;
-    epsEstimate = finnhubData.epsEstimate ? Math.round(finnhubData.epsEstimate * 100) / 100 : epsActual;
-    revenueActual = Math.round(finnhubData.revenueActual!);
-    revenueEstimate = finnhubData.revenueEstimate ? Math.round(finnhubData.revenueEstimate) : revenueActual;
-
-    epsBeatPercent = epsEstimate && epsEstimate !== 0
-      ? ((epsActual! - epsEstimate) / Math.abs(epsEstimate)) * 100
-      : 0;
-    revBeatPercent = revenueEstimate && revenueEstimate !== 0
-      ? ((revenueActual! - revenueEstimate) / revenueEstimate) * 100
-      : 0;
-
-    logger.info(`   ✅ EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent >= 0 ? '+' : ''}${epsBeatPercent.toFixed(2)}%)`);
-    logger.info(`   ✅ Revenue: $${(revenueActual! / 1e9).toFixed(2)}B vs $${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent >= 0 ? '+' : ''}${revBeatPercent.toFixed(2)}%)`);
-  } else {
-    logger.info(`   ⚠️ Will extract EPS & Revenue from PDF`);
-  }
-
-  // ============================================
-  // STEP 2: FETCH API DATA (Fallback)
-  // ============================================
-  logger.info(`\n📊 Step 2: Fetching API Fallback Data...`);
-
- const apiData = {
-    yoyEpsChange:           null as number | null,
-    yoyRevenueChange:       null as number | null,
-    netMargin:              null as number | null,
-    operatingMargin:        null as number | null,
-    fcf:                    null as number | null,
-    fcfQ4:                  null as number | null,  // ← חדש: FCF של שנה שעברה
-    fcfYoyChange:           null as number | null,  // fallback אם אין AI FCF
-    prevQuarterEpsChange:   null as number | null,
-    prevQuarterRevChange:   null as number | null,
-    commonStockRepurchased: null as number | null,
-    commonDividendsPaid:    null as number | null,
-    prevNetMargin: null as number | null,  
-
-  };
- // Finnhub Metrics (fallback)
-  try {
-    const metrics = await getFinnhubMetrics(symbol);
-    if (metrics) {
-      if (metrics.epsGrowthTTM !== null) {
-        apiData.yoyEpsChange = metrics.epsGrowthTTM;
-        logger.info(`   📊 YoY EPS: ${metrics.epsGrowthTTM.toFixed(2)}% (Finnhub TTM - fallback)`);
-      }
-      if (metrics.revenueGrowthTTM !== null && Math.abs(metrics.revenueGrowthTTM) <= 150) {
-        apiData.yoyRevenueChange = metrics.revenueGrowthTTM;
-        logger.info(`   📊 YoY Revenue: ${metrics.revenueGrowthTTM.toFixed(2)}% (Finnhub TTM - fallback)`);
-      }
-      if (metrics.netMarginTTM !== null) {
-        apiData.netMargin = metrics.netMarginTTM;
-        logger.info(`   📊 Net Margin: ${metrics.netMarginTTM.toFixed(2)}% (TTM - fallback)`);
-      }
-      if (metrics.operatingMarginTTM !== null) {
-        apiData.operatingMargin = metrics.operatingMarginTTM;
-        logger.info(`   📊 Operating Margin: ${metrics.operatingMarginTTM.toFixed(2)}% (TTM - fallback)`);
-      }
-      if (metrics.evFcfRatio && metrics.enterpriseValue) {
-        apiData.fcf = (metrics.enterpriseValue * 1000000) / metrics.evFcfRatio;
-        logger.info(`   📊 FCF: $${(apiData.fcf / 1e6).toFixed(2)}M (TTM - fallback)`);
-      }
-    }
-  } catch (err: any) {
-    logger.warn(`   ⚠️ Finnhub Metrics failed: ${err.message}`);
-  }
-
- // ── 2C: FMP Cash Flow — limit=5 ──────────────────────────────────
-  // [0]=Q-1  [1]=Q-2  [2]=Q-3  [3]=Q-4  [4]=Q-5
-  try {
-    const cfRows = await getCashFlow(symbol, 5);
-    if (cfRows && cfRows.length > 0) {
-      const q1 = cfRows[0];
-      const q4 = cfRows[3] ?? null; // ← Q-4: שנה שעברה של הרבעון הנוכחי
-      const q5 = cfRows[4] ?? null;
-
-      // Fallback FCF (Q-1)
-      if (q1.operatingCashFlow != null && q1.capitalExpenditure != null) {
-        const fcfQ1 = q1.operatingCashFlow + q1.capitalExpenditure;
-        if (Math.abs(fcfQ1) <= 100e9) {
-          apiData.fcf = fcfQ1;
-          logger.info(`   ✅ FCF fallback (Q-1): $${(fcfQ1 / 1e6).toFixed(2)}M`);
-        }
-      }
-
-      // FCF Q-4 — לשימוש ב-Step 4 להשוואה מול AI Q-0
-      if (q4?.operatingCashFlow != null && q4?.capitalExpenditure != null) {
-        const fcfQ4 = q4.operatingCashFlow + q4.capitalExpenditure;
-        if (Math.abs(fcfQ4) <= 100e9) {
-          apiData.fcfQ4 = fcfQ4;
-          logger.info(`   ✅ FCF Q-4 (לשוואה עם AI): $${(fcfQ4 / 1e6).toFixed(2)}M`);
-        }
-      }
-
-      // FCF YoY fallback: Q-1 vs Q-5 (יוחלף ב-Step 4 ע"י AI Q-0 vs Q-4)
-      if (apiData.fcf != null && q5?.operatingCashFlow != null && q5?.capitalExpenditure != null) {
-        const fcfQ5 = q5.operatingCashFlow + q5.capitalExpenditure;
-        if (fcfQ5 !== 0 && Math.abs(fcfQ5) <= 100e9) {
-          apiData.fcfYoyChange = ((apiData.fcf - fcfQ5) / Math.abs(fcfQ5)) * 100;
-          logger.info(`   ✅ FCF YoY fallback: ${apiData.fcfYoyChange.toFixed(1)}% (Q-1 vs Q-5)`);
-        }
-      }
-
-      // Stage 6: Buybacks / Capital Return
-      apiData.commonStockRepurchased = q1.commonStockRepurchased ?? null;
-      apiData.commonDividendsPaid    = q1.commonDividendsPaid    ?? null;
-      logger.info(`   ✅ Buybacks: ${apiData.commonStockRepurchased ?? 'N/A'} | Dividends: ${apiData.commonDividendsPaid ?? 'N/A'}`);
-    }
-  } catch (err: any) {
-    logger.warn(`   ⚠️ FMP Cash Flow failed: ${err.message}`);
-  }
-// ── 2D: FMP Income Statement — prevNetMargin ─────────────────────
-try {
-  const incRows = await getIncomeStatement(symbol, 2);
-  if (incRows && incRows.length >= 2) {
-    const prevRow = incRows[1]; // Q-2 — רבעון לפני הנוכחי
- const prevNetIncome = prevRow.netIncome ?? prevRow.bottomLineNetIncome ?? null;
-const prevRevenue = prevRow.revenue ?? null;
-if (prevNetIncome != null && prevRevenue != null && prevRevenue !== 0) {
-  apiData.prevNetMargin = (prevNetIncome / prevRevenue) * 100;
-  logger.info(`   ✅ Prev Net Margin (Q-2): ${apiData.prevNetMargin.toFixed(2)}%`);
-}
-  }
-} catch (err: any) {
-  logger.warn(`   ⚠️ FMP Income Statement failed: ${err.message}`);
-}
-// ── 2E: FMP Earnings History — YoY Acceleration ──────────────────
-try {
-  const today = new Date().toISOString().split("T")[0];
-  const rawRows = await getEarnings(symbol); // שולף יותר כדי שיישאר 6 אחרי פילטר
-  
-  const earningsRows = (rawRows ?? []).filter(
-    (r: any) => r.date < today && r.epsActual != null
-  );
-  // earningsRows[0] = הרבעון האחרון שדווח בפועל
-  // earningsRows[1] = לפניו, earningsRows[5] = שנה שעברה של [1]
-
-  if (earningsRows.length >= 6) {
-    const q1 = earningsRows[1];
-    const q5 = earningsRows[5];
-
-    if (q1?.epsActual != null && q5?.epsActual != null && q5.epsActual !== 0) {
-      apiData.prevQuarterEpsChange =
-        ((q1.epsActual - q5.epsActual) / Math.abs(q5.epsActual)) * 100;
-      logger.info(`   ✅ Prev EPS YoY (Q1 vs Q5): ${apiData.prevQuarterEpsChange.toFixed(1)}%`);
-    }
-
-    if (q1?.revenueActual != null && q5?.revenueActual != null && q5.revenueActual !== 0) {
-      apiData.prevQuarterRevChange =
-        ((q1.revenueActual - q5.revenueActual) / Math.abs(q5.revenueActual)) * 100;
-      logger.info(`   ✅ Prev Rev YoY (Q1 vs Q5): ${apiData.prevQuarterRevChange.toFixed(1)}%`);
-    }
-  } else {
-    logger.warn(`   ⚠️ Not enough earnings history for ${symbol} (${earningsRows.length} rows after filter)`);
-  }
-} catch (err: any) {
-  logger.warn(`   ⚠️ Earnings History failed: ${err.message}`);
-}
-
-  // ============================================
-  // STEP 3: AI SUPPLEMENT - NOW WITH VERIFIED PDF URL!
-  // ============================================
-
-logger.info(`\n🤖 Step 3: Fetching content via Jina → Gemini extraction...`);
-
-const MAX_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 2000;
-let rawContent: string | null = null;
-for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-  rawContent = await fetchContentWithJina(validatedPdfUrl);
-  
-  if (rawContent !== null) break;
-  
-  if (attempt < MAX_ATTEMPTS) {
-    logger.warn(`   🔄 Attempt ${attempt} failed, retrying in ${RETRY_DELAY_MS}ms...`);
-    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS * attempt)); // backoff
-  }
-}
-
-if (rawContent === null) {
-  throw new Error(`Content extraction failed for ${symbol} after ${MAX_ATTEMPTS} attempts`);
-}
-
-// ✅ הוסף לפני הפרומפט
-const finnhubEpsEstimate = finnhubData?.epsEstimate ?? null;
-const finnhubRevEstimate = finnhubData?.revenueEstimate ?? null;
+  epsActual: number | null = null,
+  epsEstimate: number | null = null,
+  epsBeatPercent: number = 0,
+  revenueActual: number | null = null,
+  revenueEstimate: number | null = null,
+  revBeatPercent: number = 0
+): Promise<any> {
 
 const supplementPrompt = `
 You are a professional financial data analyst extracting QUARTERLY earnings data from official press releases.
@@ -1461,176 +1160,560 @@ EXTRACT ONLY:
 
 ${rawContent}
 `;
-
   const MAX_RETRIES = 3;
-  let aiData: any = null;
-  let lastError: string = "";
+  let lastError = "";
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      logger.info(`   🔄 AI Request Attempt ${attempt}/${MAX_RETRIES}...`);
+      // ← אותו קוד שיש לך עכשיו בתוך הלולאה
+     const aiRes = await callOpenRouterAPI(
+        [
+          { role: "system", content: "You are a financial data extraction API. Return ONLY valid JSON with no markdown." },
+          { role: "user",   content: supplementPrompt }
+        ],
+        "google/gemini-2.0-flash-001",
+        0.05,
+        3000
+      );
 
-  const aiRes = await callOpenRouterAPI(
-      [
-        {
-          role: "system",
-          content: "You are a financial data extraction API. Return ONLY valid JSON with no markdown."
-        },
-        {
-          role: "user",
-          content: supplementPrompt
-        }
-      ],
-      "google/gemini-2.0-flash-001",
-      0.05,  // טמפרטורה נמוכה מאוד - עובדה, לא יצירתיות
-      3000
-    );
+      let cleaned = aiRes.trim()
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
 
-      // Clean markdown
-      let cleanedRes = aiRes.trim();
-      if (cleanedRes.startsWith('```json')) {
-        cleanedRes = cleanedRes.replace(/```json\n?/g, '').replace(/```\n?$/g, '');
-      }
-      if (cleanedRes.startsWith('```')) {
-        cleanedRes = cleanedRes.replace(/^```\n?/g, '').replace(/```\n?$/g, '');
-      }
-      cleanedRes = cleanedRes.trim();
+      const tempAiData = JSON.parse(cleaned);
 
-      const tempAiData = JSON.parse(cleanedRes);
-      stockLog.extractionData(symbol, {
-        eps: tempAiData.eps || null,
-        revenue: tempAiData.revenue || null,
-        pdfMetrics: tempAiData.pdfMetrics || null
-      });
-      // ============================================
-      // DISPLAY EXTRACTION RESULTS
-      // ============================================
-      logger.info(`\n📎 ===== AI EXTRACTION RESULTS =====`);
-      logger.info(`   📄 Source PDF: ${validatedPdfUrl}`);
-      logger.info(`   ✅ Status: SUCCESS`);
-      
-      if (tempAiData.pdfMetrics) {
-        logger.info(`   📊 Extracted Metrics:`);
-        if (tempAiData.pdfMetrics.revenueYoY !== null) {
-          logger.info(`      - Revenue YoY: ${tempAiData.pdfMetrics.revenueYoY}%`);
-        }
-        if (tempAiData.pdfMetrics.netMargin !== null) {
-          logger.info(`      - Net Margin: ${tempAiData.pdfMetrics.netMargin}%`);
-        }
-        if (tempAiData.pdfMetrics.marginMetric) {
-          logger.info(`      - ${tempAiData.pdfMetrics.marginMetric.type}: ${tempAiData.pdfMetrics.marginMetric.value}%`);
-        }
-        if (tempAiData.pdfMetrics.cashFromOperations !== null) {
-          logger.info(`      - Cash from Ops: $${tempAiData.pdfMetrics.cashFromOperations}M`);
-        }
-      }
-      
-      logger.info(`📎 ===== END EXTRACTION RESULTS =====\n`);
-
-      // Validate response
-      const hasGuidance = tempAiData.guidance?.status;
-      const hasSentiment = tempAiData.sentiment?.overall;
+      const hasGuidance   = tempAiData.guidance?.status;
+      const hasSentiment  = tempAiData.sentiment?.overall;
       const hasHighlights = tempAiData.highlights?.length >= 2;
-      const hasConcerns = tempAiData.concerns?.length >= 2;
+      const hasConcerns   = tempAiData.concerns?.length >= 2;
 
       if (!hasGuidance || !hasSentiment || !hasHighlights || !hasConcerns) {
         lastError = `Incomplete qualitative data`;
         logger.warn(`   ⏳ Attempt ${attempt}/${MAX_RETRIES}: ${lastError}`);
-        
         if (attempt < MAX_RETRIES) {
-          logger.info(`   🔄 Retrying in 5 seconds...`);
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          await new Promise(r => setTimeout(r, 5000));
           continue;
-        } else {
-          logger.warn(`   ⚠️ Accepting incomplete qualitative data after ${MAX_RETRIES} attempts`);
         }
+        // אחרי MAX_RETRIES — מחזירים בכל זאת
+        logger.warn(`   ⚠️ Accepting incomplete qualitative data`);
       }
 
-      // Success!
-      aiData = tempAiData;
-      aiData.pdfUrl = validatedPdfUrl; // Ensure we use the validated URL
-      logger.info(`   ✅ Valid AI response received on attempt ${attempt}/${MAX_RETRIES}`);
-      break;
-
-    } catch (parseError: any) {
-      lastError = parseError.message;
-      logger.error(`   ❌ Attempt ${attempt}/${MAX_RETRIES} error: ${parseError.message}`);
+      return tempAiData;
+    } 
       
+    
+    catch (parseError: any) {
+      lastError = parseError.message;
       if (attempt < MAX_RETRIES) {
-        logger.info(`   🔄 Retrying in 5 seconds...`);
         await new Promise(resolve => setTimeout(resolve, 5000));
-      } else {
-        throw new Error(`Failed to get valid AI response after ${MAX_RETRIES} attempts: ${lastError}`);
       }
     }
   }
+  throw new Error(`Failed to extract after ${MAX_RETRIES} attempts: ${lastError}`);
+}
 
-  // Check if we got valid aiData
-  if (!aiData) {
-    throw new Error(`Failed to extract earnings data after ${MAX_RETRIES} attempts: ${lastError}`);
+async function grokSearchMissingFields(
+  symbol: string,
+  companyName: string,
+  quarter: number,
+  year: number,
+  reportDate: string,
+  missingFields: string[]
+): Promise<{ epsActual: number | null; revenueActual: number | null }> {
+  
+  logger.info(`\n🔎 [GrokTargeted] Searching for missing fields: ${missingFields.join(', ')}`);
+
+  const prompt = `Find the ACTUAL reported earnings numbers for ${companyName} (${symbol}) Q${quarter} ${year} (reported around ${reportDate}).
+
+I need these specific values: ${missingFields.join(', ')}
+
+Search financial news sites, earnings announcements, and press releases.
+
+Return ONLY this JSON:
+{
+  "epsActual": number_or_null,
+  "revenueActual": number_in_dollars_or_null
+}
+
+Examples:
+{ "epsActual": 1.23, "revenueActual": 4500000000 }
+{ "epsActual": -0.45, "revenueActual": null }`;
+
+  try {
+    const response = await callGrokAPI(
+      [{ role: 'user', content: prompt }],
+      0.1,
+      500,
+      true
+    );
+
+    const clean = response.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    return {
+      epsActual: parsed.epsActual ?? null,
+      revenueActual: parsed.revenueActual ?? null
+    };
+  } catch (e: any) {
+    logger.error(`❌ [GrokTargeted] Failed: ${e.message}`);
+    return { epsActual: null, revenueActual: null };
+  }
+}
+export async function fullExtraction(
+  symbol: string,
+  companyName: string,
+  reportDate: string,
+  currentPrice?: number,
+  finnhubData?: {
+    epsActual: number | null;
+    epsEstimate: number | null | undefined;
+    revenueActual: number | null;
+    revenueEstimate: number | null;
+  },
+  quarter?: number,
+  fiscalYear?: number,
+  cachedIRPortal?: IRPortal | null ,
+    onIRPortalFound?: (portal: IRPortal) => void ,
+    reportType: "BMO" | "AMC" = "BMO"   // ✅ הוסף בסוף עם default
+
+
+): Promise<FullExtractionResponse> {
+  logger.info(`\n${"=".repeat(70)}`);
+  logger.info(`📊 FULL EXTRACTION: ${symbol} (${companyName})`);
+  logger.info(`📅 Report Date: ${reportDate} | Quarter: Q${quarter || 'TBD'} ${fiscalYear || 'TBD'}`);
+  logger.info(`💰 Current Price: $${currentPrice || 'N/A'}`);
+  logger.info(`${"=".repeat(70)}`);
+
+  const q = quarter || Math.ceil((new Date(reportDate).getMonth() + 1) / 3);
+  const yr = fiscalYear || new Date(reportDate).getFullYear();
+
+  // ============================================
+  // 🔥 NEW: STEP 0 - RELIABLE PDF DISCOVERY WITH SERPER
+  // ============================================
+logger.info(`\n🔍 Step 0: Finding earnings report PDFs using Serper + Grok...`);
+
+const pdfCandidates = await findEarningsPdfCandidates(
+  symbol, companyName, q, yr, reportDate, cachedIRPortal, onIRPortalFound
+);
+
+if (pdfCandidates.length === 0) {
+  logger.error(`❌ CRITICAL: No PDF candidates found for ${symbol} Q${q} ${yr}`);
+  throw new Error(`Earnings PDF not found for ${symbol} Q${q} ${yr}`);
+}
+
+logger.info(`✅ Found ${pdfCandidates.length} PDF candidates:`);
+pdfCandidates.forEach((u, i) => logger.info(`   [${i+1}] ${u}`));
+
+// validatedPdfUrl נשאר לשאר הקוד שמשתמש בו
+const validatedPdfUrl = pdfCandidates[0];
+
+if (!validatedPdfUrl) {
+  logger.error(`❌ CRITICAL: Could not find a valid earnings PDF for ${symbol} Q${q} ${yr}`);
+  logger.error(`   Possible reasons:`);
+  logger.error(`   1. Report not published yet`);
+  logger.error(`   2. PDF not indexed by Google yet`);
+  logger.error(`   3. Company uses non-standard URL patterns`);
+  logger.error(`   🚫 ABORTING EXTRACTION`);
+  
+  throw new Error(`Earnings PDF not found for ${symbol} Q${q} ${yr} - report may not be published`);
+}
+
+ const epsBeatForPreFilter = finnhubData?.epsActual != null && finnhubData?.epsEstimate != null && finnhubData.epsEstimate !== 0
+    ? ((finnhubData.epsActual - finnhubData.epsEstimate) / Math.abs(finnhubData.epsEstimate)) * 100
+    : null;
+const hardPreFilter = await runHardPreFilter(symbol, companyName, reportType, epsBeatForPreFilter,reportDate);
+const finnhubEpsEstimate = finnhubData?.epsEstimate ?? null;
+const finnhubRevEstimate = finnhubData?.revenueEstimate ?? null;
+
+
+
+logger.info(`✅ Validated PDF URL: ${validatedPdfUrl}`);
+  logger.info(`   Proceeding with extraction...\n`);
+
+  // ============================================
+  // STEP 1: CHECK FINNHUB DATA
+  // ============================================
+  const hasEPS = finnhubData?.epsActual !== null && finnhubData?.epsActual !== undefined;
+  const hasRevenue = finnhubData?.revenueActual !== null && finnhubData?.revenueActual !== undefined;
+  const hasFinnhubData = hasEPS && hasRevenue;
+
+  logger.info(`\n🔍 Step 1: Data Source Check`);
+  logger.info(`   Finnhub EPS: ${hasEPS ? '✅' : '❌'}`);
+  logger.info(`   Finnhub Revenue: ${hasRevenue ? '✅' : '❌'}`);
+  logger.info(`   Mode: ${hasFinnhubData ? 'Finnhub + PDF Supplement' : 'Full PDF Extraction'}`);
+
+  let epsActual: number | null = null;
+  let epsEstimate: number | null = null;
+  let revenueActual: number | null = null;
+  let revenueEstimate: number | null = null;
+  let epsBeatPercent: number = 0;
+  let revBeatPercent: number = 0;
+
+  if (hasFinnhubData) {
+    
+    epsActual = Math.round(finnhubData.epsActual! * 100) / 100;
+    epsEstimate = finnhubData.epsEstimate ? Math.round(finnhubData.epsEstimate * 100) / 100 : epsActual;
+    revenueActual = Math.round(finnhubData.revenueActual!);
+    revenueEstimate = finnhubData.revenueEstimate ? Math.round(finnhubData.revenueEstimate) : revenueActual;
+
+    epsBeatPercent = epsEstimate && epsEstimate !== 0
+      ? ((epsActual! - epsEstimate) / Math.abs(epsEstimate)) * 100
+      : 0;
+    revBeatPercent = revenueEstimate && revenueEstimate !== 0
+      ? ((revenueActual! - revenueEstimate) / revenueEstimate) * 100
+      : 0;
+
+    logger.info(`   ✅ EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent >= 0 ? '+' : ''}${epsBeatPercent.toFixed(2)}%)`);
+    logger.info(`   ✅ Revenue: $${(revenueActual! / 1e9).toFixed(2)}B vs $${(revenueEstimate! / 1e9).toFixed(2)}B (${revBeatPercent >= 0 ? '+' : ''}${revBeatPercent.toFixed(2)}%)`);
+  } else {
+    logger.info(`   ⚠️ Will extract EPS & Revenue from PDF`);
   }
 
   // ============================================
+  // STEP 2: FETCH API DATA (Fallback)
+  // ============================================
+  logger.info(`\n📊 Step 2: Fetching API Fallback Data...`);
+
+ const apiData = {
+    yoyEpsChange:           null as number | null,
+    yoyRevenueChange:       null as number | null,
+    netMargin:              null as number | null,
+    operatingMargin:        null as number | null,
+    fcf:                    null as number | null,
+    fcfQ4:                  null as number | null,  // ← חדש: FCF של שנה שעברה
+    fcfYoyChange:           null as number | null,  // fallback אם אין AI FCF
+    prevQuarterEpsChange:   null as number | null,
+    prevQuarterRevChange:   null as number | null,
+    commonStockRepurchased: null as number | null,
+    commonDividendsPaid:    null as number | null,
+    prevNetMargin: null as number | null,  
+
+  };
+ // Finnhub Metrics (fallback)
+  try {
+    const metrics = await getFinnhubMetrics(symbol);
+    if (metrics) {
+      if (metrics.epsGrowthTTM !== null) {
+        apiData.yoyEpsChange = metrics.epsGrowthTTM;
+        logger.info(`   📊 YoY EPS: ${metrics.epsGrowthTTM.toFixed(2)}% (Finnhub TTM - fallback)`);
+      }
+      if (metrics.revenueGrowthTTM !== null && Math.abs(metrics.revenueGrowthTTM) <= 150) {
+        apiData.yoyRevenueChange = metrics.revenueGrowthTTM;
+        logger.info(`   📊 YoY Revenue: ${metrics.revenueGrowthTTM.toFixed(2)}% (Finnhub TTM - fallback)`);
+      }
+      if (metrics.netMarginTTM !== null) {
+        apiData.netMargin = metrics.netMarginTTM;
+        logger.info(`   📊 Net Margin: ${metrics.netMarginTTM.toFixed(2)}% (TTM - fallback)`);
+      }
+      if (metrics.operatingMarginTTM !== null) {
+        apiData.operatingMargin = metrics.operatingMarginTTM;
+        logger.info(`   📊 Operating Margin: ${metrics.operatingMarginTTM.toFixed(2)}% (TTM - fallback)`);
+      }
+      if (metrics.evFcfRatio && metrics.enterpriseValue) {
+        apiData.fcf = (metrics.enterpriseValue * 1000000) / metrics.evFcfRatio;
+        logger.info(`   📊 FCF: $${(apiData.fcf / 1e6).toFixed(2)}M (TTM - fallback)`);
+      }
+    }
+  } catch (err: any) {
+    logger.warn(`   ⚠️ Finnhub Metrics failed: ${err.message}`);
+  }
+
+ // ── 2C: FMP Cash Flow — limit=5 ──────────────────────────────────
+  // [0]=Q-1  [1]=Q-2  [2]=Q-3  [3]=Q-4  [4]=Q-5
+  try {
+    const cfRows = await getCashFlow(symbol, 5);
+    if (cfRows && cfRows.length > 0) {
+      const q1 = cfRows[0];
+      const q4 = cfRows[3] ?? null; // ← Q-4: שנה שעברה של הרבעון הנוכחי
+      const q5 = cfRows[4] ?? null;
+
+      // Fallback FCF (Q-1)
+      if (q1.operatingCashFlow != null && q1.capitalExpenditure != null) {
+        const fcfQ1 = q1.operatingCashFlow + q1.capitalExpenditure;
+        if (Math.abs(fcfQ1) <= 100e9) {
+          apiData.fcf = fcfQ1;
+          logger.info(`   ✅ FCF fallback (Q-1): $${(fcfQ1 / 1e6).toFixed(2)}M`);
+        }
+      }
+
+      // FCF Q-4 — לשימוש ב-Step 4 להשוואה מול AI Q-0
+      if (q4?.operatingCashFlow != null && q4?.capitalExpenditure != null) {
+        const fcfQ4 = q4.operatingCashFlow + q4.capitalExpenditure;
+        if (Math.abs(fcfQ4) <= 100e9) {
+          apiData.fcfQ4 = fcfQ4;
+          logger.info(`   ✅ FCF Q-4 (לשוואה עם AI): $${(fcfQ4 / 1e6).toFixed(2)}M`);
+        }
+      }
+
+      // FCF YoY fallback: Q-1 vs Q-5 (יוחלף ב-Step 4 ע"י AI Q-0 vs Q-4)
+      if (apiData.fcf != null && q5?.operatingCashFlow != null && q5?.capitalExpenditure != null) {
+        const fcfQ5 = q5.operatingCashFlow + q5.capitalExpenditure;
+        if (fcfQ5 !== 0 && Math.abs(fcfQ5) <= 100e9) {
+          apiData.fcfYoyChange = ((apiData.fcf - fcfQ5) / Math.abs(fcfQ5)) * 100;
+          logger.info(`   ✅ FCF YoY fallback: ${apiData.fcfYoyChange.toFixed(1)}% (Q-1 vs Q-5)`);
+        }
+      }
+
+      // Stage 6: Buybacks / Capital Return
+      apiData.commonStockRepurchased = q1.commonStockRepurchased ?? null;
+      apiData.commonDividendsPaid    = q1.commonDividendsPaid    ?? null;
+      logger.info(`   ✅ Buybacks: ${apiData.commonStockRepurchased ?? 'N/A'} | Dividends: ${apiData.commonDividendsPaid ?? 'N/A'}`);
+    }
+  } catch (err: any) {
+    logger.warn(`   ⚠️ FMP Cash Flow failed: ${err.message}`);
+  }
+// ── 2D: FMP Income Statement — prevNetMargin ─────────────────────
+try {
+  const incRows = await getIncomeStatement(symbol, 2);
+  if (incRows && incRows.length >= 2) {
+    const prevRow = incRows[1]; // Q-2 — רבעון לפני הנוכחי
+ const prevNetIncome = prevRow.netIncome ?? prevRow.bottomLineNetIncome ?? null;
+const prevRevenue = prevRow.revenue ?? null;
+if (prevNetIncome != null && prevRevenue != null && prevRevenue !== 0) {
+  apiData.prevNetMargin = (prevNetIncome / prevRevenue) * 100;
+  logger.info(`   ✅ Prev Net Margin (Q-2): ${apiData.prevNetMargin.toFixed(2)}%`);
+}
+  }
+} catch (err: any) {
+  logger.warn(`   ⚠️ FMP Income Statement failed: ${err.message}`);
+}
+// ── 2E: FMP Earnings History — YoY Acceleration ──────────────────
+try {
+  const today = new Date().toISOString().split("T")[0];
+  const rawRows = await getEarnings(symbol); // שולף יותר כדי שיישאר 6 אחרי פילטר
+  
+  const earningsRows = (rawRows ?? []).filter(
+    (r: any) => r.date < today && r.epsActual != null
+  );
+  // earningsRows[0] = הרבעון האחרון שדווח בפועל
+  // earningsRows[1] = לפניו, earningsRows[5] = שנה שעברה של [1]
+
+  if (earningsRows.length >= 6) {
+    const q1 = earningsRows[1];
+    const q5 = earningsRows[5];
+
+    if (q1?.epsActual != null && q5?.epsActual != null && q5.epsActual !== 0) {
+      apiData.prevQuarterEpsChange =
+        ((q1.epsActual - q5.epsActual) / Math.abs(q5.epsActual)) * 100;
+      logger.info(`   ✅ Prev EPS YoY (Q1 vs Q5): ${apiData.prevQuarterEpsChange.toFixed(1)}%`);
+    }
+
+    if (q1?.revenueActual != null && q5?.revenueActual != null && q5.revenueActual !== 0) {
+      apiData.prevQuarterRevChange =
+        ((q1.revenueActual - q5.revenueActual) / Math.abs(q5.revenueActual)) * 100;
+      logger.info(`   ✅ Prev Rev YoY (Q1 vs Q5): ${apiData.prevQuarterRevChange.toFixed(1)}%`);
+    }
+  } else {
+    logger.warn(`   ⚠️ Not enough earnings history for ${symbol} (${earningsRows.length} rows after filter)`);
+  }
+} catch (err: any) {
+  logger.warn(`   ⚠️ Earnings History failed: ${err.message}`);
+}
+// ============================================
+  // STEP 3: MULTI-SOURCE EXTRACTION WITH PARTIAL ACCUMULATOR
+  // ============================================
+  logger.info(`\n🤖 Step 3: Multi-source extraction with partial data accumulator...`);
+
+  // PartialData — מצטבר מכל המקורות, לא נדרס
+  interface PartialAiData {
+    eps?: { actual: number | null; estimate: number | null; beatPercent: number | null; epsType: string | null };
+    revenue?: { actual: number | null; estimate: number | null; beatPercent: number | null; revenueType: string | null };
+    pdfMetrics?: {
+      epsYoY: number | null; revenueYoY: number | null; netMargin: number | null;
+      marginMetric: { value: number; label: string } | null; cashFromOperations: number | null;
+    };
+    guidance?: any;
+    pdfUrl?: string;
+  }
+
+  const partialData: PartialAiData = {};
+if (hasFinnhubData) {
+  partialData.eps = {
+    actual:      epsActual,
+    estimate:    epsEstimate,
+    beatPercent: epsBeatPercent,
+    epsType:     null
+  };
+  partialData.revenue = {
+    actual:      revenueActual,
+    estimate:    revenueEstimate,
+    beatPercent: revBeatPercent,
+    revenueType: null
+  };
+}
+  function mergePartial(target: PartialAiData, source: PartialAiData): void {
+    // EPS
+    if (source.eps) {
+      if (!target.eps) target.eps = { actual: null, estimate: null, beatPercent: null, epsType: null };
+      if (target.eps.actual === null && source.eps.actual !== null) target.eps.actual = source.eps.actual;
+      if (target.eps.estimate === null && source.eps.estimate !== null) target.eps.estimate = source.eps.estimate;
+      if (target.eps.beatPercent === null && source.eps.beatPercent !== null) target.eps.beatPercent = source.eps.beatPercent;
+      if (target.eps.epsType === null && source.eps.epsType !== null) target.eps.epsType = source.eps.epsType;
+    }
+    // Revenue
+    if (source.revenue) {
+      if (!target.revenue) target.revenue = { actual: null, estimate: null, beatPercent: null, revenueType: null };
+      if (target.revenue.actual === null && source.revenue.actual !== null) target.revenue.actual = source.revenue.actual;
+      if (target.revenue.estimate === null && source.revenue.estimate !== null) target.revenue.estimate = source.revenue.estimate;
+      if (target.revenue.beatPercent === null && source.revenue.beatPercent !== null) target.revenue.beatPercent = source.revenue.beatPercent;
+      if (target.revenue.revenueType === null && source.revenue.revenueType !== null) target.revenue.revenueType = source.revenue.revenueType;
+    }
+    // pdfMetrics
+    if (source.pdfMetrics) {
+      if (!target.pdfMetrics) target.pdfMetrics = { epsYoY: null, revenueYoY: null, netMargin: null, marginMetric: null, cashFromOperations: null };
+      if (target.pdfMetrics.epsYoY === null && source.pdfMetrics.epsYoY !== null) target.pdfMetrics.epsYoY = source.pdfMetrics.epsYoY;
+      if (target.pdfMetrics.revenueYoY === null && source.pdfMetrics.revenueYoY !== null) target.pdfMetrics.revenueYoY = source.pdfMetrics.revenueYoY;
+      if (target.pdfMetrics.netMargin === null && source.pdfMetrics.netMargin !== null) target.pdfMetrics.netMargin = source.pdfMetrics.netMargin;
+      if (target.pdfMetrics.marginMetric === null && source.pdfMetrics.marginMetric !== null) target.pdfMetrics.marginMetric = source.pdfMetrics.marginMetric;
+      if (target.pdfMetrics.cashFromOperations === null && source.pdfMetrics.cashFromOperations !== null) target.pdfMetrics.cashFromOperations = source.pdfMetrics.cashFromOperations;
+    }
+    // guidance
+    if (!target.guidance && source.guidance) target.guidance = source.guidance;
+    // pdfUrl (שומרים את ה-URL הראשון שהצליח)
+    if (!target.pdfUrl && source.pdfUrl) target.pdfUrl = source.pdfUrl;
+  }
+
+  function isCriticalDataComplete(data: PartialAiData): boolean {
+    // EPS actual הוא הכי קריטי
+    return data.eps?.actual !== null && data.eps?.actual !== undefined
+        && data.revenue?.actual !== null && data.revenue?.actual !== undefined;
+  }
+
+  // עוברים על כל URL candidate
+  for (let urlIdx = 0; urlIdx < pdfCandidates.length; urlIdx++) {
+    const candidateUrl = pdfCandidates[urlIdx];
+    logger.info(`\n   📄 Trying source [${urlIdx + 1}/${pdfCandidates.length}]: ${candidateUrl}`);
+
+    // Fetch content
+    let rawContent: string | null = null;
+
+    // retry רק על network errors — לא על content שגוי
+    for (let netAttempt = 1; netAttempt <= 2; netAttempt++) {
+      try {
+        rawContent = await fetchContentWithJina(candidateUrl);
+        break; // הצלחה — יוצאים מ-retry
+      } catch (netErr: any) {
+        logger.warn(`   ⚠️ Network error attempt ${netAttempt}: ${netErr.message}`);
+        if (netAttempt < 2) await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+
+    if (rawContent === null) {
+      logger.warn(`   ❌ Source [${urlIdx + 1}] failed (short/blocked) — trying next`);
+      continue; // לא retry, עוברים ל-URL הבא
+    }
+
+    // Gemini extraction
+    try {
+    const extractedData = await extractWithGemini(
+      rawContent, symbol, companyName, q, yr,
+      finnhubEpsEstimate, finnhubRevEstimate,
+      hasFinnhubData,
+      reportDate,
+      epsActual, epsEstimate, epsBeatPercent,
+      revenueActual, revenueEstimate, revBeatPercent
+    );
+
+      logger.info(`   📊 Source [${urlIdx + 1}] extracted:`);
+      logger.info(`      EPS actual: ${extractedData.eps?.actual ?? 'null'}`);
+      logger.info(`      Revenue actual: ${extractedData.revenue?.actual ?? 'null'}`);
+
+      // מיזוג — לא דורסים שדות קיימים
+      mergePartial(partialData, { ...extractedData, pdfUrl: candidateUrl });
+
+      logger.info(`   📦 Accumulated so far — EPS: ${partialData.eps?.actual ?? 'null'}, Revenue: ${partialData.revenue?.actual ?? 'null'}`);
+
+      if (isCriticalDataComplete(partialData)) {
+        logger.info(`   ✅ Critical data complete after source [${urlIdx + 1}]`);
+        break;
+      } else {
+        logger.info(`   ⚠️ Still missing critical data, trying next source...`);
+      }
+
+    } catch (extractErr: any) {
+      logger.warn(`   ❌ Gemini extraction failed for source [${urlIdx + 1}]: ${extractErr.message}`);
+    }
+  }
+
+  // אם אחרי כל ה-URLs עדיין חסר EPS actual — Grok targeted search
+  if (!isCriticalDataComplete(partialData)) {
+    logger.warn(`\n   ⚠️ EPS actual still missing after ${pdfCandidates.length} sources — calling Grok targeted search`);
+    
+    const missingFields: string[] = [];
+    if (partialData.eps?.actual === null || partialData.eps?.actual === undefined) missingFields.push('EPS actual');
+    if (partialData.revenue?.actual === null || partialData.revenue?.actual === undefined) missingFields.push('Revenue actual');
+
+    const grokResult = await grokSearchMissingFields(symbol, companyName, q, yr, reportDate, missingFields);
+
+if (grokResult.epsActual != null && (partialData.eps?.actual == null)) {
+      if (!partialData.eps) partialData.eps = { actual: null, estimate: null, beatPercent: null, epsType: null };
+      partialData.eps.actual = grokResult.epsActual;
+      logger.info(`   ✅ Grok filled EPS actual: ${grokResult.epsActual}`);
+    }
+    if (grokResult.revenueActual !== null && partialData.revenue?.actual === null) {
+      if (!partialData.revenue) partialData.revenue = { actual: null, estimate: null, beatPercent: null, revenueType: null };
+      partialData.revenue.actual = grokResult.revenueActual;
+      logger.info(`   ✅ Grok filled Revenue actual: ${grokResult.revenueActual}`);
+    }
+  }
+
+  // בדיקה סופית
+  if (!isCriticalDataComplete(partialData)) {
+    throw new Error(`Missing critical data (EPS/Revenue) for ${symbol} after all sources`);
+  }
+
+  let aiData = partialData as any; // ממשיך עם aiData כרגיל
+ // ============================================
   // STEP 4: BUILD FINAL DATA OBJECT
   // ============================================
   logger.info(`\n🔗 Step 4: Building Final Data Object...`);
 
-  // If AI extracted EPS/Revenue, use it
+  // אם Finnhub לא נתן EPS/Revenue — קח מה-AI
   if (!hasFinnhubData && aiData.eps && aiData.revenue) {
-    epsActual = aiData.eps.actual;
-    epsEstimate = aiData.eps.estimate ?? finnhubEpsEstimate; 
+    epsActual     = aiData.eps.actual;
+    epsEstimate   = aiData.eps.estimate ?? finnhubEpsEstimate;
     revenueActual = aiData.revenue.actual;
     revenueEstimate = aiData.revenue.estimate ?? finnhubRevEstimate;
- // ✅ חשב beatPercent מחדש — חשוב כי ג'מיני אולי קיבל estimate מפינהאב
-  epsBeatPercent = epsEstimate && epsEstimate !== 0
-    ? ((epsActual! - epsEstimate) / Math.abs(epsEstimate)) * 100
-    : 0;
-  revBeatPercent = revenueEstimate && revenueEstimate !== 0
-    ? ((revenueActual! - revenueEstimate) / revenueEstimate) * 100
-    : 0;
 
-  logger.info(`   ✅ EPS: ${epsActual} vs ${epsEstimate} (from PDF + Finnhub estimate)`);
-  logger.info(`   ✅ Revenue: $${(revenueActual! / 1e9).toFixed(2)}B (from PDF + Finnhub estimate)`);
-}
+    epsBeatPercent = epsEstimate && epsEstimate !== 0
+      ? ((epsActual! - epsEstimate) / Math.abs(epsEstimate)) * 100 : 0;
+    revBeatPercent = revenueEstimate && revenueEstimate !== 0
+      ? ((revenueActual! - revenueEstimate) / revenueEstimate) * 100 : 0;
 
-  // Validate critical fields
+    logger.info(`   ✅ EPS: ${epsActual} vs ${epsEstimate} (from PDF + Finnhub estimate)`);
+    logger.info(`   ✅ Revenue: $${(revenueActual! / 1e9).toFixed(2)}B`);
+  }
+
+  // אם hasFinnhubData=true אבל EPS actual עדיין null — override מה-AI
+  if (epsActual === null && aiData.eps?.actual !== null && aiData.eps?.actual !== undefined) {
+    epsActual = aiData.eps.actual;
+    logger.info(`   🔄 EPS actual overridden from AI: ${epsActual}`);
+  }
+
   if (epsActual === null || revenueActual === null) {
     logger.error(`❌ CRITICAL: Missing EPS or Revenue after extraction!`);
     throw new Error('Missing critical data (EPS/Revenue) - cannot proceed');
   }
 
-  // Use PDF metrics if available, otherwise fallback to API
-const finalYoyRevenue = aiData.pdfMetrics?.revenueYoY !== null && aiData.pdfMetrics?.revenueYoY !== undefined
-  ? aiData.pdfMetrics.revenueYoY
-  : apiData.yoyRevenueChange;
+  const finalYoyRevenue = aiData.pdfMetrics?.revenueYoY ?? apiData.yoyRevenueChange;
+  const finalYoyEps     = aiData.pdfMetrics?.epsYoY     ?? apiData.yoyEpsChange;
+  const finalNetMargin  = aiData.pdfMetrics?.netMargin  ?? apiData.netMargin;
+  const finalOperatingMargin = aiData.pdfMetrics?.marginMetric?.value ?? apiData.operatingMargin;
+  const finalFcf = aiData.pdfMetrics?.cashFromOperations != null
+    ? aiData.pdfMetrics.cashFromOperations * 1e6
+    : apiData.fcf;
 
-  const finalYoyEps = aiData.pdfMetrics?.epsYoY !== null && aiData.pdfMetrics?.epsYoY !== undefined
-  ? aiData.pdfMetrics.epsYoY
-  : apiData.yoyEpsChange;
+  const finalFcfYoyChange = finalFcf != null && apiData.fcfQ4 != null && apiData.fcfQ4 !== 0
+    ? ((finalFcf - apiData.fcfQ4) / Math.abs(apiData.fcfQ4)) * 100
+    : apiData.fcfYoyChange;
 
-const finalNetMargin = aiData.pdfMetrics?.netMargin !== null && aiData.pdfMetrics?.netMargin !== undefined
-  ? aiData.pdfMetrics.netMargin
-  : apiData.netMargin;
+  const marginTrend: "improving" | "declining" | "stable" =
+    finalNetMargin != null && apiData.prevNetMargin != null
+      ? finalNetMargin > apiData.prevNetMargin + 1 ? "improving"
+      : finalNetMargin < apiData.prevNetMargin - 1 ? "declining"
+      : "stable"
+    : "stable";
 
-const finalOperatingMargin = aiData.pdfMetrics?.marginMetric?.value !== null && aiData.pdfMetrics?.marginMetric?.value !== undefined
-  ? aiData.pdfMetrics.marginMetric.value
-  : apiData.operatingMargin;
-
- const finalFcf = aiData.pdfMetrics?.cashFromOperations !== null && aiData.pdfMetrics?.cashFromOperations !== undefined
-  ? aiData.pdfMetrics.cashFromOperations * 1e6
-  : apiData.fcf;
-
-const finalFcfYoyChange =
-    finalFcf != null && apiData.fcfQ4 != null && apiData.fcfQ4 !== 0
-      ? ((finalFcf - apiData.fcfQ4) / Math.abs(apiData.fcfQ4)) * 100
-      : apiData.fcfYoyChange; 
-
-      const marginTrend: "improving" | "declining" | "stable" =
-  finalNetMargin != null && apiData.prevNetMargin != null
-    ? finalNetMargin > apiData.prevNetMargin + 1 ? "improving"
-    : finalNetMargin < apiData.prevNetMargin - 1 ? "declining"
-    : "stable"
-  : "stable";
   const data: FullExtractionResponse = {
     symbol,
     companyName,
@@ -1649,35 +1732,35 @@ const finalFcfYoyChange =
       beat: null,
       source: hasFinnhubData ? "Finnhub" : "PDF"
     },
-    guidance: aiData.guidance || { status: "unavailable", details: null },
+    guidance:  aiData.guidance  || { status: "unavailable", details: null },
     sentiment: aiData.sentiment || { overall: "neutral", reasoning: null },
-  yoyGrowth: {
-    epsChange: finalYoyEps,
-    revenueChange: finalYoyRevenue,
-    revenueChangeType: aiData.pdfMetrics?.revenueYoY !== null ? "quarterly" : "TTM",
-    prevQuarterEpsChange: apiData.prevQuarterEpsChange,  // ← חדש
-    prevQuarterRevChange: apiData.prevQuarterRevChange,  // ← חדש
-  },
-   cashFlow: {
-    freeCashFlow: finalFcf,
-    yoyChange: finalFcfYoyChange,
-    commonStockRepurchased: apiData.commonStockRepurchased,  // ← חדש
-    commonDividendsPaid:    apiData.commonDividendsPaid,     // ← חדש
-  },
+    yoyGrowth: {
+      epsChange: finalYoyEps,
+      revenueChange: finalYoyRevenue,
+      revenueChangeType: aiData.pdfMetrics?.revenueYoY != null ? "quarterly" : "TTM",
+      prevQuarterEpsChange: apiData.prevQuarterEpsChange,
+      prevQuarterRevChange: apiData.prevQuarterRevChange,
+    },
+    cashFlow: {
+      freeCashFlow: finalFcf,
+      yoyChange: finalFcfYoyChange,
+      commonStockRepurchased: apiData.commonStockRepurchased,
+      commonDividendsPaid:    apiData.commonDividendsPaid,
+    },
     margins: {
       netMargin: finalNetMargin,
       operatingMargin: finalOperatingMargin,
-      trend:marginTrend,
+      trend: marginTrend,
       isEfficiencyRatio: aiData.pdfMetrics?.marginMetric?.type === "efficiency_ratio"
     },
     highlights: aiData.highlights || ["Data extracted from earnings report", "See PDF for details"],
-    concerns: aiData.concerns || ["Data extracted from earnings report", "See PDF for details"],
-      marketData: {
-        price: currentPrice || null,
-        marketCap: hardPreFilter?.marketCap ?? null, 
-        volume: hardPreFilter?.volume ?? null,          
-        source: "FMP"
-      },
+    concerns:   aiData.concerns  || ["Data extracted from earnings report", "See PDF for details"],
+    marketData: {
+      price:     currentPrice || null,
+      marketCap: hardPreFilter?.marketCap ?? null,
+      volume:    hardPreFilter?.volume    ?? null,
+      source:    "FMP"
+    },
     reportTime: "",
     managementCommentary: null,
     dataQuality: "high" as any,
@@ -1685,29 +1768,17 @@ const finalFcfYoyChange =
     hardPreFilter
   };
 
-  // ============================================
-  // FINAL SUMMARY
-  // ============================================
   logger.info(`\n${"=".repeat(70)}`);
   logger.info(`✅ EXTRACTION COMPLETE: ${symbol}`);
   logger.info(`${"=".repeat(70)}`);
   logger.info(`📄 PDF: ${validatedPdfUrl}`);
-  logger.info(`📊 Quarter: Q${q} ${yr}`);
-  logger.info(`─`.repeat(70));
-  logger.info(`💰 EPS: ${data.eps.actual} vs ${data.eps.estimate} (${data.eps.beatPercent !== null ? (data.eps.beatPercent >= 0 ? '+' : '') + data.eps.beatPercent.toFixed(2) : 'N/A'}%) [${data.eps.source}]`);
-  logger.info(`💵 Revenue: $${(data.revenue.actual / 1e9).toFixed(2)}B vs $${(data.revenue.estimate / 1e9).toFixed(2)}B (${data.revenue.beatPercent !== null ? (data.revenue.beatPercent >= 0 ? '+' : '') + data.revenue.beatPercent.toFixed(2) : 'N/A'}%) [${data.revenue.source}]`);
-  logger.info(`─`.repeat(70));
-  logger.info(`📈 YoY Revenue: ${data.yoyGrowth.revenueChange !== null ? (data.yoyGrowth.revenueChange >= 0 ? '+' : '') + data.yoyGrowth.revenueChange.toFixed(2) + '%' : 'N/A'} (${data.yoyGrowth.revenueChangeType || 'N/A'})`);
-  logger.info(`📊 Net Margin: ${data.margins.netMargin !== null ? data.margins.netMargin.toFixed(2) + '%' : 'N/A'}`);
-  logger.info(`📊 ${data.margins.isEfficiencyRatio ? 'Efficiency Ratio' : 'Operating Margin'}: ${data.margins.operatingMargin !== null ? data.margins.operatingMargin.toFixed(2) + '%' : 'N/A'}`);
-  logger.info(`💵 FCF: ${data.cashFlow.freeCashFlow !== null ? '$' + (data.cashFlow.freeCashFlow / 1e6).toFixed(2) + 'M' : 'N/A'}`);
-  logger.info(`─`.repeat(70));
-  logger.info(`📋 Guidance: ${data.guidance.status}`);
-  logger.info(`💭 Sentiment: ${data.sentiment.overall}`);
+  logger.info(`💰 EPS: ${data.eps.actual} vs ${data.eps.estimate} (${data.eps.beatPercent?.toFixed(2) ?? 'N/A'}%)`);
+  logger.info(`💵 Revenue: $${(data.revenue.actual / 1e9).toFixed(2)}B`);
   logger.info(`${"=".repeat(70)}\n`);
 
   return data;
 }
+
 
 //using gemini-open router  
 export async function finalAnalysis(fullData: FullExtractionResponse, miraScore: MiraScore): Promise<FinalAnalysis> {

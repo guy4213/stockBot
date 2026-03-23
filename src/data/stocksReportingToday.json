@@ -1,41 +1,17 @@
 {
-  "date": "2026-03-18",
+  "date": "2026-03-23",
   "stocks": [
     {
-      "symbol": "MU",
-      "companyName": "Micron Technology, Inc.",
+      "symbol": "ABVX",
+      "companyName": "Abivax S.A.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 249993894792,
-      "volume": 14609886,
-      "confidence": 100,
+      "marketCap": 7878671482,
+      "volume": 1744435,
+      "confidence": 90,
       "sources": [
-        "FMP",
-        "Finnhub"
-      ],
-      "quarter": 2,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": 9.3297,
-        "revenueActual": null,
-        "revenueEstimate": 20237347588
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "GIS",
-      "companyName": "General Mills, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 25863459480,
-      "volume": 5907765,
-      "confidence": 80,
-      "sources": [
-        "FMP",
+        "Yahoo",
         "Grok"
       ],
       "finnhubData": {
@@ -48,20 +24,62 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "PHYS",
-      "companyName": "Sprott Physical Gold Trust",
+      "symbol": "WRD",
+      "companyName": "WeRide Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 3121883401,
+      "volume": 3964333,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "LAR",
+      "companyName": "Lithium Argentina AG",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 689775000,
+      "volume": 2194753,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "NFGC",
+      "companyName": "New Found Gold Corp.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 14121658347,
-      "volume": 3710364,
-      "confidence": 100,
+      "marketCap": 480556646,
+      "volume": 2146423,
+      "confidence": 90,
       "sources": [
-        "FMP",
-        "Finnhub"
+        "Yahoo",
+        "Grok"
       ],
-      "quarter": 4,
-      "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
         "epsEstimate": null,
@@ -72,16 +90,16 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "PSLV",
-      "companyName": "Sprott Physical Silver Trust",
+      "symbol": "ANNX",
+      "companyName": "Annexon, Inc.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 8972731820,
-      "volume": 7335023,
-      "confidence": 80,
+      "marketCap": 321955365,
+      "volume": 1726102,
+      "confidence": 90,
       "sources": [
-        "FMP",
+        "Yahoo",
         "Grok"
       ],
       "finnhubData": {
@@ -94,174 +112,16 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "NGD",
-      "companyName": "New Gold Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 5826912000,
-      "volume": 17225694,
-      "confidence": 80,
-      "sources": [
-        "FMP",
-        "Grok"
-      ],
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "M",
-      "companyName": "Macy's, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 5247379324,
-      "volume": 5467880,
-      "confidence": 80,
-      "sources": [
-        "FMP",
-        "Grok"
-      ],
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "PPTA",
-      "companyName": "Perpetua Resources Corp.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 2710760472,
-      "volume": 3047569,
-      "confidence": 80,
-      "sources": [
-        "FMP",
-        "Grok"
-      ],
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "LU",
-      "companyName": "Lufax Holding Ltd",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 1173333848,
-      "volume": 2396452,
-      "confidence": 80,
-      "sources": [
-        "FMP",
-        "Grok"
-      ],
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "RCAT",
-      "companyName": "Red Cat Holdings, Inc.",
+      "symbol": "NAKA",
+      "companyName": "Kindly MD, Inc.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 1053291719,
-      "volume": 13074909,
-      "confidence": 100,
+      "marketCap": 320980554,
+      "volume": 26516228,
+      "confidence": 90,
       "sources": [
-        "FMP",
-        "Finnhub"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": -0.153,
-        "revenueActual": null,
-        "revenueEstimate": 24396696
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "ASPI",
-      "companyName": "ASP Isotopes Inc. Common Stock",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 989438953,
-      "volume": 7012326,
-      "confidence": 80,
-      "sources": [
-        "FMP",
-        "Grok"
-      ],
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "GROY",
-      "companyName": "Gold Royalty Corp.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 641867382,
-      "volume": 3270657,
-      "confidence": 100,
-      "sources": [
-        "FMP",
-        "Finnhub"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": 0,
-        "revenueActual": null,
-        "revenueEstimate": 4590000
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "KOPN",
-      "companyName": "Kopin Corporation",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 555168460,
-      "volume": 2201144,
-      "confidence": 80,
-      "sources": [
-        "FMP",
+        "Yahoo",
         "Grok"
       ],
       "finnhubData": {
