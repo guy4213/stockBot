@@ -106,7 +106,7 @@ async function scrapeYahooEarningsPlaywright(
   const results: Array<{ ticker: string; name: string; time: "BMO" | "AMC" }> = [];
   const seenTickers = new Set<string>();
   const PAGE_SIZE = 25;
-  const MAX_PAGES = 8;
+  const MAX_PAGES = 4;
 
   const browser = await chromium.launch({
     headless: true,
