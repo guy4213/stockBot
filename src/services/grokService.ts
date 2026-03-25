@@ -3,6 +3,8 @@ import { GrokMessage } from '../types/grok.types';
 import logger, { stockLog } from '../utils/structureLogger';
 import { findIRCandidates, GROK_API_KEY, IRPortal, MAX_API_RETRIES, verifyIRWithFlash } from './openRouterService';
 import { getHistoricalPrices, calcRunUp } from "./stockService";
+import * as cheerio from 'cheerio';
+import { chromium } from 'playwright';
 
 const TRUSTED_CDN_DOMAINS = [
   'q4cdn.com',
@@ -13,6 +15,295 @@ const TRUSTED_CDN_DOMAINS = [
   'businesswire.com',
   'globenewswire.com',
 ];
+function isJsonComplete(str: string): boolean {
+  try {
+    const clean = str.replace(/```json|```/g, '').trim();
+    JSON.parse(clean);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function mergeJsonContinuation(partial: string, continuation: string): string {
+  // מנסה לאחד שני חלקי JSON שנקטע באמצע
+  const trimmed = partial.trimEnd();
+  const cont = continuation.replace(/```json|```/g, '').trim();
+  // אם ה-partial נגמר בתוך מערך — מוסיף את המשך
+  if (trimmed.endsWith(',') || trimmed.endsWith('[')) {
+    return trimmed + cont;
+  }
+  return trimmed + cont;
+}
+
+
+
+// ─── Helper: parse time text → BMO | AMC ──────────────────────────────────
+function parseYahooTime(rawTime: string): "BMO" | "AMC" {
+  const t = (rawTime || '').toLowerCase().trim();
+  if (t.includes('before') || t === 'bmo' || t === 'pre market') return "BMO";
+  return "AMC";
+}
+
+// ─── Helper: derive quarter + fiscalYear from report date ─────────────────
+export function deriveFiscalPeriod(date: string): { quarter: number; fiscalYear: number } {
+  const d     = new Date(date + 'T12:00:00Z');
+  const month = d.getMonth() + 1;
+  const year  = d.getFullYear();
+  if (month <= 3) return { quarter: 4, fiscalYear: year - 1 };
+  if (month <= 6) return { quarter: 1, fiscalYear: year };
+  if (month <= 9) return { quarter: 2, fiscalYear: year };
+  return             { quarter: 3, fiscalYear: year };
+}
+
+
+
+
+// ─── Fallback: HTML ישיר — 25 בלבד ───────────────────────────────────────
+async function scrapeYahooEarningsHTML(
+  date: string
+): Promise<Array<{ ticker: string; name: string; time: "BMO" | "AMC" }>> {
+
+  logger.info(`  📄 Yahoo HTML fallback for ${date}...`);
+  const results: Array<{ ticker: string; name: string; time: "BMO" | "AMC" }> = [];
+  const seenTickers = new Set<string>();
+
+  const url = `https://finance.yahoo.com/calendar/earnings?day=${date}&offset=0&size=25`;
+  const response = await axios.get(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    timeout: 10000
+  });
+
+  const $ = cheerio.load(response.data);
+
+  let timeColIndex = 2;
+  $('table thead tr th').each((i, el) => {
+    const h = $(el).text().toLowerCase().trim();
+    if (h.includes('time') || h.includes('call')) timeColIndex = i;
+  });
+
+  $('table tbody tr').each((_, element) => {
+    const cols    = $(element).find('td');
+    if (cols.length < 3) return;
+    const ticker  = $(cols[0]).text().trim().toUpperCase();
+    const name    = $(cols[1]).text().trim();
+    const rawTime = $(cols[timeColIndex]).text().trim();
+    if (!ticker || ticker === 'SYMBOL' || seenTickers.has(ticker)) return;
+    seenTickers.add(ticker);
+    results.push({ ticker, name, time: parseYahooTime(rawTime) });
+  });
+
+  logger.info(`  ✅ HTML fallback: ${results.length} stocks (max 25).`);
+  return results;
+}
+
+// ─── Primary: Playwright — JS rendering + pagination אמיתי ───────────────
+async function scrapeYahooEarningsPlaywright(
+  date: string
+): Promise<Array<{ ticker: string; name: string; time: "BMO" | "AMC" }>> {
+
+  logger.info(`  🌐 Playwright scraping Yahoo for ${date}...`);
+
+  const results: Array<{ ticker: string; name: string; time: "BMO" | "AMC" }> = [];
+  const seenTickers = new Set<string>();
+  const PAGE_SIZE = 25;
+  const MAX_PAGES = 4;
+
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--single-process',
+      '--no-zygote',
+      '--renderer-process-limit=1',
+      '--js-flags=--max-old-space-size=128',
+      '--disable-extensions',
+      '--disable-background-networking',
+      '--disable-default-apps',
+      '--disable-sync',
+      '--disable-translate',
+      '--hide-scrollbars',
+      '--mute-audio',
+      '--no-first-run',
+    ]
+  });
+
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    locale: 'en-US',
+    // ✅ viewport קטן — פחות RAM
+    viewport: { width: 800, height: 600 },
+    extraHTTPHeaders: {
+      'Accept-Language': 'en-US,en;q=0.9'
+    }
+  });
+
+  const page = await context.newPage();
+
+  // ✅ חסום תמונות, CSS, fonts — הכי משמעותי לחיסכון ב-RAM
+  await context.route('**/*', (route) => {
+    const type = route.request().resourceType();
+    if (['image', 'stylesheet', 'font', 'media', 'other'].includes(type)) {
+      route.abort();
+    } else {
+      route.continue();
+    }
+  });
+
+  try {
+    for (let p = 0; p < MAX_PAGES; p++) {
+      const offset = p * PAGE_SIZE;
+      const url = `https://finance.yahoo.com/calendar/earnings?day=${date}&offset=${offset}&size=${PAGE_SIZE}`;
+
+      logger.info(`  📄 Page ${p + 1} (offset=${offset})...`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+      // ✅ סגור consent popup אם קיים
+      try {
+        const consentBtn = await page.waitForSelector(
+          'button[name="agree"], button.accept-all, #consent-page button, [id*="consent"] button',
+          { timeout: 5000 }
+        );
+        if (consentBtn) {
+          await consentBtn.click();
+          logger.info(`  🍪 Closed consent popup`);
+          await page.waitForTimeout(1000);
+        }
+      } catch {
+        // אין popup — בסדר
+      }
+
+      // מחכה לטבלה
+      const tableExists = await page.waitForSelector('table tbody tr', { timeout: 20000 })
+        .then(() => true)
+        .catch(() => false);
+
+      if (!tableExists) {
+        logger.warn(`  ⚠️ Page ${p + 1}: No table found — stopping.`);
+        break;
+      }
+
+      const pageRows = await page.evaluate(() => {
+        const rows: Array<{ ticker: string; name: string; rawTime: string }> = [];
+        let timeCol = 2;
+        document.querySelectorAll('table thead tr th').forEach((th, i) => {
+          const h = (th.textContent || '').toLowerCase();
+          if (h.includes('time') || h.includes('call')) timeCol = i;
+        });
+        document.querySelectorAll('table tbody tr').forEach(row => {
+          const cols = row.querySelectorAll('td');
+          if (cols.length < 3) return;
+          const ticker  = (cols[0].textContent || '').trim().toUpperCase();
+          const name    = (cols[1].textContent || '').trim();
+          const rawTime = (cols[timeCol].textContent || '').trim();
+          if (ticker && ticker !== 'SYMBOL') rows.push({ ticker, name, rawTime });
+        });
+        return rows;
+      });
+
+      let newOnPage = 0;
+      for (const row of pageRows) {
+        if (!row.ticker || !/^[A-Z]{1,6}$/.test(row.ticker)) continue;
+        if (seenTickers.has(row.ticker)) continue;
+        seenTickers.add(row.ticker);
+        results.push({ ticker: row.ticker, name: row.name, time: parseYahooTime(row.rawTime) });
+        newOnPage++;
+      }
+
+      logger.info(`  📄 Page ${p + 1}: ${newOnPage} new stocks (total: ${results.length})`);
+
+      // ✅ הדף האחרון — סגור page מיד לשחרור RAM
+      if (pageRows.length < PAGE_SIZE) {
+        logger.info(`  ✅ Done. ${results.length} total across ${p + 1} page(s).`);
+        await page.close();
+        break;
+      }
+
+      // ✅ נקה memory בין דפים
+      await page.evaluate(() => { (window as any).gc && (window as any).gc(); });
+      await page.waitForTimeout(600);
+    }
+
+  } catch (err: any) {
+    logger.error(`  ❌ Playwright failed: ${err.message}`);
+    await browser.close();
+    return await scrapeYahooEarningsHTML(date);
+
+  } finally {
+    await browser.close();
+  }
+
+  logger.info(`  ✅ Playwright complete: ${results.length} stocks.`);
+  return results;
+}
+
+// ─── Main scraper entry point ──────────────────────────────────────────────
+async function scrapeYahooEarnings(
+  date: string
+): Promise<Array<{ ticker: string; name: string; time: "BMO" | "AMC" }>> {
+
+  // ניסיון 1: Playwright
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      logger.info(`  🌐 Playwright attempt ${attempt}/2...`);
+      const results = await scrapeYahooEarningsPlaywright(date);
+      if (results.length > 0) return results;
+      logger.warn(`  ⚠️ Playwright returned 0 — retrying...`);
+    } catch (err: any) {
+      logger.error(`  ❌ Playwright attempt ${attempt} failed: ${err.message}`);
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
+
+  // ניסיון 2: HTML fallback (תמיד עובד, 25 בלבד)
+  logger.warn(`  🔄 Playwright failed twice — HTML fallback (25 stocks only)`);
+  try {
+    return await scrapeYahooEarningsHTML(date);
+  } catch (err: any) {
+    logger.error(`  ❌ HTML fallback also failed: ${err.message}`);
+    return [];
+  }
+}
+
+// ─── Main export: grokScanEarningsToday ───────────────────────────────────
+export async function grokScanEarningsToday(date: string): Promise<Array<{
+  ticker: string;
+  name: string;
+  time: "BMO" | "AMC";
+  source: string;
+  quarter?: number;
+  fiscalYear?: number;
+}>> {
+  logger.info(`\n🔍 [GrokScan] Fetching Yahoo Earnings for ${date}...`);
+
+  let scraped: Array<{ ticker: string; name: string; time: "BMO" | "AMC" }> = [];
+
+  try {
+    scraped = await scrapeYahooEarnings(date);
+  } catch (err: any) {
+    logger.error(`❌ [GrokScan] Scraping failed: ${err.message}`);
+    return [];
+  }
+
+  if (scraped.length === 0) {
+    logger.warn(`  ⚠️ No stocks found for ${date}.`);
+    return [];
+  }
+
+  const { quarter, fiscalYear } = deriveFiscalPeriod(date);
+  logger.info(`  ✅ ${scraped.length} unique stocks — Q${quarter} FY${fiscalYear}.`);
+
+  return scraped.map(s => ({
+    ticker:     s.ticker,
+    name:       s.name,
+    time:       s.time,
+    source:     'Yahoo Finance',
+    quarter,
+    fiscalYear
+  }));
+}
 
 export async function callGrokAPI(
   messages: GrokMessage[],
@@ -269,7 +560,76 @@ export async function callGrokAPI(
   
   throw new Error("Max retries exceeded");
 }
-export async function findEarningsPdf(
+// export async function findEarningsPdf(
+//   symbol: string,
+//   companyName: string,
+//   quarter: number,
+//   year: number,
+//   reportDate: string,
+//   cachedIRPortal?: IRPortal | null,
+//   onIRPortalFound?: (portal: IRPortal) => void
+// ): Promise<string | null> {
+  
+//   logger.info(`\n${'═'.repeat(70)}`);
+//   logger.info(`🎯 Two-Phase Earnings Discovery: ${symbol}`);
+//   logger.info(`${'═'.repeat(70)}`);
+  
+//   let verifiedIR: IRPortal | null = null;
+  
+//   // Phase 1: Cache or find IR portal
+//   if (cachedIRPortal) {
+//     logger.info(`\n💾 CACHE HIT: Using cached IR portal`);
+//     verifiedIR = cachedIRPortal;
+//   } else {
+//     logger.info(`\n🔍 CACHE MISS: Need to find and verify IR portal`);
+//     logger.info(`\n📍 PHASE 1: Finding IR Portal...`);
+    
+//     const irCandidates = await findIRCandidates(symbol, companyName);
+    
+//     if (irCandidates.length === 0) {
+//       logger.error(`❌ No IR candidates found`);
+//       return null;
+//     }
+    
+//     // verifiedIR = await grokVerifyIR(symbol, companyName, irCandidates);
+//     verifiedIR = await verifyIRWithFlash(symbol, companyName, irCandidates);
+//     if (!verifiedIR) {
+//       logger.error(`❌ Could not verify IR portal`);
+//       return null;
+//     }
+    
+//     verifiedIR.verifiedAt = new Date().toISOString();
+//     logger.info(`✅ Verified IR: ${verifiedIR.url}`);
+    
+//     if (onIRPortalFound) {
+//       onIRPortalFound(verifiedIR);
+//     }
+//   }
+  
+//   // Phase 2: Let Grok find the earnings document
+//   logger.info(`\n📍 PHASE 2: Finding Earnings Document...`);
+  
+//   const earningsPdf = await phase2_grokFindEarnings(
+//     verifiedIR,
+//     symbol,
+//     companyName,
+//     quarter,
+//     year,
+//     reportDate
+//   );
+  
+//   if (!earningsPdf) {
+//     logger.error(`❌ Grok could not find earnings document`);
+//     return null;
+//   }
+  
+// if (earningsPdf) {
+//   stockLog.earningsDocFound(symbol, earningsPdf);
+// }
+//   return earningsPdf;
+// }
+
+export async function findEarningsPdfCandidates(   // ← שם חדש + return type
   symbol: string,
   companyName: string,
   quarter: number,
@@ -277,68 +637,56 @@ export async function findEarningsPdf(
   reportDate: string,
   cachedIRPortal?: IRPortal | null,
   onIRPortalFound?: (portal: IRPortal) => void
-): Promise<string | null> {
-  
+): Promise<string[]> {   // ← מחזיר מערך
+
   logger.info(`\n${'═'.repeat(70)}`);
   logger.info(`🎯 Two-Phase Earnings Discovery: ${symbol}`);
   logger.info(`${'═'.repeat(70)}`);
-  
+
   let verifiedIR: IRPortal | null = null;
-  
-  // Phase 1: Cache or find IR portal
+
   if (cachedIRPortal) {
     logger.info(`\n💾 CACHE HIT: Using cached IR portal`);
     verifiedIR = cachedIRPortal;
   } else {
-    logger.info(`\n🔍 CACHE MISS: Need to find and verify IR portal`);
-    logger.info(`\n📍 PHASE 1: Finding IR Portal...`);
-    
+    logger.info(`\n🔍 CACHE MISS: Finding IR portal...`);
     const irCandidates = await findIRCandidates(symbol, companyName);
-    
     if (irCandidates.length === 0) {
       logger.error(`❌ No IR candidates found`);
-      return null;
+      return [];
     }
-    
-    // verifiedIR = await grokVerifyIR(symbol, companyName, irCandidates);
     verifiedIR = await verifyIRWithFlash(symbol, companyName, irCandidates);
     if (!verifiedIR) {
       logger.error(`❌ Could not verify IR portal`);
-      return null;
+      return [];
     }
-    
     verifiedIR.verifiedAt = new Date().toISOString();
     logger.info(`✅ Verified IR: ${verifiedIR.url}`);
-    
-    if (onIRPortalFound) {
-      onIRPortalFound(verifiedIR);
-    }
+    if (onIRPortalFound) onIRPortalFound(verifiedIR);
   }
-  
-  // Phase 2: Let Grok find the earnings document
-  logger.info(`\n📍 PHASE 2: Finding Earnings Document...`);
-  
-  const earningsPdf = await phase2_grokFindEarnings(
-    verifiedIR,
-    symbol,
-    companyName,
-    quarter,
-    year,
-    reportDate
+
+  const urls = await phase2_grokFindEarnings(
+    verifiedIR, symbol, companyName, quarter, year, reportDate
   );
-  
-  if (!earningsPdf) {
-    logger.error(`❌ Grok could not find earnings document`);
-    return null;
+
+  if (urls.length > 0) {
+    stockLog.earningsDocFound(symbol, urls[0]);
   }
-  
-if (earningsPdf) {
-  stockLog.earningsDocFound(symbol, earningsPdf);
-}
-  return earningsPdf;
+
+  return urls;
 }
 
-
+// שמור את findEarningsPdf הישן לתאימות לאחור
+export async function findEarningsPdf(
+  symbol: string, companyName: string, quarter: number, year: number,
+  reportDate: string, cachedIRPortal?: IRPortal | null,
+  onIRPortalFound?: (portal: IRPortal) => void
+): Promise<string | null> {
+  const candidates = await findEarningsPdfCandidates(
+    symbol, companyName, quarter, year, reportDate, cachedIRPortal, onIRPortalFound
+  );
+  return candidates[0] ?? null;
+}
 
 async function phase2_grokFindEarnings(
   irPortal: IRPortal,
@@ -347,104 +695,48 @@ async function phase2_grokFindEarnings(
   quarter: number,
   year: number,
   reportDate: string
-): Promise<string | null> {
+): Promise<string[]> {   // ← שינוי: מחזיר מערך
 
-  logger.info(`\n🤖 Instructing Grok to search for earnings document...`);
-  logger.info(`   Verified IR: ${irPortal.url}`);
+  logger.info(`\n🤖 Instructing Grok to search for earnings documents (up to 3)...`);
 
   const quarterName = quarter === 1 ? 'first' :
                       quarter === 2 ? 'second' :
                       quarter === 3 ? 'third' : 'fourth';
 
   const prompt = `
-You are an expert at finding quarterly earnings documents on investor relations websites.
+You are an expert at finding quarterly earnings documents.
 
-TASK: Find the OFFICIAL earnings press release or report for Q${quarter} ${year}.
+TASK: Find up to 3 VALID URLs for the Q${quarter} ${year} earnings report of ${companyName} (${symbol}).
 
-COMPANY INFORMATION:
-- Ticker Symbol: ${symbol}
-- Company Name: ${companyName}
-- Quarter: Q${quarter} ${year} (${quarterName} quarter)
-- Expected Report Date: ${reportDate}
-
-VERIFIED IR WEBSITE:
-${irPortal.url}
+VERIFIED IR WEBSITE: ${irPortal.url}
 Domain: ${irPortal.domain}
 
-🔥 CRITICAL INSTRUCTIONS - READ CAREFULLY:
+SEARCH STRATEGY (in order):
+1. Browse the IR website directly: ${irPortal.url}
+2. Try sub-pages: /news, /press-releases, /quarterly-results
+3. Search: "site:${irPortal.domain} Q${quarter} ${year} earnings"
+4. Search: "${symbol} Q${quarter} ${year} earnings press release"
+5. Look on trusted CDNs (q4cdn.com, cloudfront.net, sec.gov, businesswire.com, prnewswire.com)
 
-STEP 1: BROWSE THE IR WEBSITE DIRECTLY
-Use web_search with "open_page" action to load: ${irPortal.url}
-This will show you the actual page content!
+REQUIREMENTS for each URL:
+✅ Official Q${quarter} ${year} earnings release for ${companyName}
+✅ Published around ${reportDate} (±7 days)
+✅ Contains actual financial results (not a preview/estimate)
+❌ NOT earnings call transcripts
+❌ NOT previous quarters
 
-Common IR website structures:
-- ${irPortal.url}/news
-- ${irPortal.url}/press-releases
-- ${irPortal.url}/news-releases
-- ${irPortal.url}/financial-information/quarterly-results
-- ${irPortal.url}/investors/news
-- ${irPortal.url}/newsroom
+OUTPUT FORMAT — return ONLY this JSON, nothing else:
+{
+  "urls": [
+    "https://first-url-here",
+    "https://second-url-here",
+    "https://third-url-here"
+  ]
+}
 
-STEP 2: LOOK FOR RECENT NEWS/PRESS RELEASES SECTION
-Once you see the page, look for:
-- "News" or "Press Releases" link
-- "Latest News" section
-- "Recent Announcements"
-- "Quarterly Results" section
-
-STEP 3: FIND THE Q${quarter} ${year} EARNINGS RELEASE
-Look for titles containing:
-- "Reports ${quarterName} Quarter ${year} Results"
-- "Announces Q${quarter} ${year} Earnings"
-- "Q${quarter} ${year} Financial Results"
-- Date around ${reportDate}
-
-STEP 4: GET THE DIRECT URL
-Once you find the earnings release:
-- If it's an HTML page → return the full URL
-- If it's a PDF link → return the full PDF URL
-- The PDF may be hosted on a CDN like q4cdn.com or cloudfront.net — that is acceptable
-
-🎯 SEARCH STRATEGY (try these in order):
-
-1. Open the main IR page: ${irPortal.url}
-2. If that doesn't work, try: ${irPortal.url}/news
-3. If that doesn't work, search: "site:${irPortal.domain} Q${quarter} ${year} earnings"
-4. If that doesn't work, search: "${symbol} Q${quarter} ${year} earnings press release"
-
-⚠️ IMPORTANT:
-- Use open_page to VIEW the actual website content
-- Don't just rely on Google search results
-- Look at the page structure to find where earnings are posted
-- If you find a "News" or "Press Releases" page, browse it to see recent items
-
-THE DOCUMENT MUST:
-✅ Be the official Q${quarter} ${year} earnings release for ${companyName}
-✅ Mention Q${quarter} or "${quarterName} quarter" AND year ${year}
-✅ Be published around ${reportDate} (±7 days acceptable)
-✅ PDFs hosted on CDN domains (q4cdn.com, cloudfront.net, etc.) are valid
-
-AVOID:
-❌ Earnings call transcripts
-❌ Previous quarters (Q${quarter - 1}, Q${quarter - 2}, etc.)
-❌ Different years
-
-OUTPUT FORMAT:
-Return ONLY the direct URL to the earnings document.
-Just the URL, nothing else.
-
-If you cannot find it after thorough searching, return:
-NOT_FOUND: [brief explanation of what you tried]
-
-EXAMPLE GOOD OUTPUTS:
-https://investors.agnc.com/news/news-details/2026/AGNC-Reports-Fourth-Quarter-2025-Results/default.aspx
-https://s2.q4cdn.com/510812146/files/doc_financials/2025/q4/2026-02-23-DE-IR-4Q25-Earnings-Release-Kit-vTC1.pdf
-
-EXAMPLE BAD OUTPUT:
-NOT_FOUND: Could only find pre-announcement, no actual report.
+If you find fewer than 3, return only what you found.
+If you find nothing, return: { "urls": [] }
 `;
-
-  logger.info(`   Calling Grok with web_search capability...`);
 
   try {
     const grokResponse = await callGrokAPI(
@@ -454,53 +746,47 @@ NOT_FOUND: Could only find pre-announcement, no actual report.
       true
     );
 
-    logger.info(`\n📄 Grok Response:`);
-    logger.info(`${grokResponse.substring(0, 500)}${grokResponse.length > 500 ? '...' : ''}`);
+    logger.info(`📄 Grok response preview: ${grokResponse.substring(0, 300)}`);
 
-    if (grokResponse.includes('NOT_FOUND:')) {
-      const reason = grokResponse.replace('NOT_FOUND:', '').trim();
-      logger.warn(`   ⚠️ Grok could not find document:`);
-      logger.warn(`   ${reason}`);
-      return null;
+    const cleanJson = grokResponse.replace(/```json|```/g, '').trim();
+    
+    // מנסה לפרסר JSON
+    let urls: string[] = [];
+    try {
+      const parsed = JSON.parse(cleanJson);
+      urls = (parsed.urls || []).filter((u: any) => typeof u === 'string' && u.startsWith('http'));
+    } catch {
+      // fallback: מחפש כל URL בתגובה
+      const urlMatches = grokResponse.match(/https?:\/\/[^\s<>"',}\]]+/g) || [];
+      urls = urlMatches.map(u => u.replace(/[.,;)\]]+$/, '')).slice(0, 3);
     }
 
-    const urlMatch = grokResponse.match(/https?:\/\/[^\s<>"]+/);
+    // וולידציה של כל URL
+    const validUrls: string[] = [];
+    for (const url of urls) {
+      try {
+        const urlDomain = new URL(url).hostname.toLowerCase();
+        const expectedDomain = irPortal.domain.toLowerCase();
+        const isDomainMatch = urlDomain.includes(expectedDomain) || expectedDomain.includes(urlDomain);
+        const isTrustedCDN = TRUSTED_CDN_DOMAINS.some(cdn => urlDomain.includes(cdn));
 
-    if (!urlMatch) {
-      logger.warn(`   ⚠️ No URL found in Grok response`);
-      return null;
+        if (isDomainMatch || isTrustedCDN) {
+          validUrls.push(url);
+          logger.info(`   ✅ Valid URL [${validUrls.length}]: ${url}`);
+        } else {
+          logger.warn(`   ⚠️ Rejected (domain mismatch): ${url}`);
+        }
+      } catch {
+        logger.warn(`   ⚠️ Invalid URL skipped: ${url}`);
+      }
     }
 
-    let url = urlMatch[0];
-    url = url.replace(/[.,;)\]]+$/, '');
-
-    logger.info(`\n✅ Grok found URL: ${url}`);
-
-    const urlDomain = new URL(url).hostname.toLowerCase();
-    const expectedDomain = irPortal.domain.toLowerCase();
-
-    const isDomainMatch = urlDomain.includes(expectedDomain) || expectedDomain.includes(urlDomain);
-    const isTrustedCDN = TRUSTED_CDN_DOMAINS.some(cdn => urlDomain.includes(cdn));
-
-    if (!isDomainMatch && !isTrustedCDN) {
-      logger.warn(`   ⚠️ URL domain mismatch!`);
-      logger.warn(`   Expected: ${expectedDomain}`);
-      logger.warn(`   Got: ${urlDomain}`);
-      logger.warn(`   Not a trusted CDN either — rejecting`);
-      return null;
-    }
-
-    if (isTrustedCDN && !isDomainMatch) {
-      logger.info(`   ✅ Trusted CDN domain accepted: ${urlDomain}`);
-    } else {
-      logger.info(`   ✅ Domain verified: ${urlDomain}`);
-    }
-
-    return url;
+    logger.info(`   📋 Found ${validUrls.length} valid document URLs`);
+    return validUrls;
 
   } catch (e: any) {
     logger.error(`   ❌ Grok search failed: ${e.message}`);
-    return null;
+    return [];
   }
 }
 
