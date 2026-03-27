@@ -27,7 +27,7 @@ import fs from "fs";
 import path from "path";
 import { fetchContentWithJina } from "./contentExtractor";
 import { calcIntradayPotential, calcMarketTruthOverride, calcSupercycle, calcTrendPotential, calculateDetailedScore, calculateTradeParams } from "./calculationService";
-import { callGrokAPI, deriveFiscalPeriod, findEarningsPdfCandidates, grokScanEarningsToday } from "./grokService";
+import { callGrokAPI, deriveFiscalPeriod, findEarningsPdfCandidates, getFinnhubQuarter, grokGetQuarters, grokScanEarningsToday } from "./grokService";
 dotenv.config({ quiet: true });
 
 export const GROK_API_KEY = process.env.GROK_API_KEY;
@@ -479,27 +479,25 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
   // ══════════════════════════════════════════
   // STEP 1: Yahoo (Playwright) → רשימה מאושרת
   // ══════════════════════════════════════════
-  logger.info(`\n🔍 [Step 1] Grok scanning confirmed earnings for ${date}...`);
+  logger.info(`\n🔍 [Step 1] Scanning confirmed earnings for ${date}...`);
 
-  let rawStocks: Array<{ ticker: string; name: string; time: "BMO" | "AMC"; quarter?: number; fiscalYear?: number }> = [];
+  let rawStocks: Array<{ ticker: string; name: string; time: "BMO" | "AMC" }> = [];
 
   try {
     const scraped = await grokScanEarningsToday(date);
     rawStocks = scraped.map(s => ({
-      ticker:     s.ticker,
-      name:       s.name,
-      time:       s.time,
-      quarter:    s.quarter,
-      fiscalYear: s.fiscalYear
+      ticker: s.ticker,
+      name:   s.name,
+      time:   s.time,
     }));
-    logger.info(`✅ Grok found ${rawStocks.length} confirmed stocks`);
+    logger.info(`✅ Found ${rawStocks.length} confirmed stocks from Yahoo`);
   } catch (e: any) {
-    logger.error(`❌ Grok scan failed: ${e.message}`);
+    logger.error(`❌ Scan failed: ${e.message}`);
     return { date, stocks: [] };
   }
 
   if (rawStocks.length === 0) {
-    logger.warn(`⚠️ Grok returned 0 stocks for ${date}`);
+    logger.warn(`⚠️ No stocks found for ${date}`);
     return { date, stocks: [] };
   }
 
@@ -510,12 +508,12 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
 
   const cache = loadUsStocksCache();
   const passedStocks: Array<{
-    symbol:      string;
-    name:        string;
-    marketCap:   number;
-    volume:      number;
-    time:        "BMO" | "AMC";
-    quarter?:    number;
+    symbol:    string;
+    name:      string;
+    marketCap: number;
+    volume:    number;
+    time:      "BMO" | "AMC";
+    quarter?:  number;
     fiscalYear?: number;
   }> = [];
 
@@ -533,13 +531,11 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
       }
       logger.info(`💎 ${s.ticker} (${cached.name}) — $${(cached.marketCap/1e9).toFixed(1)}B | cache`);
       passedStocks.push({
-        symbol:     s.ticker,
-        name:       cached.name || s.name,
-        marketCap:  cached.marketCap,
-        volume:     cached.volume,
-        time:       s.time,
-        quarter:    s.quarter,
-        fiscalYear: s.fiscalYear
+        symbol:    s.ticker,
+        name:      cached.name || s.name,
+        marketCap: cached.marketCap,
+        volume:    cached.volume,
+        time:      s.time,
       });
       continue;
     }
@@ -557,13 +553,11 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
       }
       logger.info(`💎 ${s.ticker} (${quote.name}) — $${(quote.marketCap/1e9).toFixed(1)}B | FMP`);
       passedStocks.push({
-        symbol:     s.ticker,
-        name:       quote.name || s.name,
-        marketCap:  quote.marketCap,
-        volume:     quote.volume,
-        time:       s.time,
-        quarter:    s.quarter,    // ✅
-        fiscalYear: s.fiscalYear  // ✅
+        symbol:    s.ticker,
+        name:      quote.name || s.name,
+        marketCap: quote.marketCap,
+        volume:    quote.volume,
+        time:      s.time,
       });
       await new Promise(r => setTimeout(r, 300));
     } catch (e: any) {
@@ -575,104 +569,95 @@ export async function morningIntelligence(date: string): Promise<MorningIntellig
   if (passedStocks.length === 0) return { date, stocks: [] };
 
   // ══════════════════════════════════════════
-  // STEP 3: Grok → אמת זמן BMO/AMC
+  // STEP 3: Quarter Resolution
+  // Finnhub → Grok fallback → deriveFiscalPeriod
   // ══════════════════════════════════════════
-  logger.info(`\n🤖 [Step 3] Grok timing validation for ${passedStocks.length} stocks...`);
+  logger.info(`\n📅 [Step 3] Resolving fiscal quarters for ${passedStocks.length} stocks...`);
 
-  let grokTimingMap = new Map<string, "BMO" | "AMC">();
-  try {
-    grokTimingMap = await askGrokReportTimeBatch(
-      passedStocks.map(s => s.symbol),
-      date
-    );
-    logger.info(`✅ Grok timing: ${grokTimingMap.size}/${passedStocks.length} resolved`);
-  } catch (e: any) {
-    logger.warn(`⚠️ Grok timing failed: ${e.message} — using Yahoo times as fallback`);
-  }
+  // שלב 3א: Finnhub לכל מניה שעברה ולידציה — במקביל
+  const finnhubResults = await Promise.allSettled(
+    passedStocks.map(s => getFinnhubQuarter(s.symbol))
+  );
 
-  // ══════════════════════════════════════════
-  // STEP 4: Finnhub → EPS/Revenue estimates בלבד
-  // ══════════════════════════════════════════
-  const finnhubMap = new Map<string, FinnhubEarningsEntry>();
-  const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
+  const periodMap: Record<string, { quarter: number; fiscalYear: number }> = {};
+  const mismatchedTickers: string[] = [];
 
-  if (FINNHUB_API_KEY) {
-    try {
-      logger.info(`\n📡 [Step 4] Finnhub estimates for ${passedStocks.length} stocks...`);
-      const finnhubResp = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
-        `https://finnhub.io/api/v1/calendar/earnings`,
-        { params: { from: date, to: date, token: FINNHUB_API_KEY } }
-      );
-      const finnhubList = finnhubResp.data.earningsCalendar ?? [];
-      logger.info(`✅ Finnhub returned ${finnhubList.length} entries`);
-      for (const e of finnhubList) {
-        finnhubMap.set(e.symbol.toUpperCase(), e);
+  passedStocks.forEach((s, i) => {
+    const result = finnhubResults[i];
+    if (result.status === 'fulfilled' && result.value) {
+      periodMap[s.symbol] = result.value;
+    } else {
+      mismatchedTickers.push(s.symbol);
+      logger.warn(`⚠️ ${s.symbol}: Finnhub mismatch — queuing for Grok`);
+    }
+  });
+
+  logger.info(`  ✅ Finnhub resolved: ${Object.keys(periodMap).length} | Grok needed: ${mismatchedTickers.length}`);
+
+  // שלב 3ב: Grok fallback — קריאה אחת לכל ה-mismatched
+  if (mismatchedTickers.length > 0) {
+    const grokResult = await grokGetQuarters(mismatchedTickers, date);
+    for (const ticker of mismatchedTickers) {
+      if (grokResult[ticker]) {
+        periodMap[ticker] = grokResult[ticker];
+        logger.info(`  ✅ ${ticker}: Grok → Q${grokResult[ticker].quarter} FY${grokResult[ticker].fiscalYear}`);
       }
-    } catch (err: any) {
-      logger.warn(`⚠️ Finnhub failed: ${err.message}`);
     }
   }
 
+  // שלב 3ג: fallback אחרון — deriveFiscalPeriod
+  const fallback = deriveFiscalPeriod(date);
+  passedStocks.forEach(s => {
+    const period = periodMap[s.symbol] ?? fallback;
+    s.quarter    = period.quarter;
+    s.fiscalYear = period.fiscalYear;
+    if (!periodMap[s.symbol]) {
+      logger.warn(`  ⚠️ ${s.symbol}: all sources failed — fallback Q${fallback.quarter} FY${fallback.fiscalYear}`);
+    }
+    logger.info(`  📅 ${s.symbol}: Q${s.quarter} FY${s.fiscalYear}`);
+  });
+
   // ══════════════════════════════════════════
-  // STEP 5: Build final list
-  // quarter/fiscalYear: Finnhub → Yahoo → deriveFiscalPeriod
+  // STEP 4: Grok → אמת זמן BMO/AMC
   // ══════════════════════════════════════════
-  logger.info(`\n📋 [Step 5] Building final list...`);
-  const validatedStocks: ExtendedStock[] = [];
+  logger.info(`\n🤖 [Step 4] Grok timing validation for ${passedStocks.length} stocks...`);
 
-  // ✅ fallback אחרון — תמיד מחושב נכון לפי תאריך
-  const { quarter: derivedQ, fiscalYear: derivedFY } = deriveFiscalPeriod(date);
+  const symbolsForGrok = passedStocks.map(s => s.symbol);
+  const grokTiming = await askGrokReportTimeBatch(symbolsForGrok, date);
 
-  for (const stock of passedStocks) {
-    // זמן: Grok → Yahoo → AMC
-    const reportType: "BMO" | "AMC" =
-      grokTimingMap.get(stock.symbol) ?? stock.time ?? "AMC";
+  // ══════════════════════════════════════════
+  // BUILD FINAL STOCKS LIST
+  // ══════════════════════════════════════════
+  const finalStocks: Stock[] = passedStocks.map(s => {
+    const resolvedTime = grokTiming.get(s.symbol) ?? s.time;
+    const windowStart  = resolvedTime === "BMO" ? "07:00" : "16:00";
+    const windowEnd    = resolvedTime === "BMO" ? "09:30" : "20:00";
 
-    const windowStart = reportType === "BMO" ? "07:00" : "16:00";
-    const windowEnd   = reportType === "BMO" ? "09:30" : "20:00";
-
-    const finnhubEntry = finnhubMap.get(stock.symbol);
-    const finnhubData = {
-      epsActual:       finnhubEntry?.epsActual       ?? null,
-      epsEstimate:     finnhubEntry?.epsEstimate     ?? null,
-      revenueActual:   finnhubEntry?.revenueActual   ?? null,
-      revenueEstimate: finnhubEntry?.revenueEstimate ?? null,
-    };
-
-    // ✅ סדר עדיפויות: Finnhub → Yahoo → deriveFiscalPeriod — לעולם לא undefined
-    const quarter    = finnhubEntry?.quarter ?? stock.quarter    ?? derivedQ;
-    const fiscalYear = finnhubEntry?.year    ?? stock.fiscalYear ?? derivedFY;
-
-    const timeSource = grokTimingMap.has(stock.symbol) ? 'Grok' : 'Yahoo';
-    logger.info(
-      `💎 ${stock.symbol} (${stock.name}) | ` +
-      `Q${quarter} FY${fiscalYear} | ` +
-      `$${(stock.marketCap/1e9).toFixed(1)}B | ` +
-      `${reportType} (${timeSource}) | ` +
-      `EPS est: ${finnhubData.epsEstimate ?? 'N/A'}`
-    );
-
-    validatedStocks.push({
-      symbol:      stock.symbol,
-      companyName: stock.name,
-      reportType,
+    return {
+      symbol:      s.symbol,
+      companyName: s.name,
+      reportType:  resolvedTime,
       windowStart,
       windowEnd,
-      marketCap:   stock.marketCap,
-      volume:      stock.volume,
-      confidence:  finnhubEntry ? 100 : 90,
-      sources:     finnhubEntry
-                     ? ["Yahoo", "Grok", "Finnhub"]
-                     : ["Yahoo", "Grok"],
-      quarter,
-      fiscalYear,
-      finnhubData,
-    });
-  }
+      marketCap:   s.marketCap,
+      volume:      s.volume,
+      confidence:  90,
+      sources:     ['Yahoo', 'Grok'],
+      quarter:     s.quarter,
+      fiscalYear:  s.fiscalYear,
+      finnhubData: {
+        epsActual:       null,
+        epsEstimate:     null,
+        revenueActual:   null,
+        revenueEstimate: null,
+      }
+    };
+  });
 
-  validatedStocks.sort((a, b) => b.marketCap - a.marketCap);
-  logger.info(`\n✅ Final List: ${validatedStocks.length} stocks.`);
-  return { date, stocks: validatedStocks };
+  finalStocks.sort((a, b) => (b.marketCap ?? 0) - (a.marketCap ?? 0));
+  logger.info(`\n✅ Morning Intelligence complete: ${finalStocks.length} stocks ready.`);
+
+  return { date, stocks: finalStocks };
 }
 
 // export async function miniCheck(symbol: string, companyName: string, quarter?: number, fiscalYear?: number): Promise<MiniCheckResponse> {

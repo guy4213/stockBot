@@ -266,9 +266,9 @@ async function scrapeYahooEarnings(
     return [];
   }
 }
-
-async function getFinnhubQuarter(
-  symbol: string, 
+// ─── Finnhub: מחזיר quarter + fiscalYear לטיקר בודד ──────────────────────
+export async function getFinnhubQuarter(
+  symbol: string
 ): Promise<{ quarter: number; fiscalYear: number } | null> {
   const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
   if (!FINNHUB_API_KEY) return null;
@@ -276,21 +276,69 @@ async function getFinnhubQuarter(
   try {
     const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
       `https://finnhub.io/api/v1/calendar/earnings`,
-      { params: { symbol, token: FINNHUB_API_KEY } }
+      { params: { symbol, token: FINNHUB_API_KEY }, timeout: 8000 }
     );
 
     const calendar = response.data?.earningsCalendar ?? [];
     if (calendar.length === 0) return null;
+
     const entry = calendar[0];
     if (!entry?.quarter || !entry?.year) return null;
 
+    // ✅ וידוא שהטיקר שחזר תואם בדיוק
+    if (entry.symbol?.toUpperCase() !== symbol.toUpperCase()) {
+      logger.warn(`⚠️ getFinnhubQuarter [${symbol}]: got "${entry.symbol}" — mismatch`);
+      return null;
+    }
 
-    logger.info(`📅 Finnhub quarter [${symbol}]: Q${entry.quarter} FY${entry.year}`);
+    logger.info(`📅 Finnhub [${symbol}]: Q${entry.quarter} FY${entry.year}`);
     return { quarter: entry.quarter, fiscalYear: entry.year };
 
   } catch (err: any) {
     logger.warn(`⚠️ getFinnhubQuarter failed for ${symbol}: ${err.message}`);
     return null;
+  }
+}
+
+// ─── Grok fallback: מחזיר quarter + fiscalYear לרשימת טיקרים בקריאה אחת ──
+export async function grokGetQuarters(
+  tickers: string[],
+  date: string
+): Promise<Record<string, { quarter: number; fiscalYear: number }>> {
+  if (tickers.length === 0) return {};
+
+  logger.info(`🤖 [GrokQuarter] Fallback for ${tickers.length} tickers: ${tickers.join(', ')}`);
+
+  try {
+    const content = await callGrokAPI(
+      [
+        {
+          role: 'user',
+          content: `The following US-listed stocks are reporting earnings on ${date}:
+${tickers.join(', ')}
+
+For each stock, return the fiscal quarter number (1-4) and fiscal year they are reporting.
+Return ONLY valid JSON, no explanation, no markdown:
+{
+  "SLI": { "quarter": 2, "fiscalYear": 2026 },
+  "XYZ": { "quarter": 1, "fiscalYear": 2026 }
+}`
+        }
+      ],
+      0.1,
+      300,
+      false
+    );
+
+    const clean = content.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+
+    logger.info(`✅ [GrokQuarter] Returned: ${Object.keys(parsed).join(', ')}`);
+    return parsed;
+
+  } catch (err: any) {
+    logger.warn(`⚠️ [GrokQuarter] Failed: ${err.message}`);
+    return {};
   }
 }
 // ─── Main export: grokScanEarningsToday ───────────────────────────────────
@@ -299,8 +347,6 @@ export async function grokScanEarningsToday(date: string): Promise<Array<{
   name: string;
   time: "BMO" | "AMC";
   source: string;
-  quarter?: number;
-  fiscalYear?: number;
 }>> {
   logger.info(`\n🔍 [GrokScan] Fetching Yahoo Earnings for ${date}...`);
 
@@ -318,33 +364,14 @@ export async function grokScanEarningsToday(date: string): Promise<Array<{
     return [];
   }
 
-  // ── שליפת רבעון אמיתי מ-Finnhub לכל טיקר ──────────────────
-  const quarterResults = await Promise.allSettled(
-    scraped.map(s => getFinnhubQuarter(s.ticker))
-  );
+  logger.info(`  ✅ ${scraped.length} unique stocks scraped from Yahoo.`);
 
-  const fallback = deriveFiscalPeriod(date);
-  logger.info(`  ✅ ${scraped.length} unique stocks — fallback Q${fallback.quarter} FY${fallback.fiscalYear}.`);
-
-  return scraped.map((s, i) => {
-    const result = quarterResults[i];
-    const period = (result.status === 'fulfilled' && result.value)
-      ? result.value
-      : fallback;
-
-    if (result.status !== 'fulfilled' || !result.value) {
-      logger.warn(`  ⚠️ ${s.ticker}: Finnhub quarter failed — using fallback Q${fallback.quarter} FY${fallback.fiscalYear}`);
-    }
-
-    return {
-      ticker:     s.ticker,
-      name:       s.name,
-      time:       s.time,
-      source:     'Yahoo Finance',
-      quarter:    period.quarter,
-      fiscalYear: period.fiscalYear
-    };
-  });
+  return scraped.map(s => ({
+    ticker: s.ticker,
+    name:   s.name,
+    time:   s.time,
+    source: 'Yahoo Finance',
+  }));
 }
 
 export async function callGrokAPI(
