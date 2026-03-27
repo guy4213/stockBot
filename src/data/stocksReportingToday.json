@@ -1,38 +1,84 @@
 {
-  "date": "2026-03-23",
+  "date": "2026-03-27",
   "stocks": [
     {
-      "symbol": "ABVX",
-      "companyName": "Abivax S.A.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 7878671482,
-      "volume": 1744435,
-      "confidence": 90,
-      "sources": [
-        "Yahoo",
-        "Grok"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "WRD",
-      "companyName": "WeRide Inc.",
+      "symbol": "CCL",
+      "companyName": "Carnival Corporation & plc",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 3121883401,
-      "volume": 3964333,
+      "marketCap": 37049204217,
+      "volume": 23335140,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 1,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "CUK",
+      "companyName": "Carnival Corporation & plc",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 33566576034,
+      "volume": 1595892,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 1,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "TMC",
+      "companyName": "TMC the metals company Inc.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 2891944134,
+      "volume": 6955270,
+      "confidence": 100,
+      "sources": [
+        "Yahoo",
+        "Grok",
+        "Finnhub"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.0606,
+        "revenueActual": null,
+        "revenueEstimate": 0
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "PPTA",
+      "companyName": "Perpetua Resources Corp.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 2710760472,
+      "volume": 3047569,
       "confidence": 90,
       "sources": [
         "Yahoo",
@@ -46,77 +92,47 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "LGN",
+      "companyName": "Legence Corp. Class A Common stock",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 2331646095,
+      "volume": 1592072,
+      "confidence": 100,
+      "sources": [
+        "Yahoo",
+        "Grok",
+        "Finnhub"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": -0.01,
+        "epsEstimate": 0.0392,
+        "revenueActual": 737640000,
+        "revenueEstimate": 626510463
+      },
       "sentToTelegram": true,
       "cachedIRPortal": {
-        "url": "https://ir.weride.ai/",
-        "domain": "ir.weride.ai",
+        "url": "https://investors.wearelegence.com/",
+        "domain": "investors.wearelegence.com",
         "confidence": 0.9,
-        "reason": "The URL https://ir.weride.ai/ is the most likely official investor relations website for WeRide Inc. It contains standard IR content such as investor relations, corporate profile, news releases, recent reports, investor presentation, and investor contact information. The other URLs are subpages of this main IR site.",
-        "verifiedAt": "2026-03-23T12:59:03.140Z"
+        "reason": "The URL clearly indicates an investor relations website for Legence, and the title and snippet confirm this.",
+        "verifiedAt": "2026-03-27T12:08:59.802Z"
       }
     },
     {
-      "symbol": "LAR",
-      "companyName": "Lithium Argentina AG",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 689775000,
-      "volume": 2194753,
-      "confidence": 90,
-      "sources": [
-        "Yahoo",
-        "Grok"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://investors.lithium-argentina.com/investor-relations",
-        "domain": "investors.lithium-argentina.com",
-        "confidence": 0.95,
-        "reason": "The URL contains 'investors.lithium-argentina.com' and the title is 'Investor Relations - Lithium Argentina AG' with a snippet indicating it's the IR website.",
-        "verifiedAt": "2026-03-23T13:00:03.245Z"
-      }
-    },
-    {
-      "symbol": "IDR",
-      "companyName": "Idaho Strategic Resources, Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 507163531,
-      "volume": 1253874,
-      "confidence": 90,
-      "sources": [
-        "Yahoo",
-        "Grok"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "NFGC",
-      "companyName": "New Found Gold Corp.",
+      "symbol": "NAK",
+      "companyName": "Northern Dynasty Minerals Ltd.",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 480556646,
-      "volume": 2146423,
+      "marketCap": 1104940000,
+      "volume": 7800134,
       "confidence": 90,
       "sources": [
         "Yahoo",
@@ -130,8 +146,77 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "SLI",
+      "companyName": "Standard Lithium Ltd.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 777508070,
+      "volume": 3443828,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "KOPN",
+      "companyName": "Kopin Corporation",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 555168460,
+      "volume": 2201144,
+      "confidence": 100,
+      "sources": [
+        "Yahoo",
+        "Grok",
+        "Finnhub"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": -0.0143,
+        "revenueActual": null,
+        "revenueEstimate": 11165940
+      },
+      "sentToTelegram": false
+    },
+    {
+      "symbol": "AUTL",
+      "companyName": "Autolus Therapeutics plc",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 401851963,
+      "volume": 2061687,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": true
     },
     {
       "symbol": "ANNX",
@@ -154,32 +239,7 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "NAKA",
-      "companyName": "Kindly MD, Inc.",
-      "reportType": "AMC",
-      "windowStart": "16:00",
-      "windowEnd": "20:00",
-      "marketCap": 320980554,
-      "volume": 26516228,
-      "confidence": 90,
-      "sources": [
-        "Yahoo",
-        "Grok"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
+      "sentToTelegram": false
     }
   ]
 }

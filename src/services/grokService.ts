@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { GrokMessage } from '../types/grok.types';
 import logger, { stockLog } from '../utils/structureLogger';
-import { findIRCandidates, GROK_API_KEY, IRPortal, MAX_API_RETRIES, verifyIRWithFlash } from './openRouterService';
+import { findIRCandidates, FinnhubEarningsEntry, GROK_API_KEY, IRPortal, MAX_API_RETRIES, verifyIRWithFlash } from './openRouterService';
 import { getHistoricalPrices, calcRunUp } from "./stockService";
 import * as cheerio from 'cheerio';
 import { chromium } from 'playwright';
@@ -267,6 +267,32 @@ async function scrapeYahooEarnings(
   }
 }
 
+async function getFinnhubQuarter(
+  symbol: string, 
+): Promise<{ quarter: number; fiscalYear: number } | null> {
+  const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
+  if (!FINNHUB_API_KEY) return null;
+
+  try {
+    const response = await axios.get<{ earningsCalendar: FinnhubEarningsEntry[] }>(
+      `https://finnhub.io/api/v1/calendar/earnings`,
+      { params: { symbol, token: FINNHUB_API_KEY } }
+    );
+
+    const calendar = response.data?.earningsCalendar ?? [];
+    if (calendar.length === 0) return null;
+    const entry = calendar[0];
+    if (!entry?.quarter || !entry?.year) return null;
+
+
+    logger.info(`📅 Finnhub quarter [${symbol}]: Q${entry.quarter} FY${entry.year}`);
+    return { quarter: entry.quarter, fiscalYear: entry.year };
+
+  } catch (err: any) {
+    logger.warn(`⚠️ getFinnhubQuarter failed for ${symbol}: ${err.message}`);
+    return null;
+  }
+}
 // ─── Main export: grokScanEarningsToday ───────────────────────────────────
 export async function grokScanEarningsToday(date: string): Promise<Array<{
   ticker: string;
@@ -292,17 +318,33 @@ export async function grokScanEarningsToday(date: string): Promise<Array<{
     return [];
   }
 
-  const { quarter, fiscalYear } = deriveFiscalPeriod(date);
-  logger.info(`  ✅ ${scraped.length} unique stocks — Q${quarter} FY${fiscalYear}.`);
+  // ── שליפת רבעון אמיתי מ-Finnhub לכל טיקר ──────────────────
+  const quarterResults = await Promise.allSettled(
+    scraped.map(s => getFinnhubQuarter(s.ticker))
+  );
 
-  return scraped.map(s => ({
-    ticker:     s.ticker,
-    name:       s.name,
-    time:       s.time,
-    source:     'Yahoo Finance',
-    quarter,
-    fiscalYear
-  }));
+  const fallback = deriveFiscalPeriod(date);
+  logger.info(`  ✅ ${scraped.length} unique stocks — fallback Q${fallback.quarter} FY${fallback.fiscalYear}.`);
+
+  return scraped.map((s, i) => {
+    const result = quarterResults[i];
+    const period = (result.status === 'fulfilled' && result.value)
+      ? result.value
+      : fallback;
+
+    if (result.status !== 'fulfilled' || !result.value) {
+      logger.warn(`  ⚠️ ${s.ticker}: Finnhub quarter failed — using fallback Q${fallback.quarter} FY${fallback.fiscalYear}`);
+    }
+
+    return {
+      ticker:     s.ticker,
+      name:       s.name,
+      time:       s.time,
+      source:     'Yahoo Finance',
+      quarter:    period.quarter,
+      fiscalYear: period.fiscalYear
+    };
+  });
 }
 
 export async function callGrokAPI(

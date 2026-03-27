@@ -42,7 +42,8 @@ interface ExtendedStock extends Stock {
     quarter?: number;
     fiscalYear?: number;
 }
-interface FinnhubEarningsEntry {
+export interface FinnhubEarningsEntry {
+    date: string | number | Date;
     revenueEstimate: null;
     epsEstimate: number | null | undefined; 
     symbol: string; 
@@ -258,16 +259,8 @@ function delay(ms: number) { return new Promise(resolve => setTimeout(resolve, m
 // ============================================
 // 1. MORNING INTELLIGENCE
 // ============================================
-interface FinnhubEarningsEntry {
-    revenueEstimate: null;
-    epsEstimate: number | null | undefined; 
-    symbol: string; 
-    hour: string; 
-    quarter: number; 
-    year: number;
-    epsActual?: number | null|undefined;
-    revenueActual?: number | null;
-}
+
+
 
 async function checkFinnhubUpdates(symbol: string, date: string): Promise<boolean> {
     const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
