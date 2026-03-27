@@ -216,7 +216,7 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": true
     },
     {
       "symbol": "ANNX",
