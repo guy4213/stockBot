@@ -22,7 +22,8 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "CUK",
@@ -45,7 +46,8 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "TMC",
@@ -55,21 +57,21 @@
       "windowEnd": "09:30",
       "marketCap": 2891944134,
       "volume": 6955270,
-      "confidence": 100,
+      "confidence": 90,
       "sources": [
         "Yahoo",
-        "Grok",
-        "Finnhub"
+        "Grok"
       ],
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": -0.0606,
+        "epsEstimate": null,
         "revenueActual": null,
-        "revenueEstimate": 0
+        "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "PPTA",
@@ -92,7 +94,8 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "LGN",
@@ -102,19 +105,18 @@
       "windowEnd": "09:30",
       "marketCap": 2331646095,
       "volume": 1592072,
-      "confidence": 100,
+      "confidence": 90,
       "sources": [
         "Yahoo",
-        "Grok",
-        "Finnhub"
+        "Grok"
       ],
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
-        "epsActual": -0.01,
-        "epsEstimate": 0.0392,
-        "revenueActual": 737640000,
-        "revenueEstimate": 626510463
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
       },
       "sentToTelegram": true,
       "cachedIRPortal": {
@@ -146,7 +148,32 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "BAK",
+      "companyName": "Braskem S.A.",
+      "reportType": "BMO",
+      "windowStart": "07:00",
+      "windowEnd": "09:30",
+      "marketCap": 1004178806,
+      "volume": 1103839,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "SLI",
@@ -169,7 +196,8 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "KOPN",
@@ -179,21 +207,21 @@
       "windowEnd": "09:30",
       "marketCap": 555168460,
       "volume": 2201144,
-      "confidence": 100,
+      "confidence": 90,
       "sources": [
         "Yahoo",
-        "Grok",
-        "Finnhub"
+        "Grok"
       ],
       "quarter": 4,
       "fiscalYear": 2025,
       "finnhubData": {
         "epsActual": null,
-        "epsEstimate": -0.0143,
+        "epsEstimate": null,
         "revenueActual": null,
-        "revenueEstimate": 11165940
+        "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "AUTL",
@@ -216,7 +244,8 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": true
+      "sentToTelegram": true,
+      "cachedIRPortal": null
     },
     {
       "symbol": "ANNX",
@@ -239,7 +268,8 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     }
   ]
 }
