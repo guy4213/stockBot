@@ -38,9 +38,11 @@ export const MAX_CHECK_ATTEMPTS = 10; // Stop checking after 10 failed attempts
 export const WINDOW_BUFFER_HOURS = 3; // Check stocks ±3 hours from their window
 export const MIN_MARKET_CAP = 300_000_000; 
 export const MIN_VOLUME = 1_000_000; 
-interface ExtendedStock extends Stock {
-    quarter?: number;
-    fiscalYear?: number;
+
+interface UrlAttemptResult {
+  url: string;
+  jinaSucceeded: boolean;
+  rawContent: string | null; // ← שומרים את התוכן
 }
 export interface FinnhubEarningsEntry {
     date: string | number | Date;
@@ -1313,6 +1315,226 @@ Examples:
     return { epsActual: null, revenueActual: null };
   }
 }
+
+
+// ─────────────────────────────────────────────────────────────
+// פונקציית עזר — מזהה כל השדות החסרים מ-partialData
+// ─────────────────────────────────────────────────────────────
+function getMissingFields(partialData: Partial<any>, hasFinnhubData: boolean): string[] {
+  const missing: string[] = [];
+
+  if (!hasFinnhubData) {
+    if (partialData.eps?.actual == null)          missing.push('eps.actual');
+    if (partialData.eps?.estimate == null)        missing.push('eps.estimate');
+    if (partialData.eps?.beatPercent == null)     missing.push('eps.beatPercent');
+    if (partialData.revenue?.actual == null)      missing.push('revenue.actual');
+    if (partialData.revenue?.estimate == null)    missing.push('revenue.estimate');
+    if (partialData.revenue?.beatPercent == null) missing.push('revenue.beatPercent');
+  }
+
+  if (partialData.pdfMetrics?.epsYoY == null)             missing.push('pdfMetrics.epsYoY');
+  if (partialData.pdfMetrics?.revenueYoY == null)         missing.push('pdfMetrics.revenueYoY');
+  if (partialData.pdfMetrics?.netMargin == null)          missing.push('pdfMetrics.netMargin');
+  if (partialData.pdfMetrics?.marginMetric == null)       missing.push('pdfMetrics.marginMetric');
+  if (partialData.pdfMetrics?.cashFromOperations == null) missing.push('pdfMetrics.cashFromOperations');
+
+  if (!partialData.guidance?.status)   missing.push('guidance');
+  if (!partialData.sentiment?.overall) missing.push('sentiment');
+  if (!partialData.highlights?.length) missing.push('highlights');
+  if (!partialData.concerns?.length)   missing.push('concerns');
+  if (!partialData.companyType)        missing.push('companyType');
+
+  return missing;
+}
+
+// ─────────────────────────────────────────────────────────────
+// פונקציית עזר פנימית — קריאה אחת לגרוק
+// ─────────────────────────────────────────────────────────────
+async function _callGrokExtract(params: {
+  symbol: string;
+  companyName: string;
+  quarter: number;
+  year: number;
+  reportDate: string;
+  urls: string[];
+  rawContent: string | null;  // ← תוכן ישיר אם Jina הצליח
+  useWebSearch: boolean;
+  hasFinnhubData: boolean;
+  finnhubEpsEstimate: number | null;
+  finnhubRevEstimate: number | null;
+  epsActual: number | null;
+  epsEstimate: number | null;
+  epsBeatPercent: number;
+  revenueActual: number | null;
+  revenueEstimate: number | null;
+  revBeatPercent: number;
+  missingFields: string[];
+}): Promise<Partial<any>> {
+
+  const {
+    symbol, companyName, quarter, year, reportDate,
+    urls, rawContent, useWebSearch, hasFinnhubData,
+    finnhubEpsEstimate, finnhubRevEstimate,
+    epsActual, epsEstimate, epsBeatPercent,
+    revenueActual, revenueEstimate, revBeatPercent,
+    missingFields
+  } = params;
+
+  const needsEps         = missingFields.some(f => f.startsWith('eps'));
+  const needsRevenue     = missingFields.some(f => f.startsWith('revenue'));
+  const needsYoY         = missingFields.includes('pdfMetrics.epsYoY') || missingFields.includes('pdfMetrics.revenueYoY');
+  const needsMargins     = missingFields.includes('pdfMetrics.netMargin') || missingFields.includes('pdfMetrics.marginMetric');
+  const needsCashFlow    = missingFields.includes('pdfMetrics.cashFromOperations');
+  const needsGuidance    = missingFields.includes('guidance');
+  const needsSentiment   = missingFields.includes('sentiment');
+  const needsHighlights  = missingFields.includes('highlights');
+  const needsConcerns    = missingFields.includes('concerns');
+  const needsCompanyType = missingFields.includes('companyType');
+
+  // ← ההבדל המרכזי: content ישיר vs URL לחיפוש
+  const sourceSection = rawContent
+    ? `Read this earnings report content:\n\n${rawContent}`
+    : `Fetch and read the earnings report from one of these URLs:\n${urls.map((u, i) => `${i + 1}. ${u}`).join('\n')}`;
+
+  const prompt = `${sourceSection}
+
+You are a professional financial data analyst.
+Extract Q${quarter} ${year} quarterly earnings for ${companyName} (${symbol}), reported around ${reportDate}.
+
+RULES:
+- ONLY "Three months ended" / "Quarter ended" Q${quarter} ${year} data
+- NEVER Annual / TTM / YTD
+- EPS priority: Adjusted > Non-GAAP > Operating > Normalized > GAAP (DILUTED only)
+- All text fields → Hebrew
+${hasFinnhubData ? `
+ALREADY KNOWN — DO NOT RE-EXTRACT:
+  EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent?.toFixed(2)}%)
+  Revenue: ${revenueActual ? (revenueActual / 1e9).toFixed(2) + 'B' : 'N/A'} vs ${revenueEstimate ? (revenueEstimate / 1e9).toFixed(2) + 'B' : 'N/A'} (${revBeatPercent?.toFixed(2)}%)
+` : ''}
+
+EXTRACT ONLY THESE MISSING FIELDS:
+${missingFields.map(f => `• ${f}`).join('\n')}
+
+Return ONLY valid JSON, no markdown:
+{
+  ${needsCompanyType ? `"companyType": "REIT" | "Bank" | "Regular",` : ''}
+  ${needsEps ? `"eps": { "actual": <number>|null, "estimate": ${finnhubEpsEstimate ?? 'null'}, "beatPercent": <number>|null, "epsType": "<label>" },` : ''}
+  ${needsRevenue ? `"revenue": { "actual": <number in dollars>|null, "estimate": ${finnhubRevEstimate ?? 'null'}, "beatPercent": <number>|null, "revenueType": "net_interest_income"|"total_revenue" },` : ''}
+  ${needsGuidance ? `"guidance": { "status": "raised"|"lowered"|"maintained"|"unavailable", "details": "<Hebrew>"|null },` : ''}
+  ${needsSentiment ? `"sentiment": { "overall": "positive"|"neutral"|"negative", "reasoning": "<Hebrew>" },` : ''}
+  ${needsHighlights ? `"highlights": ["<Hebrew>", "<Hebrew>"],` : ''}
+  ${needsConcerns ? `"concerns": ["<Hebrew>", "<Hebrew>"],` : ''}
+  ${needsYoY || needsMargins || needsCashFlow ? `"pdfMetrics": {
+    ${needsYoY ? `"epsYoY": <number>|null, "revenueYoY": <number>|null,` : ''}
+    ${needsMargins ? `"netMargin": <number>|null, "marginMetric": { "type": "operating_margin"|"efficiency_ratio", "value": <number>, "formula": "<string>", "source": "Three Months Ended Q${quarter} ${year}", "verified": true }|null,` : ''}
+    ${needsCashFlow ? `"cashFromOperations": <number in millions>|null` : ''}
+  }` : ''}
+}`;
+
+  try {
+    const response = await callGrokAPI(
+      [{ role: 'user', content: prompt }],
+      0.1,
+      2000,
+      useWebSearch  // ← false כשיש rawContent, true כשJina נכשל
+    );
+
+    const clean = response.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    logger.info(`   📊 Extracted keys: ${Object.keys(parsed).join(', ')}`);
+    return parsed;
+
+  } catch (e: any) {
+    logger.error(`   ❌ _callGrokExtract failed: ${e.message}`);
+    return {};
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// FALLBACK A — Grok extraction
+// ─────────────────────────────────────────────────────────────
+async function grokExtractFromPdfDirect(
+  symbol: string,
+  companyName: string,
+  quarter: number,
+  year: number,
+  reportDate: string,
+  urlAttempts: UrlAttemptResult[],
+  partialData: Partial<any>,
+  hasFinnhubData: boolean,
+  finnhubEpsEstimate: number | null,
+  finnhubRevEstimate: number | null,
+  epsActual: number | null,
+  epsEstimate: number | null,
+  epsBeatPercent: number,
+  revenueActual: number | null,
+  revenueEstimate: number | null,
+  revBeatPercent: number
+): Promise<Partial<any>> {
+
+  const missingFields = getMissingFields(partialData, hasFinnhubData);
+  if (missingFields.length === 0) {
+    logger.info(`   ✅ [GrokFallback] Nothing missing — skipping`);
+    return {};
+  }
+
+  logger.info(` Missing fields: ${missingFields.join(', ')}`);
+
+  const baseParams = {
+    symbol, companyName, quarter, year, reportDate,
+    hasFinnhubData, finnhubEpsEstimate, finnhubRevEstimate,
+    epsActual, epsEstimate, epsBeatPercent,
+    revenueActual, revenueEstimate, revBeatPercent,
+    missingFields
+  };
+
+  // ─── ניסיון 1: Jina הצליח → content ישיר, ללא web search ───
+  const jinaSucceeded = urlAttempts.filter(r => r.jinaSucceeded);
+  if (jinaSucceeded.length > 0) {
+    logger.info(`\n   🔎 [GrokFallback] Attempt 1: direct content (no web search)`);
+
+    // מנסה URL אחד בכל פעם עד שמצליח
+    for (const attempt of jinaSucceeded) {
+      logger.info(`      Trying: ${attempt.url}`);
+
+      const result = await _callGrokExtract({
+        ...baseParams,
+        urls: [attempt.url],
+        rawContent: attempt.rawContent, // ← content ישיר
+        useWebSearch: false             // ← ללא חיפוש
+      });
+
+      if (Object.keys(result).length > 0) {
+        logger.info(`   ✅ [GrokFallback] Attempt 1 succeeded`);
+        return result;
+      }
+    }
+
+    logger.warn(`   ⚠️ [GrokFallback] Attempt 1 failed for all URLs — trying web search`);
+  }
+
+  // ─── ניסיון 2: Jina נכשל → URL בלבד, עם web search ───
+  const jinaFailed = urlAttempts.filter(r => !r.jinaSucceeded);
+  if (jinaFailed.length > 0) {
+    logger.info(`\n   🔎 [GrokFallback] Attempt 2: web search (Jina failed URLs)`);
+    jinaFailed.forEach((r, i) => logger.info(`      [${i + 1}] ${r.url}`));
+
+    const result = await _callGrokExtract({
+      ...baseParams,
+      urls: jinaFailed.map(r => r.url),
+      rawContent: null,  // ← אין content, גרוק פותח בעצמו
+      useWebSearch: true // ← עם web search
+    });
+
+    if (Object.keys(result).length > 0) {
+      logger.info(`   ✅ [GrokFallback] Attempt 2 succeeded`);
+      return result;
+    }
+  }
+
+  logger.error(`   ❌ [GrokFallback] All attempts failed`);
+  return {};
+}
 export async function fullExtraction(
   symbol: string,
   companyName: string,
@@ -1568,7 +1790,6 @@ try {
   // ============================================
   logger.info(`\n🤖 Step 3: Multi-source extraction with partial data accumulator...`);
 
-  // PartialData — מצטבר מכל המקורות, לא נדרס
   interface PartialAiData {
     eps?: { actual: number | null; estimate: number | null; beatPercent: number | null; epsType: string | null };
     revenue?: { actual: number | null; estimate: number | null; beatPercent: number | null; revenueType: string | null };
@@ -1633,83 +1854,101 @@ if (hasFinnhubData) {
         && data.revenue?.actual !== null && data.revenue?.actual !== undefined;
   }
 
-  // עוברים על כל URL candidate
-  for (let urlIdx = 0; urlIdx < pdfCandidates.length; urlIdx++) {
-    const candidateUrl = pdfCandidates[urlIdx];
-    logger.info(`\n   📄 Trying source [${urlIdx + 1}/${pdfCandidates.length}]: ${candidateUrl}`);
 
-    // Fetch content
-    let rawContent: string | null = null;
+const urlAttempts: UrlAttemptResult[] = [];
 
-    // retry רק על network errors — לא על content שגוי
-    for (let netAttempt = 1; netAttempt <= 2; netAttempt++) {
-      try {
-        rawContent = await fetchContentWithJina(candidateUrl);
-        break; // הצלחה — יוצאים מ-retry
-      } catch (netErr: any) {
-        logger.warn(`   ⚠️ Network error attempt ${netAttempt}: ${netErr.message}`);
-        if (netAttempt < 2) await new Promise(r => setTimeout(r, 2000));
-      }
-    }
+for (let urlIdx = 0; urlIdx < pdfCandidates.length; urlIdx++) {
+  const candidateUrl = pdfCandidates[urlIdx];
+  logger.info(`\n   📄 Trying source [${urlIdx + 1}/${pdfCandidates.length}]: ${candidateUrl}`);
 
-    if (rawContent === null) {
-      logger.warn(`   ❌ Source [${urlIdx + 1}] failed (short/blocked) — trying next`);
-      continue; // לא retry, עוברים ל-URL הבא
-    }
+  let rawContent: string | null = null;
 
-    // Gemini extraction
+  for (let netAttempt = 1; netAttempt <= 2; netAttempt++) {
     try {
+      rawContent = await fetchContentWithJina(candidateUrl);
+      break;
+    } catch (netErr: any) {
+      logger.warn(`   ⚠️ Network error attempt ${netAttempt}: ${netErr.message}`);
+      if (netAttempt < 2) await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  if (rawContent === null) {
+    logger.warn(`   ❌ Source [${urlIdx + 1}] Jina failed — marked for Grok web search fallback`);
+    urlAttempts.push({ url: candidateUrl, jinaSucceeded: false, rawContent: null });
+    continue;
+  }
+
+  urlAttempts.push({ url: candidateUrl, jinaSucceeded: true, rawContent }); // ← שומר content
+
+  try {
     const extractedData = await extractWithGemini(
       rawContent, symbol, companyName, q, yr,
       finnhubEpsEstimate, finnhubRevEstimate,
-      hasFinnhubData,
-      reportDate,
+      hasFinnhubData, reportDate,
       epsActual, epsEstimate, epsBeatPercent,
       revenueActual, revenueEstimate, revBeatPercent
     );
 
-      logger.info(`   📊 Source [${urlIdx + 1}] extracted:`);
-      logger.info(`      EPS actual: ${extractedData.eps?.actual ?? 'null'}`);
-      logger.info(`      Revenue actual: ${extractedData.revenue?.actual ?? 'null'}`);
+    logger.info(`   📊 Source [${urlIdx + 1}] extracted:`);
+    logger.info(`      EPS actual: ${extractedData.eps?.actual ?? 'null'}`);
+    logger.info(`      Revenue actual: ${extractedData.revenue?.actual ?? 'null'}`);
 
-      // מיזוג — לא דורסים שדות קיימים
-      mergePartial(partialData, { ...extractedData, pdfUrl: candidateUrl });
+    mergePartial(partialData, { ...extractedData, pdfUrl: candidateUrl });
 
-      logger.info(`   📦 Accumulated so far — EPS: ${partialData.eps?.actual ?? 'null'}, Revenue: ${partialData.revenue?.actual ?? 'null'}`);
+    logger.info(`   📦 Accumulated — EPS: ${partialData.eps?.actual ?? 'null'}, Revenue: ${partialData.revenue?.actual ?? 'null'}`);
 
-      if (isCriticalDataComplete(partialData)) {
-        logger.info(`   ✅ Critical data complete after source [${urlIdx + 1}]`);
-        break;
-      } else {
-        logger.info(`   ⚠️ Still missing critical data, trying next source...`);
-      }
-
-    } catch (extractErr: any) {
-      logger.warn(`   ❌ Gemini extraction failed for source [${urlIdx + 1}]: ${extractErr.message}`);
+    if (isCriticalDataComplete(partialData)) {
+      logger.info(`   ✅ Critical data complete after source [${urlIdx + 1}]`);
+      break;
+    } else {
+      logger.info(`   ⚠️ Still missing critical data, trying next source...`);
     }
+
+  } catch (extractErr: any) {
+    logger.warn(`   ❌ Gemini extraction failed for source [${urlIdx + 1}]: ${extractErr.message}`);
   }
+}
 
   // אם אחרי כל ה-URLs עדיין חסר EPS actual — Grok targeted search
-  if (!isCriticalDataComplete(partialData)) {
-    logger.warn(`\n   ⚠️ EPS actual still missing after ${pdfCandidates.length} sources — calling Grok targeted search`);
-    
-    const missingFields: string[] = [];
-    if (partialData.eps?.actual === null || partialData.eps?.actual === undefined) missingFields.push('EPS actual');
-    if (partialData.revenue?.actual === null || partialData.revenue?.actual === undefined) missingFields.push('Revenue actual');
+if (!isCriticalDataComplete(partialData)) {
+  logger.warn(`\n   🔄 FALLBACK A: Grok extraction`);
 
-    const grokResult = await grokSearchMissingFields(symbol, companyName, q, yr, reportDate, missingFields);
+  const grokResult = await grokExtractFromPdfDirect(
+    symbol, companyName, q, yr, reportDate,
+    urlAttempts,        // ← מכיל url + jinaSucceeded + rawContent
+    partialData,
+    hasFinnhubData,
+    finnhubEpsEstimate, finnhubRevEstimate,
+    epsActual, epsEstimate, epsBeatPercent,
+    revenueActual, revenueEstimate, revBeatPercent
+  );
 
-if (grokResult.epsActual != null && (partialData.eps?.actual == null)) {
-      if (!partialData.eps) partialData.eps = { actual: null, estimate: null, beatPercent: null, epsType: null };
-      partialData.eps.actual = grokResult.epsActual;
-      logger.info(`   ✅ Grok filled EPS actual: ${grokResult.epsActual}`);
-    }
-    if (grokResult.revenueActual !== null && partialData.revenue?.actual === null) {
-      if (!partialData.revenue) partialData.revenue = { actual: null, estimate: null, beatPercent: null, revenueType: null };
-      partialData.revenue.actual = grokResult.revenueActual;
-      logger.info(`   ✅ Grok filled Revenue actual: ${grokResult.revenueActual}`);
-    }
+  mergePartial(partialData, grokResult);
+  logger.info(`   📦 After FALLBACK A — EPS: ${partialData.eps?.actual ?? 'null'}, Rev: ${partialData.revenue?.actual ?? 'null'}`);
+}
+
+// FALLBACK B — Grok web search (רק אם עדיין חסר EPS/Revenue)
+if (!isCriticalDataComplete(partialData)) {
+  const missingFields: string[] = [];
+  if (partialData.eps?.actual == null)     missingFields.push('EPS actual');
+  if (partialData.revenue?.actual == null) missingFields.push('Revenue actual');
+
+  logger.warn(`\n   🔎 FALLBACK B: Still missing [${missingFields.join(', ')}] — Grok web search`);
+
+  const grokResult = await grokSearchMissingFields(symbol, companyName, q, yr, reportDate, missingFields);
+
+  if (grokResult.epsActual != null && partialData.eps?.actual == null) {
+    if (!partialData.eps) partialData.eps = { actual: null, estimate: null, beatPercent: null, epsType: null };
+    partialData.eps.actual = grokResult.epsActual;
+    logger.info(`   ✅ [FALLBACK B] Filled EPS: ${grokResult.epsActual}`);
   }
+  if (grokResult.revenueActual != null && partialData.revenue?.actual == null) {
+    if (!partialData.revenue) partialData.revenue = { actual: null, estimate: null, beatPercent: null, revenueType: null };
+    partialData.revenue.actual = grokResult.revenueActual;
+    logger.info(`   ✅ [FALLBACK B] Filled Revenue: ${grokResult.revenueActual}`);
+  }
+}
 
   // בדיקה סופית
   if (!isCriticalDataComplete(partialData)) {

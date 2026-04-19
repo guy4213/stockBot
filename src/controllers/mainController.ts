@@ -67,9 +67,7 @@ export const runDailyCheck = async (req?: Request, res?: Response) => {
       if (res) return res.status(200).json({ message: "No stocks today" });
       return;
     }
-
-    // 2. שלב שני: הפעלת המעבד החכם
-    
+   
     // אם כבר יש מעבד רץ, נעצור אותו
     if (activeProcessor) {
         logger.info("🔄 Stopping previous processor instance...");

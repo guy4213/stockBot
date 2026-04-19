@@ -32,7 +32,6 @@ app.use(errorHandler);
   try {
     logger.info("🚀 Server starting... Initializing caches.");
     await ensureCacheIsUpdated();
-    
     logger.info("🔄 Triggering initial daily check...");
     await runDailyCheck();
   } catch (error) {

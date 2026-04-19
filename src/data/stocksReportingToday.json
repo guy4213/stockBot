@@ -1,14 +1,38 @@
 {
-  "date": "2026-03-27",
+  "date": "2026-03-31",
   "stocks": [
     {
-      "symbol": "CCL",
-      "companyName": "Carnival Corporation & plc",
+      "symbol": "NKE",
+      "companyName": "NIKE, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 95934753283,
+      "volume": 13848797,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 3,
+      "fiscalYear": 2026,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "MKC",
+      "companyName": "McCormick & Company, Incorporated",
       "reportType": "BMO",
       "windowStart": "07:00",
       "windowEnd": "09:30",
-      "marketCap": 37049204217,
-      "volume": 23335140,
+      "marketCap": 17213411716,
+      "volume": 2349512,
       "confidence": 90,
       "sources": [
         "Yahoo",
@@ -22,48 +46,30 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
+      "sentToTelegram": true,
+      "cachedIRPortal": {
+        "url": "https://ir.mccormick.com/",
+        "domain": "ir.mccormick.com",
+        "confidence": 0.95,
+        "reason": "The URL 'https://ir.mccormick.com/' has 'ir' in the subdomain, the title is 'Investors | McCormick & Company, Inc.', and the snippet indicates it contains investor-related information such as reports, presentations, and financial statements. This strongly suggests it is the official investor relations website.",
+        "verifiedAt": "2026-03-31T12:55:46.802Z"
+      }
     },
     {
-      "symbol": "CUK",
-      "companyName": "Carnival Corporation & plc",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 33566576034,
-      "volume": 1595892,
-      "confidence": 90,
-      "sources": [
-        "Yahoo",
-        "Grok"
-      ],
-      "quarter": 1,
-      "fiscalYear": 2026,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "TMC",
-      "companyName": "TMC the metals company Inc.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 2891944134,
-      "volume": 6955270,
+      "symbol": "NCNO",
+      "companyName": "nCino, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 3103834496,
+      "volume": 2652651,
       "confidence": 90,
       "sources": [
         "Yahoo",
         "Grok"
       ],
       "quarter": 4,
-      "fiscalYear": 2025,
+      "fiscalYear": 2026,
       "finnhubData": {
         "epsActual": null,
         "epsEstimate": null,
@@ -98,13 +104,13 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "LGN",
-      "companyName": "Legence Corp. Class A Common stock",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 2331646095,
-      "volume": 1592072,
+      "symbol": "BTBT",
+      "companyName": "Bit Digital, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 1137871836,
+      "volume": 38075116,
       "confidence": 90,
       "sources": [
         "Yahoo",
@@ -118,14 +124,8 @@
         "revenueActual": null,
         "revenueEstimate": null
       },
-      "sentToTelegram": true,
-      "cachedIRPortal": {
-        "url": "https://investors.wearelegence.com/",
-        "domain": "investors.wearelegence.com",
-        "confidence": 0.9,
-        "reason": "The URL clearly indicates an investor relations website for Legence, and the title and snippet confirm this.",
-        "verifiedAt": "2026-03-27T12:08:59.802Z"
-      }
+      "sentToTelegram": false,
+      "cachedIRPortal": null
     },
     {
       "symbol": "NAK",
@@ -152,109 +152,133 @@
       "cachedIRPortal": null
     },
     {
-      "symbol": "BAK",
-      "companyName": "Braskem S.A.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 1004178806,
-      "volume": 1103839,
-      "confidence": 90,
-      "sources": [
-        "Yahoo",
-        "Grok"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "SLI",
-      "companyName": "Standard Lithium Ltd.",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 777508070,
-      "volume": 3443828,
-      "confidence": 90,
-      "sources": [
-        "Yahoo",
-        "Grok"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "KOPN",
-      "companyName": "Kopin Corporation",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 555168460,
-      "volume": 2201144,
-      "confidence": 90,
-      "sources": [
-        "Yahoo",
-        "Grok"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": false,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "AUTL",
-      "companyName": "Autolus Therapeutics plc",
-      "reportType": "BMO",
-      "windowStart": "07:00",
-      "windowEnd": "09:30",
-      "marketCap": 401851963,
-      "volume": 2061687,
-      "confidence": 90,
-      "sources": [
-        "Yahoo",
-        "Grok"
-      ],
-      "quarter": 4,
-      "fiscalYear": 2025,
-      "finnhubData": {
-        "epsActual": null,
-        "epsEstimate": null,
-        "revenueActual": null,
-        "revenueEstimate": null
-      },
-      "sentToTelegram": true,
-      "cachedIRPortal": null
-    },
-    {
-      "symbol": "ANNX",
-      "companyName": "Annexon, Inc.",
+      "symbol": "ASPI",
+      "companyName": "ASP Isotopes Inc. Common Stock",
       "reportType": "AMC",
       "windowStart": "16:00",
       "windowEnd": "20:00",
-      "marketCap": 321955365,
-      "volume": 1726102,
+      "marketCap": 989438953,
+      "volume": 7012326,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "LAES",
+      "companyName": "SEALSQ Corp",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 903808076,
+      "volume": 37734514,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "POET",
+      "companyName": "POET Technologies Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 578795514,
+      "volume": 8909713,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "PLAY",
+      "companyName": "Dave & Buster's Entertainment, Inc.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 521038472,
+      "volume": 2196627,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "OMER",
+      "companyName": "Omeros Corporation",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 511779812,
+      "volume": 1036869,
+      "confidence": 90,
+      "sources": [
+        "Yahoo",
+        "Grok"
+      ],
+      "quarter": 4,
+      "fiscalYear": 2025,
+      "finnhubData": {
+        "epsActual": null,
+        "epsEstimate": null,
+        "revenueActual": null,
+        "revenueEstimate": null
+      },
+      "sentToTelegram": false,
+      "cachedIRPortal": null
+    },
+    {
+      "symbol": "NNDM",
+      "companyName": "Nano Dimension Ltd.",
+      "reportType": "AMC",
+      "windowStart": "16:00",
+      "windowEnd": "20:00",
+      "marketCap": 382040593,
+      "volume": 10267989,
       "confidence": 90,
       "sources": [
         "Yahoo",
