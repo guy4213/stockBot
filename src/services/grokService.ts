@@ -464,25 +464,9 @@ export async function callGrokAPI(
         throw new Error("Content not found in response structure");
       }
       
-      // ✅ FIX: Convert content to string if it's not already
-      let contentStr: string|null=null;
-      
-      // First, check if content is a JSON string that needs parsing
-      if (typeof content === 'string' && (content.startsWith('[{') || content.startsWith('{'))) {
-        try {
-          const parsed = JSON.parse(content);
-          content = parsed; // Use parsed version
-          logger.info(`   ℹ️  Content was JSON string, parsed it`);
-        } catch (e) {
-          // Not valid JSON, use as-is
-          contentStr = content;
-          logger.info(`   ℹ️  Content is string (not JSON)`);
-        }
-      }
-      
-      if (typeof content === 'string' && contentStr) {
-        // Already set above
-      } else if (typeof content === 'string') {
+      let contentStr: string | null = null;
+
+      if (typeof content === 'string') {
         contentStr = content;
       } else if (Array.isArray(content)) {
         // Handle array of content blocks (Grok Responses API format)
