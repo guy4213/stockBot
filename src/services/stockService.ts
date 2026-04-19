@@ -44,8 +44,9 @@ export interface SectorHeatRawData {
   peersAvgChange: number | null;
   sectorName: string | null;
   exchange: string | null;
+  etfFlowSignal: "positive" | "negative" | "neutral";
+  newsMomentumSignal: "positive" | "negative" | "neutral";
 }
-
 
 export type EarningRes = {
   symbol: string;
@@ -56,16 +57,6 @@ export type EarningRes = {
   revenueEstimated: number | null;
   lastUpdated: string;
 };
-
-
-export interface SectorHeatRawData {
-  sectorChange: number | null;
-  peersAvgChange: number | null;
-  sectorName: string | null;
-  exchange: string | null;
-  etfFlowSignal: "positive" | "negative" | "neutral";
-  newsMomentumSignal: "positive" | "negative" | "neutral";
-}
 
 export interface HistoricalPrice {
   date: string;
@@ -298,18 +289,12 @@ export async function getFinnhubEpsEstimates(symbol: string): Promise<{
       return { epsEstimateNow: null, epsEstimate60dAgo: null };
     }
 
-    // Finnhub מחזיר מערך של תחזיות לרבעונים עתידיים
-    // הרבעון הקרוב ביותר = [0]
+    // Finnhub returns future quarterly estimates — index [0] is nearest quarter
     const nextQuarter = res.data.data[0];
     const epsEstimateNow = nextQuarter?.epsAvg ?? null;
 
-    // תחזית לפני 60 יום — Finnhub מחזיר epsAvg, epsLow, epsHigh
-    // אין endpoint היסטורי ישיר — משתמשים ב-numberAnalyst לזיהוי שינוי
-    // אם יש רק תחזית אחת, מחזירים null עבור epsEstimate60dAgo
-    // fallback: אם numberAnalysts ירד/עלה, זה אינדיקטור לרוויזיה
-    const epsEstimate60dAgo = nextQuarter?.epsAvgLast ?? null; // שדה לא סטנדרטי — ראה הערה
-
-    return { epsEstimateNow, epsEstimate60dAgo };
+    // Finnhub has no historical estimate endpoint; 60-day-ago estimate unavailable
+    return { epsEstimateNow, epsEstimate60dAgo: null };
   } catch (e: any) {
     logger.warn(`   ⚠️ getFinnhubEpsEstimates failed for ${symbol}: ${e.message}`);
     return { epsEstimateNow: null, epsEstimate60dAgo: null };
@@ -801,7 +786,7 @@ export const getEarnings = async (symbol: string, limit: number = 20) => {
 
 export const getCashFlow = async (symbol: string,limit:number=1) => {
   try {
-    const url = `${stableBaseUrl}/cash-flow-statement?symbol=${symbol}&period=quarter&limit=$${limit}&apikey=${apiKey}`;
+    const url = `${stableBaseUrl}/cash-flow-statement?symbol=${symbol}&period=quarter&limit=${limit}&apikey=${apiKey}`;
     const response = await axios.get(url);
     return response.data;
   } catch (e) {

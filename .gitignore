@@ -23,3 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Screenshots and debug artifacts
+*.png
+*.jpg
+*.jpeg
+
+# Notes
+notes.js
