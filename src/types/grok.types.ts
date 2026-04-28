@@ -121,8 +121,8 @@ export interface EPS {
 }
 
 export interface Revenue {
-  actual: number ;
-  estimate: number ;
+  actual: number | null;
+  estimate: number | null;
   beat: number | null;
   beatPercent: number | null;
   source: string;

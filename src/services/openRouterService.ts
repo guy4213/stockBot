@@ -2104,7 +2104,7 @@ if (missingForWeb.length > 0) {
   logger.info(`${"=".repeat(70)}`);
   logger.info(`📄 PDF: ${validatedPdfUrl}`);
   logger.info(`💰 EPS: ${data.eps.actual} vs ${data.eps.estimate} (${data.eps.beatPercent?.toFixed(2) ?? 'N/A'}%)`);
-  logger.info(`💵 Revenue: $${(data.revenue.actual / 1e9).toFixed(2)}B`);
+  logger.info(`💵 Revenue: $${data.revenue.actual != null ? (data.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'}`);
   logger.info(`${"=".repeat(70)}\n`);
 
   return data;
@@ -2277,7 +2277,7 @@ if (missingForWeb.length > 0) {
 
 // ביצועים:
 // EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
-// הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
+// הכנסות: $${fullData.revenue.actual != null ? (fullData.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'} (צפי: $${fullData.revenue.estimate != null ? (fullData.revenue.estimate / 1e9).toFixed(2) + 'B' : 'N/A'}) | סטייה: ${revenueDeviation}%
 // תחזית (Guidance): ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
 // FCF YoY: ${fcfYoy}
 // צמיחה YoY: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth}
@@ -2319,7 +2319,7 @@ if (missingForWeb.length > 0) {
 
 // 📊 תוצאות רבעוניות:
 // • EPS: $${fullData.eps.actual} (צפי: $${fullData.eps.estimate})
-// • הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B)
+// • הכנסות: $${fullData.revenue.actual != null ? (fullData.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'} (צפי: $${fullData.revenue.estimate != null ? (fullData.revenue.estimate / 1e9).toFixed(2) + 'B' : 'N/A'})
 
 // 📈 צמיחה שנתית (YoY):
 // • EPS[%]: ${yoyEpsGrowth}
@@ -2429,7 +2429,7 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   const epsDeviation = fullData.eps.estimate && fullData.eps.actual !== null
     ? (((fullData.eps.actual - fullData.eps.estimate) / Math.abs(fullData.eps.estimate)) * 100).toFixed(2)
     : "N/A";
-  const revenueDeviation = fullData.revenue.estimate
+  const revenueDeviation = fullData.revenue.estimate != null && fullData.revenue.actual != null
     ? (((fullData.revenue.actual - fullData.revenue.estimate) / fullData.revenue.estimate) * 100).toFixed(2)
     : "N/A";
 
@@ -2507,7 +2507,7 @@ SCORE < +5 = ❌ NO TRADE חובה
 שווי שוק: ${marketCapStr}
 נפח: ${volumeStr}
 EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
-הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B)
+הכנסות: $${fullData.revenue.actual != null ? (fullData.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'} (צפי: $${fullData.revenue.estimate != null ? (fullData.revenue.estimate / 1e9).toFixed(2) + 'B' : 'N/A'})
 Guidance: ${fullData.guidance.status}
 FCF YoY: ${fcfYoy}
 YoY EPS: ${yoyEpsGrowth} | Revenue: ${yoyRevGrowth}
@@ -2528,7 +2528,7 @@ Market Truth Override: ${marketTruth.triggered ? "כן — " + marketTruth.reaso
 
 📊 תוצאות רבעוניות:
 • EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate})
-• הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B)
+• הכנסות: $${fullData.revenue.actual != null ? (fullData.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'} (צפי: $${fullData.revenue.estimate != null ? (fullData.revenue.estimate / 1e9).toFixed(2) + 'B' : 'N/A'})
 
 📈 צמיחה שנתית (YoY):
 • EPS: ${yoyEpsGrowth}
