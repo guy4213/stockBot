@@ -1933,6 +1933,30 @@ for (let urlIdx = 0; urlIdx < pdfCandidates.length; urlIdx++) {
 
   } catch (extractErr: any) {
     logger.warn(`   ❌ Gemini extraction failed for source [${urlIdx + 1}]: ${extractErr.message}`);
+
+    // If Gemini failed due to OpenRouter rate limit, immediately try Grok with the same content
+    if (extractErr.message?.includes('OpenRouter API Failed') && rawContent) {
+      logger.warn(`   🔄 OpenRouter failure — switching to Grok for source [${urlIdx + 1}]...`);
+      try {
+        const grokData = await _callGrokExtract({
+          symbol, companyName, quarter: q, year: yr, reportDate,
+          urls: [candidateUrl], rawContent,
+          useWebSearch: false,
+          hasFinnhubData, finnhubEpsEstimate, finnhubRevEstimate,
+          epsActual, epsEstimate, epsBeatPercent,
+          revenueActual, revenueEstimate, revBeatPercent,
+          missingFields: getMissingFields(partialData, hasFinnhubData)
+        });
+        mergePartial(partialData, { ...grokData, pdfUrl: candidateUrl });
+        logger.info(`   📦 After Grok fallback — EPS: ${partialData.eps?.actual ?? 'null'}, Revenue: ${partialData.revenue?.actual ?? 'null'}`);
+        if (isCriticalDataComplete(partialData)) {
+          logger.info(`   ✅ Grok filled critical data — stopping source loop`);
+          break;
+        }
+      } catch (grokErr: any) {
+        logger.warn(`   ❌ Grok fallback also failed: ${grokErr.message}`);
+      }
+    }
   }
 }
 
@@ -2671,9 +2695,9 @@ export class StockProcessor {
     
     if (reportType === "AMC") {
       // AMC: 4:00 PM - 8:00 PM
-      const checkStart = 16 * 60; // 960
-      const checkEnd = 20 * 60; // 1200
-      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+      // const checkStart = 16 * 60; // 960
+      // const checkEnd = 20 * 60; // 1200
+      // return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
     }
     
     return true;
