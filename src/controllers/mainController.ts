@@ -10,8 +10,13 @@ export let activeProcessor: StockProcessor | null = null;
 
 export const runDailyCheck = async (req?: Request, res?: Response) => {
   try {
-    const today = new Date().toISOString().split("T")[0];
+    const yesterday = new Date();
+
+    const today1 = new Date();
     const filePath = path.join(__dirname, "../data/stocksReportingToday.json");
+    yesterday.setDate(today1.getDate() - 1);
+
+    const today = yesterday.toISOString().split("T")[0];
 
     logger.info(`🚀 Starting Daily Check Process for ${today}`);
 

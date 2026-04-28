@@ -142,48 +142,66 @@ function saveIrPortalToDisk(symbol: string, irPortal: any) {
 
 export async function callOpenRouterAPI(
   messages: any[],
-  model: string = "google/gemini-2.0-flash-001", // Default to cheap/fast
+  model: string = "google/gemini-2.0-flash-001",
   temperature: number = 0.1,
   maxTokens: number = 100
 ): Promise<string> {
   const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
   if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is missing");
 
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 4;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await axios.post(
         "https://openrouter.ai/api/v1/chat/completions",
         {
-          model: model,
-          messages: messages,
-          temperature: temperature,
+          model,
+          messages,
+          temperature,
           max_tokens: maxTokens,
-          // Optional: headers for OpenRouter rankings
-          // "HTTP-Referer": "https://your-site.com", 
-          // "X-Title": "EarningsBot"
         },
         {
           headers: {
             "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
             "Content-Type": "application/json"
           },
-          timeout: 10000 // Fast timeout for validation
+          timeout: 30000 // ⬆️ הועלה מ-10s ל-30s
         }
       );
 
       return response.data.choices[0].message.content;
 
     } catch (error: any) {
-      const isRateLimit = error.response?.status === 429;
-      if (attempt === MAX_RETRIES || !isRateLimit) {
+      const status = error.response?.status;
+
+      // ✅ כל השגיאות הזמניות שמצדיקות retry
+      const isRetryable =
+        status === 429 ||          // rate limit
+        status === 502 ||          // bad gateway
+        status === 503 ||          // service unavailable
+        status === 504 ||          // gateway timeout ← זו הבעיה שלך
+        error.code === "ECONNABORTED" || // axios timeout
+        error.code === "ECONNRESET";     // connection reset
+
+      if (attempt === MAX_RETRIES || !isRetryable) {
         throw new Error(`OpenRouter API Failed: ${error.message}`);
       }
-      // Simple backoff for rate limits
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+
+      // backoff: 2s, 4s, 6s (ולא 1s שהיה קודם)
+      const delay = status === 429
+        ? 10000 * attempt   // rate limit — קצת יותר מהיר
+        : 2000 * attempt;  // שגיאות תשתית — יותר זמן
+
+      if (status === 429) {
+        console.warn(`[OpenRouter] 429 body: ${JSON.stringify(error.response?.data)}`);
+        console.warn(`[OpenRouter] 429 headers: retry-after=${error.response?.headers?.['retry-after']}, x-ratelimit-limit-requests=${error.response?.headers?.['x-ratelimit-limit-requests']}, x-ratelimit-remaining-requests=${error.response?.headers?.['x-ratelimit-remaining-requests']}`);
+      }
+      console.warn(`[OpenRouter] attempt ${attempt} failed (${status ?? error.code}), retrying in ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
+
   throw new Error("OpenRouter max retries exceeded");
 }
 
@@ -225,16 +243,15 @@ export async function verifyIRWithFlash(
   `;
 
   try {
-    // שולחים ל-Gemini Flash דרך OpenRouter
-    // אין כאן חיפוש אינטרנטי! רק ניתוח טקסט!
-    const res = await callOpenRouterAPI(
-      [{ role: "user", content: prompt }],
-      "google/gemini-2.0-flash-001",
-      0.1,
-      200
+     const res =  await callGrokAPI(
+      [
+        { role: "user", content: prompt }
+      ],
+      0.3,   // temperature
+      200,  // maxTokens
+      false  // enableWebSearch
     );
 
-    // ניקוי ה-JSON
     const cleanJson = res.replace(/```json/g, '').replace(/```/g, '').trim();
     const result = JSON.parse(cleanJson);
 
@@ -1227,7 +1244,7 @@ ${rawContent}
           { role: "system", content: "You are a financial data extraction API. Return ONLY valid JSON with no markdown." },
           { role: "user",   content: supplementPrompt }
         ],
-        "google/gemini-2.0-flash-001",
+        "google/gemini-2.0-flash-lite-001",
         0.05,
         3000
       );
@@ -1260,6 +1277,11 @@ ${rawContent}
       
     
     catch (parseError: any) {
+      // API-level failures (rate limit, auth, network) should not be retried here —
+      // callOpenRouterAPI already exhausted its own retries.
+      if (parseError.message?.includes('OpenRouter API Failed')) {
+        throw parseError;
+      }
       lastError = parseError.message;
       if (attempt < MAX_RETRIES) {
         await new Promise(resolve => setTimeout(resolve, 5000));
@@ -2074,13 +2096,310 @@ if (!isCriticalDataComplete(partialData)) {
 
 
 //using gemini-open router  
+
+
+
+// export async function finalAnalysis(fullData: FullExtractionResponse, miraScore: MiraScore): Promise<FinalAnalysis> {
+//   logger.info(`📝 Generating Final Telegram Report for ${fullData.symbol} using Gemini Flash...`);
+
+//   const currentPrice = fullData.marketData?.price || 0;
+//   const preFilter = fullData.hardPreFilter;
+
+  
+
+//   if (!currentPrice || currentPrice === 0) {
+//     logger.warn(`⚠️ No valid price for ${fullData.symbol} - cannot calculate trade parameters`);
+//   } else {
+//     logger.info(`💰 Using price $${currentPrice} for ${fullData.symbol} trade calculations`);
+//   }
+  
+//   const tradeParams = calculateTradeParams(currentPrice, miraScore.classification);
+
+//   // חישובי עזר (נשאר אותו דבר)
+//   const epsDeviation = fullData.eps.estimate && fullData.eps.actual !== null
+//     ? (((fullData.eps.actual - fullData.eps.estimate) / Math.abs(fullData.eps.estimate)) * 100).toFixed(2)
+//     : "N/A";
+//   const revenueDeviation = fullData.revenue.estimate
+//     ? (((fullData.revenue.actual - fullData.revenue.estimate) / fullData.revenue.estimate) * 100).toFixed(2)
+//     : "N/A";
+
+//   const yoyEpsGrowth = fullData.yoyGrowth?.epsChange !== null && fullData.yoyGrowth?.epsChange !== undefined
+//     ? `${fullData.yoyGrowth.epsChange.toFixed(2)}%`
+//     : "לא זמין";
+//   const yoyRevGrowth = fullData.yoyGrowth?.revenueChange !== null && fullData.yoyGrowth?.revenueChange !== undefined
+//     ? `${fullData.yoyGrowth.revenueChange.toFixed(2)}%${fullData.yoyGrowth.revenueChangeType === "TTM" ? " (TTM)" : ""}`
+//     : "לא זמין";
+//   const netMargin = fullData.margins?.netMargin !== null && fullData.margins?.netMargin !== undefined
+//     ? `${fullData.margins.netMargin.toFixed(2)}%`
+//     : "לא זמין";
+//   const opMarginLabel = fullData.margins?.isEfficiencyRatio ? 'Efficiency' : 'Operating';
+//   const opMargin = fullData.margins?.operatingMargin !== null && fullData.margins?.operatingMargin !== undefined
+//     ? `${fullData.margins.operatingMargin.toFixed(2)}%`
+//     : "לא זמין";
+
+//   const fcfStatus = fullData.cashFlow?.freeCashFlow !== null && fullData.cashFlow?.freeCashFlow !== undefined
+//     ? `$${(fullData.cashFlow.freeCashFlow / 1e6).toFixed(2)}M`
+//     : 'לא זמין';
+//   const fcfTrend = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
+//     ? ` (${fullData.cashFlow.yoyChange > 0 ? '+' : ''}${fullData.cashFlow.yoyChange.toFixed(1)}% YoY)`
+//     : '';
+
+
+// const marketCapStr = fullData.marketData?.marketCap
+//   ? fullData.marketData.marketCap >= 1e9
+//     ? `$${(fullData.marketData.marketCap / 1e9).toFixed(1)}B`
+//     : `$${(fullData.marketData.marketCap / 1e6).toFixed(0)}M`
+//   : "לא זמין";
+
+// const volumeStr = fullData.marketData?.volume
+//   ? `${(fullData.marketData.volume / 1e6).toFixed(1)}M`
+//   : "לא זמין";
+
+// const fcfYoy = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
+//   ? `${fullData.cashFlow.yoyChange > 0 ? "+" : ""}${fullData.cashFlow.yoyChange.toFixed(1)}%`
+//   : "לא זמין";
+
+// // % מהכניסה עבור יעד 1, יעד 2, סטופ
+// const pctFromEntry = (price: number, entry: number) =>
+//   entry > 0 ? `${((price - entry) / entry * 100) > 0 ? "+" : ""}${((price - entry) / entry * 100).toFixed(1)}%` : "";
+
+// const target1Pct = tradeParams.hasPriceData ? pctFromEntry(tradeParams.targetPrice, tradeParams.entryPrice) : "";
+// const target2Pct = tradeParams.hasPriceData && tradeParams.targetPrice2 ? pctFromEntry(tradeParams.targetPrice2, tradeParams.entryPrice) : "";
+// const stopPct    = tradeParams.hasPriceData ? pctFromEntry(tradeParams.stopPrice, tradeParams.entryPrice) : "";
+
+
+
+
+// const preFilterSection = preFilter
+//   ? `
+// 🔍 ניתוח שוק (Pre-Filter):
+// - Run-Up 30 יום: ${preFilter.runUp30d !== null ? (preFilter.runUp30d >= 0 ? "+" : "") + preFilter.runUp30d.toFixed(1) + "%" : "לא זמין"}
+// - Run-Up 60 יום: ${preFilter.runUp60d !== null ? (preFilter.runUp60d >= 0 ? "+" : "") + preFilter.runUp60d.toFixed(1) + "%" : "לא זמין"}
+// - תגובת AH: ${preFilter.ahChangePercent !== null ? (preFilter.ahChangePercent >= 0 ? "+" : "") + preFilter.ahChangePercent.toFixed(1) + "%" : "לא זמין"}
+// - נפח יחסי: ${preFilter.volumeRatio !== null ? "×" + preFilter.volumeRatio.toFixed(1) : "לא זמין"}
+// - Multiple Expansion: ${preFilter.peExpansion !== null ? (preFilter.peExpansion >= 0 ? "+" : "") + preFilter.peExpansion.toFixed(1) + "%" : "לא זמין"}
+// - EPS Revision: ${preFilter.epsRevision !== null ? (preFilter.epsRevision >= 0 ? "+" : "") + preFilter.epsRevision.toFixed(1) + "%" : "לא זמין"}
+// - Priced-In: ${preFilter.pricedInClassification === "Fully" ? "🔴 מתומחר במלואו" : preFilter.pricedInClassification === "Partially" ? "🟡 מתומחר חלקית" : preFilter.pricedInClassification === "Not" ? "🟢 לא מתומחר" : "לא זמין"} ${preFilter.pricedInScore !== null ? `(${preFilter.pricedInScore > 0 ? "+" : ""}${preFilter.pricedInScore})` : ""}
+// ${preFilter.signals.filter(s => s.includes("🚨") || s.includes("🔴") || s.includes("🟡")).join("\n")}`
+//   : "";
+
+// const sectorHeatLine = preFilter?.sectorHeatClassification
+//   ? `- מצב סקטור: ${
+//       preFilter.sectorHeatClassification === "Hot"    ? "🔥 חם"
+//       : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
+//       : "⚪ ניטרלי"
+//     } (${preFilter.sectorName ?? "?"})
+//   • סקטור: ${preFilter.sectorChange !== null ? (preFilter.sectorChange >= 0 ? "+" : "") + preFilter.sectorChange.toFixed(1) + "%" : "N/A"}
+//   • Peers: ${preFilter.peersAvgChange !== null ? (preFilter.peersAvgChange >= 0 ? "+" : "") + preFilter.peersAvgChange.toFixed(1) + "%" : "N/A"}
+//   • ETF Flow: ${preFilter.etfFlowSignal === "positive" ? "📈 חיובי" : preFilter.etfFlowSignal === "negative" ? "📉 שלילי" : "➡️ ניטרלי"}
+//   • News: ${preFilter.newsMomentumSignal === "positive" ? "📰 חיובי" : preFilter.newsMomentumSignal === "negative" ? "📰 שלילי" : "📰 ניטרלי"}${preFilter.sectorLongBlocked ? "\n  ⛔ חסם LONG" : ""}`
+//   : "- מצב סקטור: לא זמין";
+
+// const intradayPotential = calcIntradayPotential(fullData);
+// fullData.intradayPotential = intradayPotential;
+
+
+// const intradayLine = `⚡ פוטנציאל יומי: ${
+//   intradayPotential.classification === "High"   ? "🟢 גבוה"
+//   : intradayPotential.classification === "Medium" ? "🟡 בינוני"
+//   : "🔴 נמוך — אין המלצת Day Trade"
+// } (${intradayPotential.score}/6)`;
+
+
+// const trendPotential = calcTrendPotential(fullData);
+// fullData.trendPotential = trendPotential;
+
+// const trendLine = `📈 פוטנציאל מגמה: ${
+//   trendPotential.classification === "High"   ? "🟢 גבוה"
+//   : trendPotential.classification === "Medium" ? "🟡 בינוני"
+//   : "🔴 נמוך — אין המלצת Swing"
+// } (${trendPotential.score}/7)`;
+   
+// const supercycle = await calcSupercycle(fullData);
+// fullData.supercycle = supercycle;
+
+// const supercycleLine = `🌀 Supercycle: ${
+//   supercycle.confirmed ? "✅ מאושר"  : "❌ לא מאושר"
+// } (${supercycle.score}/5)`;
+
+
+
+// const marketTruth = calcMarketTruthOverride(fullData, tradeParams.direction);
+// fullData.marketTruthOverride = marketTruth;
+
+// // אם מופעל — דורס את כיוון המסחר ל-NO TRADE
+// const finalDirection = marketTruth.triggered
+//   ? "NO TRADE ❌"
+//   : tradeParams.direction;
+
+// const marketTruthLine = marketTruth.triggered
+//   ? `⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}`
+//   : null;
+
+// if (miraScore.totalScore >= 9 && supercycle.confirmed) {
+//   miraScore.classification = "EXTREME";
+// }
+
+// const sectorHeatShort = preFilter?.sectorHeatClassification
+//   ? preFilter.sectorHeatClassification === "Hot"  ? "🔥 חם"
+//   : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
+//   : "⚪ ניטרלי"
+//   : "לא זמין";
+
+  
+// const prompt = `
+// אתה Mira, אנליסט פיננסי AI מומחה.
+// צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
+
+// 📊 נתונים גולמיים:
+// סימול: ${fullData.symbol}
+// שם: ${fullData.companyName}
+// תאריך: ${fullData.reportDate}
+// מחיר נוכחי: $${currentPrice}
+// שווי שוק: ${marketCapStr}
+// נפח מסחר: ${volumeStr}
+
+// ביצועים:
+// EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
+// הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
+// תחזית (Guidance): ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
+// FCF YoY: ${fcfYoy}
+// צמיחה YoY: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth}
+// סקטור: ${sectorHeatShort}
+// פוטנציאל יומי: ${intradayPotential.classification} (${intradayPotential.score}/6)
+// פוטנציאל מגמה: ${trendPotential.classification} (${trendPotential.score}/7)
+// ניקוד מערכת: ${miraScore.totalScore}
+// סיווג מערכת: ${miraScore.classification}
+// ${marketTruth.triggered ? `⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}` : ''}
+
+// הוראות סיווג קריטיות:
+// - אם הסיווג "POSITIVE" → כיוון חייב להיות "LONG 🟢"
+// - אם הסיווג "STRONG"   → כיוון חייב להיות "LONG 🟢🟢"
+// - אם הסיווג "EXTREME"  → כיוון חייב להיות "LONG 🟢🟢🟢"
+// - אם הסיווג "NEGATIVE" → כיוון חייב להיות "SHORT 🔴"
+// - אם הסיווג "NEUTRAL"  → כיוון "NEUTRAL ⚪"
+// - אם Market Truth Override מופעל → כיוון חייב להיות "NO TRADE ❌"
+
+// המלצת מסחר (מחושבת):
+// כיוון: ${finalDirection}
+// ${tradeParams.hasPriceData ? `
+// כניסה: $${tradeParams.entryPrice}
+// יעד 1: $${tradeParams.targetPrice} (${target1Pct})
+// יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
+// סטופ: $${tradeParams.stopPrice} (${stopPct})
+// סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}
+// ` : 'מחיר לא זמין'}
+
+// המשימה שלך:
+// כתוב את ההודעה הסופית לטלגרם בדיוק בפורמט הבא — לא להוסיף שדות שלא מופיעים כאן.
+
+// פורמט נדרש:
+
+// 📌 סימול: ${fullData.symbol}
+// 🏢 חברה: ${fullData.companyName}
+// 💰 מחיר: $${currentPrice}
+// 📊 שווי שוק: ${marketCapStr}
+// 📈 נפח מסחר: ${volumeStr}
+
+// 📊 תוצאות רבעוניות:
+// • EPS: $${fullData.eps.actual} (צפי: $${fullData.eps.estimate})
+// • הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B)
+
+// 📈 צמיחה שנתית (YoY):
+// • EPS[%]: ${yoyEpsGrowth}
+// • הכנסות[%]: ${yoyRevGrowth}
+// • FCF[%]: ${fcfYoy}
+
+// 🔥 מצב סקטור: ${sectorHeatShort}
+// ⚡ פוטנציאל יומי: ${
+//   intradayPotential.classification === "High"   ? "🟢 גבוה"
+//   : intradayPotential.classification === "Medium" ? "🟡 בינוני"
+//   : "🔴 נמוך"
+// } (${intradayPotential.score}/6)
+// 📈 פוטנציאל מגמה: ${
+//   trendPotential.classification === "High"   ? "🟢 גבוה"
+//   : trendPotential.classification === "Medium" ? "🟡 בינוני"
+//   : "🔴 נמוך"
+// } (${trendPotential.score}/7)
+// 📊 ניקוד: ${miraScore.totalScore}
+// 🎯 סיווג: ${
+//   miraScore.classification === 'EXTREME'  ? '🟢🟢🟢 Extreme' :
+//   miraScore.classification === 'STRONG'   ? '🟢🟢 Strong'    :
+//   miraScore.classification === 'POSITIVE' ? '🟢 Positive'    :
+//   miraScore.classification === 'NEGATIVE' ? '❌ Negative'    :
+//   '❌ Neutral'
+// }
+// ${miraScore.classification === 'STRONG'
+//   ? `🌀 Supercycle: ${supercycle.confirmed ? "✅ מאושר" : `❌ לא מאושר (${supercycle.score}/5) — חסר ${5 - supercycle.score} תנאים ל-Extreme`}`
+//   : ''}
+// ${marketTruth.triggered ? `\n⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}` : ''}
+
+// 💼 תוכנית מסחר:
+// כיוון: ${finalDirection}
+// ${tradeParams.hasPriceData && finalDirection !== "NO TRADE ❌" ? `כניסה: $${tradeParams.entryPrice}
+// יעד 1: $${tradeParams.targetPrice} (${target1Pct})
+// יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
+// סטופ: $${tradeParams.stopPrice} (${stopPct})
+// סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}` : finalDirection === "NO TRADE ❌" ? `⚠️ אין כניסה — השוק דוחה את הדוח` : `⚠️ אין מחיר`}
+
+// 📝 סיכום:
+// [כתוב משפט אחד-שניים חדים בעברית. הסבר את הסיווג ואת כיוון המסחר על בסיס הנתונים.]
+// `;
+//   try {
+//     // 🔥 השינוי הגדול: שימוש ב-Gemini Flash דרך OpenRouter
+//     const telegramMessage = await callOpenRouterAPI(
+//       [
+//         { 
+//           role: "system", 
+//           content: "אתה עיתונאי פיננסי בכיר. אתה כותב בעברית בלבד. אתה מדויק, תמציתי ומקצועי." 
+//         }, 
+//         { 
+//           role: "user", 
+//           content: prompt 
+//         }
+//       ],
+//       "google/gemini-2.0-flash-001", // המודל הזול והמהיר
+//       0.4,  // טמפרטורה בינונית ליצירתיות בטקסט
+//       1000  // מספיק טוקנים לפלט
+//     );
+
+//     logger.info(`📝 Generated Message Preview: ${telegramMessage.substring(0, 50)}...`);
+
+//     if (!telegramMessage || telegramMessage.trim().length === 0) {
+//       throw new Error("AI returned empty summary");
+//     }
+
+//     const trimmedMessage = telegramMessage.trim();
+
+//     // בדיקת תקינות (Safety Check)
+//     if (miraScore.classification === 'POSITIVE' && !trimmedMessage.includes('LONG')) {
+//        logger.warn(`⚠️ Warning: POSITIVE score but AI text missed 'LONG' keyword.`);
+//     }
+
+//     return {
+//       symbol: fullData.symbol,
+//       date: fullData.reportDate,
+//       summary: trimmedMessage,
+//       miraScore,
+//       tradingRecommendation: tradeParams,
+//       aiReasoning: "Generated by Gemini Flash",
+//       conclusion: "Report Generated",
+//       dataSources: ["Finnhub", "FMP", "Gemini"],
+//       confidence: 100
+//     };
+
+//   } catch (e) {
+//     logger.error(`❌ Error generating Final Analysis:`, e);
+//     throw e;
+//   }
+// }
+
+
 export async function finalAnalysis(fullData: FullExtractionResponse, miraScore: MiraScore): Promise<FinalAnalysis> {
   logger.info(`📝 Generating Final Telegram Report for ${fullData.symbol} using Gemini Flash...`);
 
   const currentPrice = fullData.marketData?.price || 0;
   const preFilter = fullData.hardPreFilter;
-
-  
 
   if (!currentPrice || currentPrice === 0) {
     logger.warn(`⚠️ No valid price for ${fullData.symbol} - cannot calculate trade parameters`);
@@ -2090,7 +2409,7 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   
   const tradeParams = calculateTradeParams(currentPrice, miraScore.classification);
 
-  // חישובי עזר (נשאר אותו דבר)
+  // חישובי עזר (נשארו בדיוק כמו שהיו)
   const epsDeviation = fullData.eps.estimate && fullData.eps.actual !== null
     ? (((fullData.eps.actual - fullData.eps.estimate) / Math.abs(fullData.eps.estimate)) * 100).toFixed(2)
     : "N/A";
@@ -2104,171 +2423,86 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   const yoyRevGrowth = fullData.yoyGrowth?.revenueChange !== null && fullData.yoyGrowth?.revenueChange !== undefined
     ? `${fullData.yoyGrowth.revenueChange.toFixed(2)}%${fullData.yoyGrowth.revenueChangeType === "TTM" ? " (TTM)" : ""}`
     : "לא זמין";
-  const netMargin = fullData.margins?.netMargin !== null && fullData.margins?.netMargin !== undefined
-    ? `${fullData.margins.netMargin.toFixed(2)}%`
-    : "לא זמין";
-  const opMarginLabel = fullData.margins?.isEfficiencyRatio ? 'Efficiency' : 'Operating';
-  const opMargin = fullData.margins?.operatingMargin !== null && fullData.margins?.operatingMargin !== undefined
-    ? `${fullData.margins.operatingMargin.toFixed(2)}%`
+
+  const fcfYoy = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
+    ? `${fullData.cashFlow.yoyChange > 0 ? "+" : ""}${fullData.cashFlow.yoyChange.toFixed(1)}%`
     : "לא זמין";
 
-  const fcfStatus = fullData.cashFlow?.freeCashFlow !== null && fullData.cashFlow?.freeCashFlow !== undefined
-    ? `$${(fullData.cashFlow.freeCashFlow / 1e6).toFixed(2)}M`
-    : 'לא זמין';
-  const fcfTrend = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
-    ? ` (${fullData.cashFlow.yoyChange > 0 ? '+' : ''}${fullData.cashFlow.yoyChange.toFixed(1)}% YoY)`
-    : '';
+  const marketCapStr = fullData.marketData?.marketCap
+    ? fullData.marketData.marketCap >= 1e9
+      ? `$${(fullData.marketData.marketCap / 1e9).toFixed(1)}B`
+      : `$${(fullData.marketData.marketCap / 1e6).toFixed(0)}M`
+    : "לא זמין";
 
+  const volumeStr = fullData.marketData?.volume
+    ? `${(fullData.marketData.volume / 1e6).toFixed(1)}M`
+    : "לא זמין";
 
-const marketCapStr = fullData.marketData?.marketCap
-  ? fullData.marketData.marketCap >= 1e9
-    ? `$${(fullData.marketData.marketCap / 1e9).toFixed(1)}B`
-    : `$${(fullData.marketData.marketCap / 1e6).toFixed(0)}M`
-  : "לא זמין";
+  const sectorHeatShort = preFilter?.sectorHeatClassification
+    ? preFilter.sectorHeatClassification === "Hot" ? "🔥 חם"
+    : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
+    : "⚪ ניטרלי"
+    : "לא זמין";
 
-const volumeStr = fullData.marketData?.volume
-  ? `${(fullData.marketData.volume / 1e6).toFixed(1)}M`
-  : "לא זמין";
+  const intradayPotential = calcIntradayPotential(fullData);
+  fullData.intradayPotential = intradayPotential;
 
-const fcfYoy = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
-  ? `${fullData.cashFlow.yoyChange > 0 ? "+" : ""}${fullData.cashFlow.yoyChange.toFixed(1)}%`
-  : "לא זמין";
+  const trendPotential = calcTrendPotential(fullData);
+  fullData.trendPotential = trendPotential;
 
-// % מהכניסה עבור יעד 1, יעד 2, סטופ
-const pctFromEntry = (price: number, entry: number) =>
-  entry > 0 ? `${((price - entry) / entry * 100) > 0 ? "+" : ""}${((price - entry) / entry * 100).toFixed(1)}%` : "";
+  const supercycle = await calcSupercycle(fullData);
+  fullData.supercycle = supercycle;
 
-const target1Pct = tradeParams.hasPriceData ? pctFromEntry(tradeParams.targetPrice, tradeParams.entryPrice) : "";
-const target2Pct = tradeParams.hasPriceData && tradeParams.targetPrice2 ? pctFromEntry(tradeParams.targetPrice2, tradeParams.entryPrice) : "";
-const stopPct    = tradeParams.hasPriceData ? pctFromEntry(tradeParams.stopPrice, tradeParams.entryPrice) : "";
+  const marketTruth = calcMarketTruthOverride(fullData, tradeParams.direction);
+  fullData.marketTruthOverride = marketTruth;
 
+  const finalDirection = marketTruth.triggered
+    ? "NO TRADE ❌"
+    : tradeParams.direction;
 
+  if (miraScore.totalScore >= 9 && supercycle.confirmed) {
+    miraScore.classification = "EXTREME";
+  }
 
+  // ======================== PROMPT חדש של Mira 3.1 ========================
+  const prompt = `
+אתה Mira 3.1 — Dual Reaction Earnings Engine Extreme Filter.
+אתה חייב לפעול **בדיוק** לפי הכללים של Mira 3.1 (אל תמציא כללים חדשים).
 
-const preFilterSection = preFilter
-  ? `
-🔍 ניתוח שוק (Pre-Filter):
-- Run-Up 30 יום: ${preFilter.runUp30d !== null ? (preFilter.runUp30d >= 0 ? "+" : "") + preFilter.runUp30d.toFixed(1) + "%" : "לא זמין"}
-- Run-Up 60 יום: ${preFilter.runUp60d !== null ? (preFilter.runUp60d >= 0 ? "+" : "") + preFilter.runUp60d.toFixed(1) + "%" : "לא זמין"}
-- תגובת AH: ${preFilter.ahChangePercent !== null ? (preFilter.ahChangePercent >= 0 ? "+" : "") + preFilter.ahChangePercent.toFixed(1) + "%" : "לא זמין"}
-- נפח יחסי: ${preFilter.volumeRatio !== null ? "×" + preFilter.volumeRatio.toFixed(1) : "לא זמין"}
-- Multiple Expansion: ${preFilter.peExpansion !== null ? (preFilter.peExpansion >= 0 ? "+" : "") + preFilter.peExpansion.toFixed(1) + "%" : "לא זמין"}
-- EPS Revision: ${preFilter.epsRevision !== null ? (preFilter.epsRevision >= 0 ? "+" : "") + preFilter.epsRevision.toFixed(1) + "%" : "לא זמין"}
-- Priced-In: ${preFilter.pricedInClassification === "Fully" ? "🔴 מתומחר במלואו" : preFilter.pricedInClassification === "Partially" ? "🟡 מתומחר חלקית" : preFilter.pricedInClassification === "Not" ? "🟢 לא מתומחר" : "לא זמין"} ${preFilter.pricedInScore !== null ? `(${preFilter.pricedInScore > 0 ? "+" : ""}${preFilter.pricedInScore})` : ""}
-${preFilter.signals.filter(s => s.includes("🚨") || s.includes("🔴") || s.includes("🟡")).join("\n")}`
-  : "";
+שלב 0 – Hard Pre-Filter (חסם מוחלט):
+- Guidance לא Raised / Collapsed
+- EPS או Revenue Miss מהותי
+- Beat קטן לאחר Run-Up גדול (>15% ב-30 יום)
+- תגובת AH מנוגדת לדוח (>4%)
+- דוח טוב + מחיר נופל = Market Negative Signal
+- BV ירידה + widening spreads (ב-mREIT) = חסם
 
-const sectorHeatLine = preFilter?.sectorHeatClassification
-  ? `- מצב סקטור: ${
-      preFilter.sectorHeatClassification === "Hot"    ? "🔥 חם"
-      : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
-      : "⚪ ניטרלי"
-    } (${preFilter.sectorName ?? "?"})
-  • סקטור: ${preFilter.sectorChange !== null ? (preFilter.sectorChange >= 0 ? "+" : "") + preFilter.sectorChange.toFixed(1) + "%" : "N/A"}
-  • Peers: ${preFilter.peersAvgChange !== null ? (preFilter.peersAvgChange >= 0 ? "+" : "") + preFilter.peersAvgChange.toFixed(1) + "%" : "N/A"}
-  • ETF Flow: ${preFilter.etfFlowSignal === "positive" ? "📈 חיובי" : preFilter.etfFlowSignal === "negative" ? "📉 שלילי" : "➡️ ניטרלי"}
-  • News: ${preFilter.newsMomentumSignal === "positive" ? "📰 חיובי" : preFilter.newsMomentumSignal === "negative" ? "📰 שלילי" : "📰 ניטרלי"}${preFilter.sectorLongBlocked ? "\n  ⛔ חסם LONG" : ""}`
-  : "- מצב סקטור: לא זמין";
+שלב 1-2 – Dynamic Reaction Score:
+EPS Beat/Miss ±2.5 | Revenue ±1.5 | YoY EPS ±1.5 | YoY Revenue ±1 | FCF ±1.5 | Margins ±1 | Guidance ±2 | Management Tone ±0.5 | Sector Heat ±1 | Pre-Earnings Pricing ±1.5 | Market Reaction ±2
+SCORE < +5 = ❌ NO TRADE חובה
 
-const intradayPotential = calcIntradayPotential(fullData);
-fullData.intradayPotential = intradayPotential;
+שלב 3-8 – Priced-In, Sector Heat, Intraday/Trend Potential, Supercycle, Market Truth Override
+רק 🟢🟢🟢 Extreme = Trade Approved. כל השאר = ❌ NO TRADE
 
-
-const intradayLine = `⚡ פוטנציאל יומי: ${
-  intradayPotential.classification === "High"   ? "🟢 גבוה"
-  : intradayPotential.classification === "Medium" ? "🟡 בינוני"
-  : "🔴 נמוך — אין המלצת Day Trade"
-} (${intradayPotential.score}/6)`;
-
-
-const trendPotential = calcTrendPotential(fullData);
-fullData.trendPotential = trendPotential;
-
-const trendLine = `📈 פוטנציאל מגמה: ${
-  trendPotential.classification === "High"   ? "🟢 גבוה"
-  : trendPotential.classification === "Medium" ? "🟡 בינוני"
-  : "🔴 נמוך — אין המלצת Swing"
-} (${trendPotential.score}/7)`;
-   
-const supercycle = await calcSupercycle(fullData);
-fullData.supercycle = supercycle;
-
-const supercycleLine = `🌀 Supercycle: ${
-  supercycle.confirmed ? "✅ מאושר"  : "❌ לא מאושר"
-} (${supercycle.score}/5)`;
-
-
-
-const marketTruth = calcMarketTruthOverride(fullData, tradeParams.direction);
-fullData.marketTruthOverride = marketTruth;
-
-// אם מופעל — דורס את כיוון המסחר ל-NO TRADE
-const finalDirection = marketTruth.triggered
-  ? "NO TRADE ❌"
-  : tradeParams.direction;
-
-const marketTruthLine = marketTruth.triggered
-  ? `⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}`
-  : null;
-
-if (miraScore.totalScore >= 9 && supercycle.confirmed) {
-  miraScore.classification = "EXTREME";
-}
-
-const sectorHeatShort = preFilter?.sectorHeatClassification
-  ? preFilter.sectorHeatClassification === "Hot"  ? "🔥 חם"
-  : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
-  : "⚪ ניטרלי"
-  : "לא זמין";
-
-  
-const prompt = `
-אתה Mira, אנליסט פיננסי AI מומחה.
-צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
-
-📊 נתונים גולמיים:
+נתונים גולמיים:
 סימול: ${fullData.symbol}
 שם: ${fullData.companyName}
-תאריך: ${fullData.reportDate}
-מחיר נוכחי: $${currentPrice}
+מחיר: $${currentPrice}
 שווי שוק: ${marketCapStr}
-נפח מסחר: ${volumeStr}
-
-ביצועים:
+נפח: ${volumeStr}
 EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
-הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
-תחזית (Guidance): ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
+הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B)
+Guidance: ${fullData.guidance.status}
 FCF YoY: ${fcfYoy}
-צמיחה YoY: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth}
+YoY EPS: ${yoyEpsGrowth} | Revenue: ${yoyRevGrowth}
 סקטור: ${sectorHeatShort}
 פוטנציאל יומי: ${intradayPotential.classification} (${intradayPotential.score}/6)
 פוטנציאל מגמה: ${trendPotential.classification} (${trendPotential.score}/7)
-ניקוד מערכת: ${miraScore.totalScore}
-סיווג מערכת: ${miraScore.classification}
-${marketTruth.triggered ? `⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}` : ''}
+Supercycle: ${supercycle.confirmed ? "✅ 5/5" : `❌ ${supercycle.score}/5`}
+Market Truth Override: ${marketTruth.triggered ? "כן — " + marketTruth.reason : "לא"}
+ניקוד Mira: ${miraScore.totalScore}
 
-הוראות סיווג קריטיות:
-- אם הסיווג "POSITIVE" → כיוון חייב להיות "LONG 🟢"
-- אם הסיווג "STRONG"   → כיוון חייב להיות "LONG 🟢🟢"
-- אם הסיווג "EXTREME"  → כיוון חייב להיות "LONG 🟢🟢🟢"
-- אם הסיווג "NEGATIVE" → כיוון חייב להיות "SHORT 🔴"
-- אם הסיווג "NEUTRAL"  → כיוון "NEUTRAL ⚪"
-- אם Market Truth Override מופעל → כיוון חייב להיות "NO TRADE ❌"
-
-המלצת מסחר (מחושבת):
-כיוון: ${finalDirection}
-${tradeParams.hasPriceData ? `
-כניסה: $${tradeParams.entryPrice}
-יעד 1: $${tradeParams.targetPrice} (${target1Pct})
-יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
-סטופ: $${tradeParams.stopPrice} (${stopPct})
-סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}
-` : 'מחיר לא זמין'}
-
-המשימה שלך:
-כתוב את ההודעה הסופית לטלגרם בדיוק בפורמט הבא — לא להוסיף שדות שלא מופיעים כאן.
-
-פורמט נדרש:
+פורמט הפלט חייב להיות **בדיוק** כזה (אל תוסיף/תשנה שום שורה):
 
 📌 סימול: ${fullData.symbol}
 🏢 חברה: ${fullData.companyName}
@@ -2277,79 +2511,54 @@ ${tradeParams.hasPriceData ? `
 📈 נפח מסחר: ${volumeStr}
 
 📊 תוצאות רבעוניות:
-• EPS: $${fullData.eps.actual} (צפי: $${fullData.eps.estimate})
+• EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate})
 • הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B)
 
 📈 צמיחה שנתית (YoY):
-• EPS[%]: ${yoyEpsGrowth}
-• הכנסות[%]: ${yoyRevGrowth}
-• FCF[%]: ${fcfYoy}
+• EPS: ${yoyEpsGrowth}
+• הכנסות: ${yoyRevGrowth}
+• FCF: ${fcfYoy}
 
 🔥 מצב סקטור: ${sectorHeatShort}
 ⚡ פוטנציאל יומי: ${
-  intradayPotential.classification === "High"   ? "🟢 גבוה"
-  : intradayPotential.classification === "Medium" ? "🟡 בינוני"
-  : "🔴 נמוך"
-} (${intradayPotential.score}/6)
+  intradayPotential.classification === "High" ? "גבוה" : intradayPotential.classification === "Medium" ? "בינוני" : "נמוך"
+} 
 📈 פוטנציאל מגמה: ${
-  trendPotential.classification === "High"   ? "🟢 גבוה"
-  : trendPotential.classification === "Medium" ? "🟡 בינוני"
-  : "🔴 נמוך"
-} (${trendPotential.score}/7)
+  trendPotential.classification === "High" ? "גבוה" : trendPotential.classification === "Medium" ? "בינוני" : "נמוך"
+}
 📊 ניקוד: ${miraScore.totalScore}
 🎯 סיווג: ${
-  miraScore.classification === 'EXTREME'  ? '🟢🟢🟢 Extreme' :
-  miraScore.classification === 'STRONG'   ? '🟢🟢 Strong'    :
-  miraScore.classification === 'POSITIVE' ? '🟢 Positive'    :
-  miraScore.classification === 'NEGATIVE' ? '❌ Negative'    :
-  '❌ Neutral'
+  miraScore.classification === 'EXTREME' ? '🟢🟢🟢 Extreme' :
+  miraScore.classification === 'STRONG' ? '🟢🟢 Strong' :
+  miraScore.classification === 'POSITIVE' ? '🟢 Positive' :
+  miraScore.classification === 'NEGATIVE' ? '❌ Negative' : '❌ Neutral'
 }
-${miraScore.classification === 'STRONG'
-  ? `🌀 Supercycle: ${supercycle.confirmed ? "✅ מאושר" : `❌ לא מאושר (${supercycle.score}/5) — חסר ${5 - supercycle.score} תנאים ל-Extreme`}`
-  : ''}
-${marketTruth.triggered ? `\n⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}` : ''}
 
 💼 תוכנית מסחר:
 כיוון: ${finalDirection}
 ${tradeParams.hasPriceData && finalDirection !== "NO TRADE ❌" ? `כניסה: $${tradeParams.entryPrice}
-יעד 1: $${tradeParams.targetPrice} (${target1Pct})
-יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
-סטופ: $${tradeParams.stopPrice} (${stopPct})
-סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}` : finalDirection === "NO TRADE ❌" ? `⚠️ אין כניסה — השוק דוחה את הדוח` : `⚠️ אין מחיר`}
+יעד 1: $${tradeParams.targetPrice} (${tradeParams.hasPriceData ? ((tradeParams.targetPrice - tradeParams.entryPrice) / tradeParams.entryPrice * 100).toFixed(1) + '%' : ''})
+יעד 2: $${tradeParams.targetPrice2 || '—'} 
+סטופ: $${tradeParams.stopPrice} 
+סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}` : '⚠️ NO TRADE — אין כניסה'}
 
-📝 סיכום:
-[כתוב משפט אחד-שניים חדים בעברית. הסבר את הסיווג ואת כיוון המסחר על בסיס הנתונים.]
+📝 סיכום: “[תגובה קצרה וחדה בעברית — הסבר למה כן/לא]”
+
+**Mira 3.1 Verdict:** [הסבר קצר מדוע Trade Approved או NO TRADE]
 `;
+
   try {
-    // 🔥 השינוי הגדול: שימוש ב-Gemini Flash דרך OpenRouter
-    const telegramMessage = await callOpenRouterAPI(
+    const telegramMessage = await callGrokAPI(
       [
-        { 
-          role: "system", 
-          content: "אתה עיתונאי פיננסי בכיר. אתה כותב בעברית בלבד. אתה מדויק, תמציתי ומקצועי." 
-        }, 
-        { 
-          role: "user", 
-          content: prompt 
-        }
+        { role: "system", content: "אתה Mira 3.1. אתה כותב בעברית בלבד, מדויק, תמציתי ומקצועי. אתה מקפיד על הפורמט בדיוק." },
+        { role: "user", content: prompt }
       ],
-      "google/gemini-2.0-flash-001", // המודל הזול והמהיר
-      0.4,  // טמפרטורה בינונית ליצירתיות בטקסט
-      1000  // מספיק טוקנים לפלט
+      0.3,   // temperature
+      1200,  // maxTokens
+      false  // enableWebSearch
     );
 
-    logger.info(`📝 Generated Message Preview: ${telegramMessage.substring(0, 50)}...`);
-
-    if (!telegramMessage || telegramMessage.trim().length === 0) {
-      throw new Error("AI returned empty summary");
-    }
-
     const trimmedMessage = telegramMessage.trim();
-
-    // בדיקת תקינות (Safety Check)
-    if (miraScore.classification === 'POSITIVE' && !trimmedMessage.includes('LONG')) {
-       logger.warn(`⚠️ Warning: POSITIVE score but AI text missed 'LONG' keyword.`);
-    }
 
     return {
       symbol: fullData.symbol,
@@ -2357,7 +2566,7 @@ ${tradeParams.hasPriceData && finalDirection !== "NO TRADE ❌" ? `כניסה: $
       summary: trimmedMessage,
       miraScore,
       tradingRecommendation: tradeParams,
-      aiReasoning: "Generated by Gemini Flash",
+      aiReasoning: "Generated by Mira 3.1 Prompt",
       conclusion: "Report Generated",
       dataSources: ["Finnhub", "FMP", "Gemini"],
       confidence: 100
@@ -2368,6 +2577,8 @@ ${tradeParams.hasPriceData && finalDirection !== "NO TRADE ❌" ? `כניסה: $
     throw e;
   }
 }
+
+
 // ============================================
 // STOCK PROCESSOR (ENGINE) - OPTIMIZED VERSION
 // ============================================
@@ -2434,11 +2645,12 @@ export class StockProcessor {
     
     if (reportType === "BMO") {
       // BMO: 6:00 AM - 9:30 AM
-      const checkStart = 6 * 60; // 360
-      // const checkEnd = 9 * 60 + 30; // 570
-      const checkEnd = 10*60; // 570
+      // const checkStart = 6 * 60; // 360
+      // // const checkEnd = 9 * 60 + 30; // 570
+      // const checkEnd = 10*60; // 570
 
-      return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+      // return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+      return true;
     }
     
     if (reportType === "AMC") {
