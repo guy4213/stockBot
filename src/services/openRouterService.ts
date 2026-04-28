@@ -1298,25 +1298,26 @@ async function grokSearchMissingFields(
   year: number,
   reportDate: string,
   missingFields: string[]
-): Promise<{ epsActual: number | null; revenueActual: number | null }> {
-  
+): Promise<{ epsActual: number | null; revenueActual: number | null; epsEstimate: number | null; revenueEstimate: number | null }> {
+
   logger.info(`\n🔎 [GrokTargeted] Searching for missing fields: ${missingFields.join(', ')}`);
 
-  const prompt = `Find the ACTUAL reported earnings numbers for ${companyName} (${symbol}) Q${quarter} ${year} (reported around ${reportDate}).
+  const needsActuals   = missingFields.some(f => f.includes('actual'));
+  const needsEstimates = missingFields.some(f => f.includes('estimate'));
 
-I need these specific values: ${missingFields.join(', ')}
+  const prompt = `Search the web to find the following missing data for ${companyName} (${symbol}) Q${quarter} ${year} earnings (reported around ${reportDate}).
 
-Search financial news sites, earnings announcements, and press releases.
+MISSING DATA NEEDED:
+${needsActuals   ? `- ACTUAL reported EPS (non-GAAP / adjusted preferred, diluted per share)\n- ACTUAL reported Revenue (total, in dollars, not billions)` : ''}
+${needsEstimates ? `- Wall Street analyst CONSENSUS ESTIMATE for EPS (before the report)\n- Wall Street analyst CONSENSUS ESTIMATE for Revenue (before the report)` : ''}
 
-Return ONLY this JSON:
+Search financial sites: Yahoo Finance, Zacks, Seeking Alpha, FactSet, Benzinga, Bloomberg, earnings press releases.
+
+Return ONLY this JSON, no markdown:
 {
-  "epsActual": number_or_null,
-  "revenueActual": number_in_dollars_or_null
-}
-
-Examples:
-{ "epsActual": 1.23, "revenueActual": 4500000000 }
-{ "epsActual": -0.45, "revenueActual": null }`;
+  ${needsActuals   ? `"epsActual": <number or null>,\n  "revenueActual": <number in full dollars or null>,` : '"epsActual": null,\n  "revenueActual": null,'}
+  ${needsEstimates ? `"epsEstimate": <number or null>,\n  "revenueEstimate": <number in full dollars or null>` : '"epsEstimate": null,\n  "revenueEstimate": null'}
+}`;
 
   try {
     const response = await callGrokAPI(
@@ -1328,13 +1329,16 @@ Examples:
 
     const clean = response.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
+    logger.info(`   ✅ [GrokTargeted] epsActual=${parsed.epsActual}, revActual=${parsed.revenueActual}, epsEst=${parsed.epsEstimate}, revEst=${parsed.revenueEstimate}`);
     return {
-      epsActual: parsed.epsActual ?? null,
-      revenueActual: parsed.revenueActual ?? null
+      epsActual:       parsed.epsActual       ?? null,
+      revenueActual:   parsed.revenueActual   ?? null,
+      epsEstimate:     parsed.epsEstimate     ?? null,
+      revenueEstimate: parsed.revenueEstimate ?? null,
     };
   } catch (e: any) {
     logger.error(`❌ [GrokTargeted] Failed: ${e.message}`);
-    return { epsActual: null, revenueActual: null };
+    return { epsActual: null, revenueActual: null, epsEstimate: null, revenueEstimate: null };
   }
 }
 
@@ -1950,25 +1954,37 @@ if (!isCriticalDataComplete(partialData)) {
   logger.info(`   📦 After FALLBACK A — EPS: ${partialData.eps?.actual ?? 'null'}, Rev: ${partialData.revenue?.actual ?? 'null'}`);
 }
 
-// FALLBACK B — Grok web search (רק אם עדיין חסר EPS/Revenue)
-if (!isCriticalDataComplete(partialData)) {
-  const missingFields: string[] = [];
-  if (partialData.eps?.actual == null)     missingFields.push('EPS actual');
-  if (partialData.revenue?.actual == null) missingFields.push('Revenue actual');
+// FALLBACK B — Grok web search for any remaining missing data
+const missingForWeb: string[] = [];
+if (partialData.eps?.actual == null)         missingForWeb.push('EPS actual');
+if (partialData.revenue?.actual == null)     missingForWeb.push('Revenue actual');
+if (!hasFinnhubData && partialData.eps?.estimate == null)     missingForWeb.push('EPS estimate');
+if (!hasFinnhubData && partialData.revenue?.estimate == null) missingForWeb.push('Revenue estimate');
 
-  logger.warn(`\n   🔎 FALLBACK B: Still missing [${missingFields.join(', ')}] — Grok web search`);
+if (missingForWeb.length > 0) {
+  logger.warn(`\n   🔎 FALLBACK B: Still missing [${missingForWeb.join(', ')}] — Grok web search`);
 
-  const grokResult = await grokSearchMissingFields(symbol, companyName, q, yr, reportDate, missingFields);
+  const grokResult = await grokSearchMissingFields(symbol, companyName, q, yr, reportDate, missingForWeb);
 
   if (grokResult.epsActual != null && partialData.eps?.actual == null) {
     if (!partialData.eps) partialData.eps = { actual: null, estimate: null, beatPercent: null, epsType: null };
     partialData.eps.actual = grokResult.epsActual;
-    logger.info(`   ✅ [FALLBACK B] Filled EPS: ${grokResult.epsActual}`);
+    logger.info(`   ✅ [FALLBACK B] Filled EPS actual: ${grokResult.epsActual}`);
   }
   if (grokResult.revenueActual != null && partialData.revenue?.actual == null) {
     if (!partialData.revenue) partialData.revenue = { actual: null, estimate: null, beatPercent: null, revenueType: null };
     partialData.revenue.actual = grokResult.revenueActual;
-    logger.info(`   ✅ [FALLBACK B] Filled Revenue: ${grokResult.revenueActual}`);
+    logger.info(`   ✅ [FALLBACK B] Filled Revenue actual: ${grokResult.revenueActual}`);
+  }
+  if (grokResult.epsEstimate != null && partialData.eps?.estimate == null) {
+    if (!partialData.eps) partialData.eps = { actual: null, estimate: null, beatPercent: null, epsType: null };
+    partialData.eps.estimate = grokResult.epsEstimate;
+    logger.info(`   ✅ [FALLBACK B] Filled EPS estimate: ${grokResult.epsEstimate}`);
+  }
+  if (grokResult.revenueEstimate != null && partialData.revenue?.estimate == null) {
+    if (!partialData.revenue) partialData.revenue = { actual: null, estimate: null, beatPercent: null, revenueType: null };
+    partialData.revenue.estimate = grokResult.revenueEstimate;
+    logger.info(`   ✅ [FALLBACK B] Filled Revenue estimate: ${grokResult.revenueEstimate}`);
   }
 }
 
@@ -2035,15 +2051,15 @@ if (!isCriticalDataComplete(partialData)) {
     reportDate,
     eps: {
       actual: epsActual,
-      estimate: epsEstimate || epsActual,
-      beatPercent: epsBeatPercent,
+      estimate: epsEstimate ?? null,
+      beatPercent: epsEstimate != null ? epsBeatPercent : null,
       beat: null,
       source: hasFinnhubData ? "Finnhub" : "PDF"
     },
     revenue: {
       actual: revenueActual,
-      estimate: revenueEstimate || revenueActual,
-      beatPercent: revBeatPercent,
+      estimate: revenueEstimate ?? null,
+      beatPercent: revenueEstimate != null ? revBeatPercent : null,
       beat: null,
       source: hasFinnhubData ? "Finnhub" : "PDF"
     },
