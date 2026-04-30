@@ -14,7 +14,7 @@ export const runDailyCheck = async (req?: Request, res?: Response) => {
 
     const today1 = new Date();
     const filePath = path.join(__dirname, "../data/stocksReportingToday.json");
-    yesterday.setDate(today1.getDate() - 1);
+    yesterday.setDate(today1.getDate());
 
     const today = yesterday.toISOString().split("T")[0];
 
