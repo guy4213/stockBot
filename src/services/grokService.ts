@@ -14,6 +14,12 @@ const TRUSTED_CDN_DOMAINS = [
   'prnewswire.com',
   'businesswire.com',
   'globenewswire.com',
+  'accesswire.com',
+  'newsfilecorp.com',
+  'sedarplus.ca',
+  'sedar.com',
+  'seekingalpha.com',
+  'finance.yahoo.com'
 ];
 function isJsonComplete(str: string): boolean {
   try {
@@ -67,7 +73,7 @@ async function scrapeYahooEarningsHTML(
   const results: Array<{ ticker: string; name: string; time: "BMO" | "AMC" }> = [];
   const seenTickers = new Set<string>();
 
-  const url = `https://finance.yahoo.com/calendar/earnings?day=${date}&offset=0&size=25`;
+  const url = `https://finance.yahoo.com/calendar/earnings?day=${date}&offset=0&size=100`;
   const response = await axios.get(url, {
     headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
     timeout: 10000
@@ -458,25 +464,9 @@ export async function callGrokAPI(
         throw new Error("Content not found in response structure");
       }
       
-      // ✅ FIX: Convert content to string if it's not already
-      let contentStr: string|null=null;
-      
-      // First, check if content is a JSON string that needs parsing
-      if (typeof content === 'string' && (content.startsWith('[{') || content.startsWith('{'))) {
-        try {
-          const parsed = JSON.parse(content);
-          content = parsed; // Use parsed version
-          logger.info(`   ℹ️  Content was JSON string, parsed it`);
-        } catch (e) {
-          // Not valid JSON, use as-is
-          contentStr = content;
-          logger.info(`   ℹ️  Content is string (not JSON)`);
-        }
-      }
-      
-      if (typeof content === 'string' && contentStr) {
-        // Already set above
-      } else if (typeof content === 'string') {
+      let contentStr: string | null = null;
+
+      if (typeof content === 'string') {
         contentStr = content;
       } else if (Array.isArray(content)) {
         // Handle array of content blocks (Grok Responses API format)
@@ -764,35 +754,49 @@ async function phase2_grokFindEarnings(
   quarter: number,
   year: number,
   reportDate: string
-): Promise<string[]> {   // ← שינוי: מחזיר מערך
+): Promise<string[]> {
 
   logger.info(`\n🤖 Instructing Grok to search for earnings documents (up to 3)...`);
 
-  const quarterName = quarter === 1 ? 'first' :
-                      quarter === 2 ? 'second' :
-                      quarter === 3 ? 'third' : 'fourth';
+  // 1. טיפול חכם ברבעון 4 לעומת דוח שנתי (Full Year)
+  const quarterText = quarter === 4 
+    ? `Q4 ${year} OR Full Year / FY ${year}` 
+    : `Q${quarter} ${year}`;
+
+  // 2. הזרקת התאריך של היום כדי שהמודל יבין מתי זה "עכשיו"
+  const todayStr = new Date().toISOString().split('T')[0];
 
   const prompt = `
-You are an expert at finding quarterly earnings documents.
+You are an expert financial researcher with live web search capabilities.
+TODAY'S DATE: ${todayStr}
 
-TASK: Find up to 3 VALID URLs for the Q${quarter} ${year} earnings report of ${companyName} (${symbol}).
+TASK: Search the web to find up to 3 VALID URLs for the ${quarterText} earnings report of ${companyName} (${symbol}).
+You MUST use your web search tool to find the most recent press releases.
 
 VERIFIED IR WEBSITE: ${irPortal.url}
 Domain: ${irPortal.domain}
 
-SEARCH STRATEGY (in order):
-1. Browse the IR website directly: ${irPortal.url}
-2. Try sub-pages: /news, /press-releases, /quarterly-results
-3. Search: "site:${irPortal.domain} Q${quarter} ${year} earnings"
-4. Search: "${symbol} Q${quarter} ${year} earnings press release"
-5. Look on trusted CDNs (q4cdn.com, cloudfront.net, sec.gov, businesswire.com, prnewswire.com)
+SEARCH STRATEGY:
+1. Search recent news for: "${companyName} ${symbol} ${quarterText} earnings press release"
+2. Check the IR website's press releases section.
+3. Look for the official release on these trusted sources:
+  - prnewswire.com
+  - businesswire.com
+  - globenewswire.com
+  - accesswire.com
+  - newsfilecorp.com
+  - sec.gov / edgar
+  - sedarplus.ca / sedar.com
+  - seekingalpha.com
+  - finance.yahoo.com
+  - q4cdn.com / cloudfront.net
 
 REQUIREMENTS for each URL:
-✅ Official Q${quarter} ${year} earnings release for ${companyName}
-✅ Published around ${reportDate} (±7 days)
-✅ Contains actual financial results (not a preview/estimate)
-❌ NOT earnings call transcripts
-❌ NOT previous quarters
+✅ Must be the official ${quarterText} earnings release for ${companyName}.
+✅ Published around ${reportDate} (±7 days from this target date).
+✅ Contains actual financial results (revenue, net income, etc.), NOT a date announcement or estimate.
+❌ NOT earnings call transcripts.
+❌ NOT from previous quarters.
 
 OUTPUT FORMAT — return ONLY this JSON, nothing else:
 {
@@ -810,9 +814,9 @@ If you find nothing, return: { "urls": [] }
   try {
     const grokResponse = await callGrokAPI(
       [{ role: 'user', content: prompt }],
-      0.1,
+      0.1, // טמפרטורה נמוכה כדי לשמור על דיוק
       3000,
-      true
+      true // הנחתי שזה הפרמטר שמפעיל את החיפוש ברשת (Web Search)
     );
 
     logger.info(`📄 Grok response preview: ${grokResponse.substring(0, 300)}`);
@@ -830,36 +834,38 @@ If you find nothing, return: { "urls": [] }
       urls = urlMatches.map(u => u.replace(/[.,;)\]]+$/, '')).slice(0, 3);
     }
 
+    // הדפסה לדיבוג - עוזר מאוד להבין אם המודל מצא משהו שהקוד פסל
+    logger.info(`🔍 URLs found by Grok before validation: ${JSON.stringify(urls)}`);
+
     // וולידציה של כל URL
     const validUrls: string[] = [];
     for (const url of urls) {
       try {
         const urlDomain = new URL(url).hostname.toLowerCase();
         const expectedDomain = irPortal.domain.toLowerCase();
+        
         const isDomainMatch = urlDomain.includes(expectedDomain) || expectedDomain.includes(urlDomain);
         const isTrustedCDN = TRUSTED_CDN_DOMAINS.some(cdn => urlDomain.includes(cdn));
 
         if (isDomainMatch || isTrustedCDN) {
           validUrls.push(url);
-          logger.info(`   ✅ Valid URL [${validUrls.length}]: ${url}`);
+          logger.info(`  ✅ Valid URL [${validUrls.length}]: ${url}`);
         } else {
-          logger.warn(`   ⚠️ Rejected (domain mismatch): ${url}`);
+          logger.warn(`  ⚠️ Rejected (domain mismatch): ${url}`);
         }
       } catch {
-        logger.warn(`   ⚠️ Invalid URL skipped: ${url}`);
+        logger.warn(`  ⚠️ Invalid URL skipped: ${url}`);
       }
     }
 
-    logger.info(`   📋 Found ${validUrls.length} valid document URLs`);
+    logger.info(`  📋 Found ${validUrls.length} valid document URLs`);
     return validUrls;
 
   } catch (e: any) {
-    logger.error(`   ❌ Grok search failed: ${e.message}`);
+    logger.error(`  ❌ Grok search failed: ${e.message}`);
     return [];
   }
 }
-
-
 
 
 export function buildPreFilterSignals(

@@ -38,9 +38,11 @@ export const MAX_CHECK_ATTEMPTS = 10; // Stop checking after 10 failed attempts
 export const WINDOW_BUFFER_HOURS = 3; // Check stocks ±3 hours from their window
 export const MIN_MARKET_CAP = 300_000_000; 
 export const MIN_VOLUME = 1_000_000; 
-interface ExtendedStock extends Stock {
-    quarter?: number;
-    fiscalYear?: number;
+
+interface UrlAttemptResult {
+  url: string;
+  jinaSucceeded: boolean;
+  rawContent: string | null; // ← שומרים את התוכן
 }
 export interface FinnhubEarningsEntry {
     date: string | number | Date;
@@ -140,48 +142,66 @@ function saveIrPortalToDisk(symbol: string, irPortal: any) {
 
 export async function callOpenRouterAPI(
   messages: any[],
-  model: string = "google/gemini-2.0-flash-001", // Default to cheap/fast
+  model: string = "google/gemini-2.0-flash-001",
   temperature: number = 0.1,
   maxTokens: number = 100
 ): Promise<string> {
   const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
   if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is missing");
 
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 4;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const response = await axios.post(
         "https://openrouter.ai/api/v1/chat/completions",
         {
-          model: model,
-          messages: messages,
-          temperature: temperature,
+          model,
+          messages,
+          temperature,
           max_tokens: maxTokens,
-          // Optional: headers for OpenRouter rankings
-          // "HTTP-Referer": "https://your-site.com", 
-          // "X-Title": "EarningsBot"
         },
         {
           headers: {
             "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
             "Content-Type": "application/json"
           },
-          timeout: 10000 // Fast timeout for validation
+          timeout: 30000 // ⬆️ הועלה מ-10s ל-30s
         }
       );
 
       return response.data.choices[0].message.content;
 
     } catch (error: any) {
-      const isRateLimit = error.response?.status === 429;
-      if (attempt === MAX_RETRIES || !isRateLimit) {
+      const status = error.response?.status;
+
+      // ✅ כל השגיאות הזמניות שמצדיקות retry
+      const isRetryable =
+        status === 429 ||          // rate limit
+        status === 502 ||          // bad gateway
+        status === 503 ||          // service unavailable
+        status === 504 ||          // gateway timeout ← זו הבעיה שלך
+        error.code === "ECONNABORTED" || // axios timeout
+        error.code === "ECONNRESET";     // connection reset
+
+      if (attempt === MAX_RETRIES || !isRetryable) {
         throw new Error(`OpenRouter API Failed: ${error.message}`);
       }
-      // Simple backoff for rate limits
-      await new Promise(r => setTimeout(r, 1000 * attempt));
+
+      // backoff: 2s, 4s, 6s (ולא 1s שהיה קודם)
+      const delay = status === 429
+        ? 10000 * attempt   // rate limit — קצת יותר מהיר
+        : 2000 * attempt;  // שגיאות תשתית — יותר זמן
+
+      if (status === 429) {
+        console.warn(`[OpenRouter] 429 body: ${JSON.stringify(error.response?.data)}`);
+        console.warn(`[OpenRouter] 429 headers: retry-after=${error.response?.headers?.['retry-after']}, x-ratelimit-limit-requests=${error.response?.headers?.['x-ratelimit-limit-requests']}, x-ratelimit-remaining-requests=${error.response?.headers?.['x-ratelimit-remaining-requests']}`);
+      }
+      console.warn(`[OpenRouter] attempt ${attempt} failed (${status ?? error.code}), retrying in ${delay}ms...`);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
+
   throw new Error("OpenRouter max retries exceeded");
 }
 
@@ -223,16 +243,15 @@ export async function verifyIRWithFlash(
   `;
 
   try {
-    // שולחים ל-Gemini Flash דרך OpenRouter
-    // אין כאן חיפוש אינטרנטי! רק ניתוח טקסט!
-    const res = await callOpenRouterAPI(
-      [{ role: "user", content: prompt }],
-      "google/gemini-2.0-flash-001",
-      0.1,
-      200
+     const res =  await callGrokAPI(
+      [
+        { role: "user", content: prompt }
+      ],
+      0.3,   // temperature
+      200,  // maxTokens
+      false  // enableWebSearch
     );
 
-    // ניקוי ה-JSON
     const cleanJson = res.replace(/```json/g, '').replace(/```/g, '').trim();
     const result = JSON.parse(cleanJson);
 
@@ -1225,7 +1244,7 @@ ${rawContent}
           { role: "system", content: "You are a financial data extraction API. Return ONLY valid JSON with no markdown." },
           { role: "user",   content: supplementPrompt }
         ],
-        "google/gemini-2.0-flash-001",
+        "google/gemini-2.0-flash-lite-001",
         0.05,
         3000
       );
@@ -1258,6 +1277,11 @@ ${rawContent}
       
     
     catch (parseError: any) {
+      // API-level failures (rate limit, auth, network) should not be retried here —
+      // callOpenRouterAPI already exhausted its own retries.
+      if (parseError.message?.includes('OpenRouter API Failed')) {
+        throw parseError;
+      }
       lastError = parseError.message;
       if (attempt < MAX_RETRIES) {
         await new Promise(resolve => setTimeout(resolve, 5000));
@@ -1274,25 +1298,26 @@ async function grokSearchMissingFields(
   year: number,
   reportDate: string,
   missingFields: string[]
-): Promise<{ epsActual: number | null; revenueActual: number | null }> {
-  
+): Promise<{ epsActual: number | null; revenueActual: number | null; epsEstimate: number | null; revenueEstimate: number | null }> {
+
   logger.info(`\n🔎 [GrokTargeted] Searching for missing fields: ${missingFields.join(', ')}`);
 
-  const prompt = `Find the ACTUAL reported earnings numbers for ${companyName} (${symbol}) Q${quarter} ${year} (reported around ${reportDate}).
+  const needsActuals   = missingFields.some(f => f.includes('actual'));
+  const needsEstimates = missingFields.some(f => f.includes('estimate'));
 
-I need these specific values: ${missingFields.join(', ')}
+  const prompt = `Search the web to find the following missing data for ${companyName} (${symbol}) Q${quarter} ${year} earnings (reported around ${reportDate}).
 
-Search financial news sites, earnings announcements, and press releases.
+MISSING DATA NEEDED:
+${needsActuals   ? `- ACTUAL reported EPS (non-GAAP / adjusted preferred, diluted per share)\n- ACTUAL reported Revenue (total, in dollars, not billions)` : ''}
+${needsEstimates ? `- Wall Street analyst CONSENSUS ESTIMATE for EPS (before the report)\n- Wall Street analyst CONSENSUS ESTIMATE for Revenue (before the report)` : ''}
 
-Return ONLY this JSON:
+Search financial sites: Yahoo Finance, Zacks, Seeking Alpha, FactSet, Benzinga, Bloomberg, earnings press releases.
+
+Return ONLY this JSON, no markdown:
 {
-  "epsActual": number_or_null,
-  "revenueActual": number_in_dollars_or_null
-}
-
-Examples:
-{ "epsActual": 1.23, "revenueActual": 4500000000 }
-{ "epsActual": -0.45, "revenueActual": null }`;
+  ${needsActuals   ? `"epsActual": <number or null>,\n  "revenueActual": <number in full dollars or null>,` : '"epsActual": null,\n  "revenueActual": null,'}
+  ${needsEstimates ? `"epsEstimate": <number or null>,\n  "revenueEstimate": <number in full dollars or null>` : '"epsEstimate": null,\n  "revenueEstimate": null'}
+}`;
 
   try {
     const response = await callGrokAPI(
@@ -1304,14 +1329,237 @@ Examples:
 
     const clean = response.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
+    logger.info(`   ✅ [GrokTargeted] epsActual=${parsed.epsActual}, revActual=${parsed.revenueActual}, epsEst=${parsed.epsEstimate}, revEst=${parsed.revenueEstimate}`);
     return {
-      epsActual: parsed.epsActual ?? null,
-      revenueActual: parsed.revenueActual ?? null
+      epsActual:       parsed.epsActual       ?? null,
+      revenueActual:   parsed.revenueActual   ?? null,
+      epsEstimate:     parsed.epsEstimate     ?? null,
+      revenueEstimate: parsed.revenueEstimate ?? null,
     };
   } catch (e: any) {
     logger.error(`❌ [GrokTargeted] Failed: ${e.message}`);
-    return { epsActual: null, revenueActual: null };
+    return { epsActual: null, revenueActual: null, epsEstimate: null, revenueEstimate: null };
   }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// פונקציית עזר — מזהה כל השדות החסרים מ-partialData
+// ─────────────────────────────────────────────────────────────
+function getMissingFields(partialData: Partial<any>, hasFinnhubData: boolean): string[] {
+  const missing: string[] = [];
+
+  if (!hasFinnhubData) {
+    if (partialData.eps?.actual == null)          missing.push('eps.actual');
+    if (partialData.eps?.estimate == null)        missing.push('eps.estimate');
+    if (partialData.eps?.beatPercent == null)     missing.push('eps.beatPercent');
+    if (partialData.revenue?.actual == null)      missing.push('revenue.actual');
+    if (partialData.revenue?.estimate == null)    missing.push('revenue.estimate');
+    if (partialData.revenue?.beatPercent == null) missing.push('revenue.beatPercent');
+  }
+
+  if (partialData.pdfMetrics?.epsYoY == null)             missing.push('pdfMetrics.epsYoY');
+  if (partialData.pdfMetrics?.revenueYoY == null)         missing.push('pdfMetrics.revenueYoY');
+  if (partialData.pdfMetrics?.netMargin == null)          missing.push('pdfMetrics.netMargin');
+  if (partialData.pdfMetrics?.marginMetric == null)       missing.push('pdfMetrics.marginMetric');
+  if (partialData.pdfMetrics?.cashFromOperations == null) missing.push('pdfMetrics.cashFromOperations');
+
+  if (!partialData.guidance?.status)   missing.push('guidance');
+  if (!partialData.sentiment?.overall) missing.push('sentiment');
+  if (!partialData.highlights?.length) missing.push('highlights');
+  if (!partialData.concerns?.length)   missing.push('concerns');
+  if (!partialData.companyType)        missing.push('companyType');
+
+  return missing;
+}
+
+// ─────────────────────────────────────────────────────────────
+// פונקציית עזר פנימית — קריאה אחת לגרוק
+// ─────────────────────────────────────────────────────────────
+async function _callGrokExtract(params: {
+  symbol: string;
+  companyName: string;
+  quarter: number;
+  year: number;
+  reportDate: string;
+  urls: string[];
+  rawContent: string | null;  // ← תוכן ישיר אם Jina הצליח
+  useWebSearch: boolean;
+  hasFinnhubData: boolean;
+  finnhubEpsEstimate: number | null;
+  finnhubRevEstimate: number | null;
+  epsActual: number | null;
+  epsEstimate: number | null;
+  epsBeatPercent: number;
+  revenueActual: number | null;
+  revenueEstimate: number | null;
+  revBeatPercent: number;
+  missingFields: string[];
+}): Promise<Partial<any>> {
+
+  const {
+    symbol, companyName, quarter, year, reportDate,
+    urls, rawContent, useWebSearch, hasFinnhubData,
+    finnhubEpsEstimate, finnhubRevEstimate,
+    epsActual, epsEstimate, epsBeatPercent,
+    revenueActual, revenueEstimate, revBeatPercent,
+    missingFields
+  } = params;
+
+  const needsEps         = missingFields.some(f => f.startsWith('eps'));
+  const needsRevenue     = missingFields.some(f => f.startsWith('revenue'));
+  const needsYoY         = missingFields.includes('pdfMetrics.epsYoY') || missingFields.includes('pdfMetrics.revenueYoY');
+  const needsMargins     = missingFields.includes('pdfMetrics.netMargin') || missingFields.includes('pdfMetrics.marginMetric');
+  const needsCashFlow    = missingFields.includes('pdfMetrics.cashFromOperations');
+  const needsGuidance    = missingFields.includes('guidance');
+  const needsSentiment   = missingFields.includes('sentiment');
+  const needsHighlights  = missingFields.includes('highlights');
+  const needsConcerns    = missingFields.includes('concerns');
+  const needsCompanyType = missingFields.includes('companyType');
+
+  // ← ההבדל המרכזי: content ישיר vs URL לחיפוש
+  const sourceSection = rawContent
+    ? `Read this earnings report content:\n\n${rawContent}`
+    : `Fetch and read the earnings report from one of these URLs:\n${urls.map((u, i) => `${i + 1}. ${u}`).join('\n')}`;
+
+  const prompt = `${sourceSection}
+
+You are a professional financial data analyst.
+Extract Q${quarter} ${year} quarterly earnings for ${companyName} (${symbol}), reported around ${reportDate}.
+
+RULES:
+- ONLY "Three months ended" / "Quarter ended" Q${quarter} ${year} data
+- NEVER Annual / TTM / YTD
+- EPS priority: Adjusted > Non-GAAP > Operating > Normalized > GAAP (DILUTED only)
+- All text fields → Hebrew
+${hasFinnhubData ? `
+ALREADY KNOWN — DO NOT RE-EXTRACT:
+  EPS: ${epsActual} vs ${epsEstimate} (${epsBeatPercent?.toFixed(2)}%)
+  Revenue: ${revenueActual ? (revenueActual / 1e9).toFixed(2) + 'B' : 'N/A'} vs ${revenueEstimate ? (revenueEstimate / 1e9).toFixed(2) + 'B' : 'N/A'} (${revBeatPercent?.toFixed(2)}%)
+` : ''}
+
+EXTRACT ONLY THESE MISSING FIELDS:
+${missingFields.map(f => `• ${f}`).join('\n')}
+
+Return ONLY valid JSON, no markdown:
+{
+  ${needsCompanyType ? `"companyType": "REIT" | "Bank" | "Regular",` : ''}
+  ${needsEps ? `"eps": { "actual": <number>|null, "estimate": ${finnhubEpsEstimate ?? 'null'}, "beatPercent": <number>|null, "epsType": "<label>" },` : ''}
+  ${needsRevenue ? `"revenue": { "actual": <number in dollars>|null, "estimate": ${finnhubRevEstimate ?? 'null'}, "beatPercent": <number>|null, "revenueType": "net_interest_income"|"total_revenue" },` : ''}
+  ${needsGuidance ? `"guidance": { "status": "raised"|"lowered"|"maintained"|"unavailable", "details": "<Hebrew>"|null },` : ''}
+  ${needsSentiment ? `"sentiment": { "overall": "positive"|"neutral"|"negative", "reasoning": "<Hebrew>" },` : ''}
+  ${needsHighlights ? `"highlights": ["<Hebrew>", "<Hebrew>"],` : ''}
+  ${needsConcerns ? `"concerns": ["<Hebrew>", "<Hebrew>"],` : ''}
+  ${needsYoY || needsMargins || needsCashFlow ? `"pdfMetrics": {
+    ${needsYoY ? `"epsYoY": <number>|null, "revenueYoY": <number>|null,` : ''}
+    ${needsMargins ? `"netMargin": <number>|null, "marginMetric": { "type": "operating_margin"|"efficiency_ratio", "value": <number>, "formula": "<string>", "source": "Three Months Ended Q${quarter} ${year}", "verified": true }|null,` : ''}
+    ${needsCashFlow ? `"cashFromOperations": <number in millions>|null` : ''}
+  }` : ''}
+}`;
+
+  try {
+    const response = await callGrokAPI(
+      [{ role: 'user', content: prompt }],
+      0.1,
+      2000,
+      useWebSearch  // ← false כשיש rawContent, true כשJina נכשל
+    );
+
+    const clean = response.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    logger.info(`   📊 Extracted keys: ${Object.keys(parsed).join(', ')}`);
+    return parsed;
+
+  } catch (e: any) {
+    logger.error(`   ❌ _callGrokExtract failed: ${e.message}`);
+    return {};
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// FALLBACK A — Grok extraction
+// ─────────────────────────────────────────────────────────────
+async function grokExtractFromPdfDirect(
+  symbol: string,
+  companyName: string,
+  quarter: number,
+  year: number,
+  reportDate: string,
+  urlAttempts: UrlAttemptResult[],
+  partialData: Partial<any>,
+  hasFinnhubData: boolean,
+  finnhubEpsEstimate: number | null,
+  finnhubRevEstimate: number | null,
+  epsActual: number | null,
+  epsEstimate: number | null,
+  epsBeatPercent: number,
+  revenueActual: number | null,
+  revenueEstimate: number | null,
+  revBeatPercent: number
+): Promise<Partial<any>> {
+
+  const missingFields = getMissingFields(partialData, hasFinnhubData);
+  if (missingFields.length === 0) {
+    logger.info(`   ✅ [GrokFallback] Nothing missing — skipping`);
+    return {};
+  }
+
+  logger.info(` Missing fields: ${missingFields.join(', ')}`);
+
+  const baseParams = {
+    symbol, companyName, quarter, year, reportDate,
+    hasFinnhubData, finnhubEpsEstimate, finnhubRevEstimate,
+    epsActual, epsEstimate, epsBeatPercent,
+    revenueActual, revenueEstimate, revBeatPercent,
+    missingFields
+  };
+
+  // ─── ניסיון 1: Jina הצליח → content ישיר, ללא web search ───
+  const jinaSucceeded = urlAttempts.filter(r => r.jinaSucceeded);
+  if (jinaSucceeded.length > 0) {
+    logger.info(`\n   🔎 [GrokFallback] Attempt 1: direct content (no web search)`);
+
+    // מנסה URL אחד בכל פעם עד שמצליח
+    for (const attempt of jinaSucceeded) {
+      logger.info(`      Trying: ${attempt.url}`);
+
+      const result = await _callGrokExtract({
+        ...baseParams,
+        urls: [attempt.url],
+        rawContent: attempt.rawContent, // ← content ישיר
+        useWebSearch: false             // ← ללא חיפוש
+      });
+
+      if (Object.keys(result).length > 0) {
+        logger.info(`   ✅ [GrokFallback] Attempt 1 succeeded`);
+        return result;
+      }
+    }
+
+    logger.warn(`   ⚠️ [GrokFallback] Attempt 1 failed for all URLs — trying web search`);
+  }
+
+  // ─── ניסיון 2: Jina נכשל → URL בלבד, עם web search ───
+  const jinaFailed = urlAttempts.filter(r => !r.jinaSucceeded);
+  if (jinaFailed.length > 0) {
+    logger.info(`\n   🔎 [GrokFallback] Attempt 2: web search (Jina failed URLs)`);
+    jinaFailed.forEach((r, i) => logger.info(`      [${i + 1}] ${r.url}`));
+
+    const result = await _callGrokExtract({
+      ...baseParams,
+      urls: jinaFailed.map(r => r.url),
+      rawContent: null,  // ← אין content, גרוק פותח בעצמו
+      useWebSearch: true // ← עם web search
+    });
+
+    if (Object.keys(result).length > 0) {
+      logger.info(`   ✅ [GrokFallback] Attempt 2 succeeded`);
+      return result;
+    }
+  }
+
+  logger.error(`   ❌ [GrokFallback] All attempts failed`);
+  return {};
 }
 export async function fullExtraction(
   symbol: string,
@@ -1568,7 +1816,6 @@ try {
   // ============================================
   logger.info(`\n🤖 Step 3: Multi-source extraction with partial data accumulator...`);
 
-  // PartialData — מצטבר מכל המקורות, לא נדרס
   interface PartialAiData {
     eps?: { actual: number | null; estimate: number | null; beatPercent: number | null; epsType: string | null };
     revenue?: { actual: number | null; estimate: number | null; beatPercent: number | null; revenueType: string | null };
@@ -1633,83 +1880,137 @@ if (hasFinnhubData) {
         && data.revenue?.actual !== null && data.revenue?.actual !== undefined;
   }
 
-  // עוברים על כל URL candidate
-  for (let urlIdx = 0; urlIdx < pdfCandidates.length; urlIdx++) {
-    const candidateUrl = pdfCandidates[urlIdx];
-    logger.info(`\n   📄 Trying source [${urlIdx + 1}/${pdfCandidates.length}]: ${candidateUrl}`);
 
-    // Fetch content
-    let rawContent: string | null = null;
+const urlAttempts: UrlAttemptResult[] = [];
 
-    // retry רק על network errors — לא על content שגוי
-    for (let netAttempt = 1; netAttempt <= 2; netAttempt++) {
-      try {
-        rawContent = await fetchContentWithJina(candidateUrl);
-        break; // הצלחה — יוצאים מ-retry
-      } catch (netErr: any) {
-        logger.warn(`   ⚠️ Network error attempt ${netAttempt}: ${netErr.message}`);
-        if (netAttempt < 2) await new Promise(r => setTimeout(r, 2000));
-      }
-    }
+for (let urlIdx = 0; urlIdx < pdfCandidates.length; urlIdx++) {
+  const candidateUrl = pdfCandidates[urlIdx];
+  logger.info(`\n   📄 Trying source [${urlIdx + 1}/${pdfCandidates.length}]: ${candidateUrl}`);
 
-    if (rawContent === null) {
-      logger.warn(`   ❌ Source [${urlIdx + 1}] failed (short/blocked) — trying next`);
-      continue; // לא retry, עוברים ל-URL הבא
-    }
+  let rawContent: string | null = null;
 
-    // Gemini extraction
+  for (let netAttempt = 1; netAttempt <= 2; netAttempt++) {
     try {
+      rawContent = await fetchContentWithJina(candidateUrl);
+      break;
+    } catch (netErr: any) {
+      logger.warn(`   ⚠️ Network error attempt ${netAttempt}: ${netErr.message}`);
+      if (netAttempt < 2) await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  if (rawContent === null) {
+    logger.warn(`   ❌ Source [${urlIdx + 1}] Jina failed — marked for Grok web search fallback`);
+    urlAttempts.push({ url: candidateUrl, jinaSucceeded: false, rawContent: null });
+    continue;
+  }
+
+  urlAttempts.push({ url: candidateUrl, jinaSucceeded: true, rawContent }); // ← שומר content
+
+  try {
     const extractedData = await extractWithGemini(
       rawContent, symbol, companyName, q, yr,
       finnhubEpsEstimate, finnhubRevEstimate,
-      hasFinnhubData,
-      reportDate,
+      hasFinnhubData, reportDate,
       epsActual, epsEstimate, epsBeatPercent,
       revenueActual, revenueEstimate, revBeatPercent
     );
 
-      logger.info(`   📊 Source [${urlIdx + 1}] extracted:`);
-      logger.info(`      EPS actual: ${extractedData.eps?.actual ?? 'null'}`);
-      logger.info(`      Revenue actual: ${extractedData.revenue?.actual ?? 'null'}`);
+    logger.info(`   📊 Source [${urlIdx + 1}] extracted:`);
+    logger.info(`      EPS actual: ${extractedData.eps?.actual ?? 'null'}`);
+    logger.info(`      Revenue actual: ${extractedData.revenue?.actual ?? 'null'}`);
 
-      // מיזוג — לא דורסים שדות קיימים
-      mergePartial(partialData, { ...extractedData, pdfUrl: candidateUrl });
+    mergePartial(partialData, { ...extractedData, pdfUrl: candidateUrl });
 
-      logger.info(`   📦 Accumulated so far — EPS: ${partialData.eps?.actual ?? 'null'}, Revenue: ${partialData.revenue?.actual ?? 'null'}`);
+    logger.info(`   📦 Accumulated — EPS: ${partialData.eps?.actual ?? 'null'}, Revenue: ${partialData.revenue?.actual ?? 'null'}`);
 
-      if (isCriticalDataComplete(partialData)) {
-        logger.info(`   ✅ Critical data complete after source [${urlIdx + 1}]`);
-        break;
-      } else {
-        logger.info(`   ⚠️ Still missing critical data, trying next source...`);
+    if (isCriticalDataComplete(partialData)) {
+      logger.info(`   ✅ Critical data complete after source [${urlIdx + 1}]`);
+      break;
+    } else {
+      logger.info(`   ⚠️ Still missing critical data, trying next source...`);
+    }
+
+  } catch (extractErr: any) {
+    logger.warn(`   ❌ Gemini extraction failed for source [${urlIdx + 1}]: ${extractErr.message}`);
+
+    // If Gemini failed due to OpenRouter rate limit, immediately try Grok with the same content
+    if (extractErr.message?.includes('OpenRouter API Failed') && rawContent) {
+      logger.warn(`   🔄 OpenRouter failure — switching to Grok for source [${urlIdx + 1}]...`);
+      try {
+        const grokData = await _callGrokExtract({
+          symbol, companyName, quarter: q, year: yr, reportDate,
+          urls: [candidateUrl], rawContent,
+          useWebSearch: false,
+          hasFinnhubData, finnhubEpsEstimate, finnhubRevEstimate,
+          epsActual, epsEstimate, epsBeatPercent,
+          revenueActual, revenueEstimate, revBeatPercent,
+          missingFields: getMissingFields(partialData, hasFinnhubData)
+        });
+        mergePartial(partialData, { ...grokData, pdfUrl: candidateUrl });
+        logger.info(`   📦 After Grok fallback — EPS: ${partialData.eps?.actual ?? 'null'}, Revenue: ${partialData.revenue?.actual ?? 'null'}`);
+        if (isCriticalDataComplete(partialData)) {
+          logger.info(`   ✅ Grok filled critical data — stopping source loop`);
+          break;
+        }
+      } catch (grokErr: any) {
+        logger.warn(`   ❌ Grok fallback also failed: ${grokErr.message}`);
       }
-
-    } catch (extractErr: any) {
-      logger.warn(`   ❌ Gemini extraction failed for source [${urlIdx + 1}]: ${extractErr.message}`);
     }
   }
+}
 
   // אם אחרי כל ה-URLs עדיין חסר EPS actual — Grok targeted search
-  if (!isCriticalDataComplete(partialData)) {
-    logger.warn(`\n   ⚠️ EPS actual still missing after ${pdfCandidates.length} sources — calling Grok targeted search`);
-    
-    const missingFields: string[] = [];
-    if (partialData.eps?.actual === null || partialData.eps?.actual === undefined) missingFields.push('EPS actual');
-    if (partialData.revenue?.actual === null || partialData.revenue?.actual === undefined) missingFields.push('Revenue actual');
+if (!isCriticalDataComplete(partialData)) {
+  logger.warn(`\n   🔄 FALLBACK A: Grok extraction`);
 
-    const grokResult = await grokSearchMissingFields(symbol, companyName, q, yr, reportDate, missingFields);
+  const grokResult = await grokExtractFromPdfDirect(
+    symbol, companyName, q, yr, reportDate,
+    urlAttempts,        // ← מכיל url + jinaSucceeded + rawContent
+    partialData,
+    hasFinnhubData,
+    finnhubEpsEstimate, finnhubRevEstimate,
+    epsActual, epsEstimate, epsBeatPercent,
+    revenueActual, revenueEstimate, revBeatPercent
+  );
 
-if (grokResult.epsActual != null && (partialData.eps?.actual == null)) {
-      if (!partialData.eps) partialData.eps = { actual: null, estimate: null, beatPercent: null, epsType: null };
-      partialData.eps.actual = grokResult.epsActual;
-      logger.info(`   ✅ Grok filled EPS actual: ${grokResult.epsActual}`);
-    }
-    if (grokResult.revenueActual !== null && partialData.revenue?.actual === null) {
-      if (!partialData.revenue) partialData.revenue = { actual: null, estimate: null, beatPercent: null, revenueType: null };
-      partialData.revenue.actual = grokResult.revenueActual;
-      logger.info(`   ✅ Grok filled Revenue actual: ${grokResult.revenueActual}`);
-    }
+  mergePartial(partialData, grokResult);
+  logger.info(`   📦 After FALLBACK A — EPS: ${partialData.eps?.actual ?? 'null'}, Rev: ${partialData.revenue?.actual ?? 'null'}`);
+}
+
+// FALLBACK B — Grok web search for any remaining missing data
+const missingForWeb: string[] = [];
+if (partialData.eps?.actual == null)         missingForWeb.push('EPS actual');
+if (partialData.revenue?.actual == null)     missingForWeb.push('Revenue actual');
+if (!hasFinnhubData && partialData.eps?.estimate == null)     missingForWeb.push('EPS estimate');
+if (!hasFinnhubData && partialData.revenue?.estimate == null) missingForWeb.push('Revenue estimate');
+
+if (missingForWeb.length > 0) {
+  logger.warn(`\n   🔎 FALLBACK B: Still missing [${missingForWeb.join(', ')}] — Grok web search`);
+
+  const grokResult = await grokSearchMissingFields(symbol, companyName, q, yr, reportDate, missingForWeb);
+
+  if (grokResult.epsActual != null && partialData.eps?.actual == null) {
+    if (!partialData.eps) partialData.eps = { actual: null, estimate: null, beatPercent: null, epsType: null };
+    partialData.eps.actual = grokResult.epsActual;
+    logger.info(`   ✅ [FALLBACK B] Filled EPS actual: ${grokResult.epsActual}`);
   }
+  if (grokResult.revenueActual != null && partialData.revenue?.actual == null) {
+    if (!partialData.revenue) partialData.revenue = { actual: null, estimate: null, beatPercent: null, revenueType: null };
+    partialData.revenue.actual = grokResult.revenueActual;
+    logger.info(`   ✅ [FALLBACK B] Filled Revenue actual: ${grokResult.revenueActual}`);
+  }
+  if (grokResult.epsEstimate != null && partialData.eps?.estimate == null) {
+    if (!partialData.eps) partialData.eps = { actual: null, estimate: null, beatPercent: null, epsType: null };
+    partialData.eps.estimate = grokResult.epsEstimate;
+    logger.info(`   ✅ [FALLBACK B] Filled EPS estimate: ${grokResult.epsEstimate}`);
+  }
+  if (grokResult.revenueEstimate != null && partialData.revenue?.estimate == null) {
+    if (!partialData.revenue) partialData.revenue = { actual: null, estimate: null, beatPercent: null, revenueType: null };
+    partialData.revenue.estimate = grokResult.revenueEstimate;
+    logger.info(`   ✅ [FALLBACK B] Filled Revenue estimate: ${grokResult.revenueEstimate}`);
+  }
+}
 
   // בדיקה סופית
   if (!isCriticalDataComplete(partialData)) {
@@ -1774,15 +2075,15 @@ if (grokResult.epsActual != null && (partialData.eps?.actual == null)) {
     reportDate,
     eps: {
       actual: epsActual,
-      estimate: epsEstimate || epsActual,
-      beatPercent: epsBeatPercent,
+      estimate: epsEstimate ?? null,
+      beatPercent: epsEstimate != null ? epsBeatPercent : null,
       beat: null,
       source: hasFinnhubData ? "Finnhub" : "PDF"
     },
     revenue: {
       actual: revenueActual,
-      estimate: revenueEstimate || revenueActual,
-      beatPercent: revBeatPercent,
+      estimate: revenueEstimate ?? null,
+      beatPercent: revenueEstimate != null ? revBeatPercent : null,
       beat: null,
       source: hasFinnhubData ? "Finnhub" : "PDF"
     },
@@ -1827,7 +2128,7 @@ if (grokResult.epsActual != null && (partialData.eps?.actual == null)) {
   logger.info(`${"=".repeat(70)}`);
   logger.info(`📄 PDF: ${validatedPdfUrl}`);
   logger.info(`💰 EPS: ${data.eps.actual} vs ${data.eps.estimate} (${data.eps.beatPercent?.toFixed(2) ?? 'N/A'}%)`);
-  logger.info(`💵 Revenue: $${(data.revenue.actual / 1e9).toFixed(2)}B`);
+  logger.info(`💵 Revenue: $${data.revenue.actual != null ? (data.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'}`);
   logger.info(`${"=".repeat(70)}\n`);
 
   return data;
@@ -1835,13 +2136,310 @@ if (grokResult.epsActual != null && (partialData.eps?.actual == null)) {
 
 
 //using gemini-open router  
+
+
+
+// export async function finalAnalysis(fullData: FullExtractionResponse, miraScore: MiraScore): Promise<FinalAnalysis> {
+//   logger.info(`📝 Generating Final Telegram Report for ${fullData.symbol} using Gemini Flash...`);
+
+//   const currentPrice = fullData.marketData?.price || 0;
+//   const preFilter = fullData.hardPreFilter;
+
+  
+
+//   if (!currentPrice || currentPrice === 0) {
+//     logger.warn(`⚠️ No valid price for ${fullData.symbol} - cannot calculate trade parameters`);
+//   } else {
+//     logger.info(`💰 Using price $${currentPrice} for ${fullData.symbol} trade calculations`);
+//   }
+  
+//   const tradeParams = calculateTradeParams(currentPrice, miraScore.classification);
+
+//   // חישובי עזר (נשאר אותו דבר)
+//   const epsDeviation = fullData.eps.estimate && fullData.eps.actual !== null
+//     ? (((fullData.eps.actual - fullData.eps.estimate) / Math.abs(fullData.eps.estimate)) * 100).toFixed(2)
+//     : "N/A";
+//   const revenueDeviation = fullData.revenue.estimate
+//     ? (((fullData.revenue.actual - fullData.revenue.estimate) / fullData.revenue.estimate) * 100).toFixed(2)
+//     : "N/A";
+
+//   const yoyEpsGrowth = fullData.yoyGrowth?.epsChange !== null && fullData.yoyGrowth?.epsChange !== undefined
+//     ? `${fullData.yoyGrowth.epsChange.toFixed(2)}%`
+//     : "לא זמין";
+//   const yoyRevGrowth = fullData.yoyGrowth?.revenueChange !== null && fullData.yoyGrowth?.revenueChange !== undefined
+//     ? `${fullData.yoyGrowth.revenueChange.toFixed(2)}%${fullData.yoyGrowth.revenueChangeType === "TTM" ? " (TTM)" : ""}`
+//     : "לא זמין";
+//   const netMargin = fullData.margins?.netMargin !== null && fullData.margins?.netMargin !== undefined
+//     ? `${fullData.margins.netMargin.toFixed(2)}%`
+//     : "לא זמין";
+//   const opMarginLabel = fullData.margins?.isEfficiencyRatio ? 'Efficiency' : 'Operating';
+//   const opMargin = fullData.margins?.operatingMargin !== null && fullData.margins?.operatingMargin !== undefined
+//     ? `${fullData.margins.operatingMargin.toFixed(2)}%`
+//     : "לא זמין";
+
+//   const fcfStatus = fullData.cashFlow?.freeCashFlow !== null && fullData.cashFlow?.freeCashFlow !== undefined
+//     ? `$${(fullData.cashFlow.freeCashFlow / 1e6).toFixed(2)}M`
+//     : 'לא זמין';
+//   const fcfTrend = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
+//     ? ` (${fullData.cashFlow.yoyChange > 0 ? '+' : ''}${fullData.cashFlow.yoyChange.toFixed(1)}% YoY)`
+//     : '';
+
+
+// const marketCapStr = fullData.marketData?.marketCap
+//   ? fullData.marketData.marketCap >= 1e9
+//     ? `$${(fullData.marketData.marketCap / 1e9).toFixed(1)}B`
+//     : `$${(fullData.marketData.marketCap / 1e6).toFixed(0)}M`
+//   : "לא זמין";
+
+// const volumeStr = fullData.marketData?.volume
+//   ? `${(fullData.marketData.volume / 1e6).toFixed(1)}M`
+//   : "לא זמין";
+
+// const fcfYoy = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
+//   ? `${fullData.cashFlow.yoyChange > 0 ? "+" : ""}${fullData.cashFlow.yoyChange.toFixed(1)}%`
+//   : "לא זמין";
+
+// // % מהכניסה עבור יעד 1, יעד 2, סטופ
+// const pctFromEntry = (price: number, entry: number) =>
+//   entry > 0 ? `${((price - entry) / entry * 100) > 0 ? "+" : ""}${((price - entry) / entry * 100).toFixed(1)}%` : "";
+
+// const target1Pct = tradeParams.hasPriceData ? pctFromEntry(tradeParams.targetPrice, tradeParams.entryPrice) : "";
+// const target2Pct = tradeParams.hasPriceData && tradeParams.targetPrice2 ? pctFromEntry(tradeParams.targetPrice2, tradeParams.entryPrice) : "";
+// const stopPct    = tradeParams.hasPriceData ? pctFromEntry(tradeParams.stopPrice, tradeParams.entryPrice) : "";
+
+
+
+
+// const preFilterSection = preFilter
+//   ? `
+// 🔍 ניתוח שוק (Pre-Filter):
+// - Run-Up 30 יום: ${preFilter.runUp30d !== null ? (preFilter.runUp30d >= 0 ? "+" : "") + preFilter.runUp30d.toFixed(1) + "%" : "לא זמין"}
+// - Run-Up 60 יום: ${preFilter.runUp60d !== null ? (preFilter.runUp60d >= 0 ? "+" : "") + preFilter.runUp60d.toFixed(1) + "%" : "לא זמין"}
+// - תגובת AH: ${preFilter.ahChangePercent !== null ? (preFilter.ahChangePercent >= 0 ? "+" : "") + preFilter.ahChangePercent.toFixed(1) + "%" : "לא זמין"}
+// - נפח יחסי: ${preFilter.volumeRatio !== null ? "×" + preFilter.volumeRatio.toFixed(1) : "לא זמין"}
+// - Multiple Expansion: ${preFilter.peExpansion !== null ? (preFilter.peExpansion >= 0 ? "+" : "") + preFilter.peExpansion.toFixed(1) + "%" : "לא זמין"}
+// - EPS Revision: ${preFilter.epsRevision !== null ? (preFilter.epsRevision >= 0 ? "+" : "") + preFilter.epsRevision.toFixed(1) + "%" : "לא זמין"}
+// - Priced-In: ${preFilter.pricedInClassification === "Fully" ? "🔴 מתומחר במלואו" : preFilter.pricedInClassification === "Partially" ? "🟡 מתומחר חלקית" : preFilter.pricedInClassification === "Not" ? "🟢 לא מתומחר" : "לא זמין"} ${preFilter.pricedInScore !== null ? `(${preFilter.pricedInScore > 0 ? "+" : ""}${preFilter.pricedInScore})` : ""}
+// ${preFilter.signals.filter(s => s.includes("🚨") || s.includes("🔴") || s.includes("🟡")).join("\n")}`
+//   : "";
+
+// const sectorHeatLine = preFilter?.sectorHeatClassification
+//   ? `- מצב סקטור: ${
+//       preFilter.sectorHeatClassification === "Hot"    ? "🔥 חם"
+//       : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
+//       : "⚪ ניטרלי"
+//     } (${preFilter.sectorName ?? "?"})
+//   • סקטור: ${preFilter.sectorChange !== null ? (preFilter.sectorChange >= 0 ? "+" : "") + preFilter.sectorChange.toFixed(1) + "%" : "N/A"}
+//   • Peers: ${preFilter.peersAvgChange !== null ? (preFilter.peersAvgChange >= 0 ? "+" : "") + preFilter.peersAvgChange.toFixed(1) + "%" : "N/A"}
+//   • ETF Flow: ${preFilter.etfFlowSignal === "positive" ? "📈 חיובי" : preFilter.etfFlowSignal === "negative" ? "📉 שלילי" : "➡️ ניטרלי"}
+//   • News: ${preFilter.newsMomentumSignal === "positive" ? "📰 חיובי" : preFilter.newsMomentumSignal === "negative" ? "📰 שלילי" : "📰 ניטרלי"}${preFilter.sectorLongBlocked ? "\n  ⛔ חסם LONG" : ""}`
+//   : "- מצב סקטור: לא זמין";
+
+// const intradayPotential = calcIntradayPotential(fullData);
+// fullData.intradayPotential = intradayPotential;
+
+
+// const intradayLine = `⚡ פוטנציאל יומי: ${
+//   intradayPotential.classification === "High"   ? "🟢 גבוה"
+//   : intradayPotential.classification === "Medium" ? "🟡 בינוני"
+//   : "🔴 נמוך — אין המלצת Day Trade"
+// } (${intradayPotential.score}/6)`;
+
+
+// const trendPotential = calcTrendPotential(fullData);
+// fullData.trendPotential = trendPotential;
+
+// const trendLine = `📈 פוטנציאל מגמה: ${
+//   trendPotential.classification === "High"   ? "🟢 גבוה"
+//   : trendPotential.classification === "Medium" ? "🟡 בינוני"
+//   : "🔴 נמוך — אין המלצת Swing"
+// } (${trendPotential.score}/7)`;
+   
+// const supercycle = await calcSupercycle(fullData);
+// fullData.supercycle = supercycle;
+
+// const supercycleLine = `🌀 Supercycle: ${
+//   supercycle.confirmed ? "✅ מאושר"  : "❌ לא מאושר"
+// } (${supercycle.score}/5)`;
+
+
+
+// const marketTruth = calcMarketTruthOverride(fullData, tradeParams.direction);
+// fullData.marketTruthOverride = marketTruth;
+
+// // אם מופעל — דורס את כיוון המסחר ל-NO TRADE
+// const finalDirection = marketTruth.triggered
+//   ? "NO TRADE ❌"
+//   : tradeParams.direction;
+
+// const marketTruthLine = marketTruth.triggered
+//   ? `⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}`
+//   : null;
+
+// if (miraScore.totalScore >= 9 && supercycle.confirmed) {
+//   miraScore.classification = "EXTREME";
+// }
+
+// const sectorHeatShort = preFilter?.sectorHeatClassification
+//   ? preFilter.sectorHeatClassification === "Hot"  ? "🔥 חם"
+//   : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
+//   : "⚪ ניטרלי"
+//   : "לא זמין";
+
+  
+// const prompt = `
+// אתה Mira, אנליסט פיננסי AI מומחה.
+// צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
+
+// 📊 נתונים גולמיים:
+// סימול: ${fullData.symbol}
+// שם: ${fullData.companyName}
+// תאריך: ${fullData.reportDate}
+// מחיר נוכחי: $${currentPrice}
+// שווי שוק: ${marketCapStr}
+// נפח מסחר: ${volumeStr}
+
+// ביצועים:
+// EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
+// הכנסות: $${fullData.revenue.actual != null ? (fullData.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'} (צפי: $${fullData.revenue.estimate != null ? (fullData.revenue.estimate / 1e9).toFixed(2) + 'B' : 'N/A'}) | סטייה: ${revenueDeviation}%
+// תחזית (Guidance): ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
+// FCF YoY: ${fcfYoy}
+// צמיחה YoY: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth}
+// סקטור: ${sectorHeatShort}
+// פוטנציאל יומי: ${intradayPotential.classification} (${intradayPotential.score}/6)
+// פוטנציאל מגמה: ${trendPotential.classification} (${trendPotential.score}/7)
+// ניקוד מערכת: ${miraScore.totalScore}
+// סיווג מערכת: ${miraScore.classification}
+// ${marketTruth.triggered ? `⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}` : ''}
+
+// הוראות סיווג קריטיות:
+// - אם הסיווג "POSITIVE" → כיוון חייב להיות "LONG 🟢"
+// - אם הסיווג "STRONG"   → כיוון חייב להיות "LONG 🟢🟢"
+// - אם הסיווג "EXTREME"  → כיוון חייב להיות "LONG 🟢🟢🟢"
+// - אם הסיווג "NEGATIVE" → כיוון חייב להיות "SHORT 🔴"
+// - אם הסיווג "NEUTRAL"  → כיוון "NEUTRAL ⚪"
+// - אם Market Truth Override מופעל → כיוון חייב להיות "NO TRADE ❌"
+
+// המלצת מסחר (מחושבת):
+// כיוון: ${finalDirection}
+// ${tradeParams.hasPriceData ? `
+// כניסה: $${tradeParams.entryPrice}
+// יעד 1: $${tradeParams.targetPrice} (${target1Pct})
+// יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
+// סטופ: $${tradeParams.stopPrice} (${stopPct})
+// סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}
+// ` : 'מחיר לא זמין'}
+
+// המשימה שלך:
+// כתוב את ההודעה הסופית לטלגרם בדיוק בפורמט הבא — לא להוסיף שדות שלא מופיעים כאן.
+
+// פורמט נדרש:
+
+// 📌 סימול: ${fullData.symbol}
+// 🏢 חברה: ${fullData.companyName}
+// 💰 מחיר: $${currentPrice}
+// 📊 שווי שוק: ${marketCapStr}
+// 📈 נפח מסחר: ${volumeStr}
+
+// 📊 תוצאות רבעוניות:
+// • EPS: $${fullData.eps.actual} (צפי: $${fullData.eps.estimate})
+// • הכנסות: $${fullData.revenue.actual != null ? (fullData.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'} (צפי: $${fullData.revenue.estimate != null ? (fullData.revenue.estimate / 1e9).toFixed(2) + 'B' : 'N/A'})
+
+// 📈 צמיחה שנתית (YoY):
+// • EPS[%]: ${yoyEpsGrowth}
+// • הכנסות[%]: ${yoyRevGrowth}
+// • FCF[%]: ${fcfYoy}
+
+// 🔥 מצב סקטור: ${sectorHeatShort}
+// ⚡ פוטנציאל יומי: ${
+//   intradayPotential.classification === "High"   ? "🟢 גבוה"
+//   : intradayPotential.classification === "Medium" ? "🟡 בינוני"
+//   : "🔴 נמוך"
+// } (${intradayPotential.score}/6)
+// 📈 פוטנציאל מגמה: ${
+//   trendPotential.classification === "High"   ? "🟢 גבוה"
+//   : trendPotential.classification === "Medium" ? "🟡 בינוני"
+//   : "🔴 נמוך"
+// } (${trendPotential.score}/7)
+// 📊 ניקוד: ${miraScore.totalScore}
+// 🎯 סיווג: ${
+//   miraScore.classification === 'EXTREME'  ? '🟢🟢🟢 Extreme' :
+//   miraScore.classification === 'STRONG'   ? '🟢🟢 Strong'    :
+//   miraScore.classification === 'POSITIVE' ? '🟢 Positive'    :
+//   miraScore.classification === 'NEGATIVE' ? '❌ Negative'    :
+//   '❌ Neutral'
+// }
+// ${miraScore.classification === 'STRONG'
+//   ? `🌀 Supercycle: ${supercycle.confirmed ? "✅ מאושר" : `❌ לא מאושר (${supercycle.score}/5) — חסר ${5 - supercycle.score} תנאים ל-Extreme`}`
+//   : ''}
+// ${marketTruth.triggered ? `\n⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}` : ''}
+
+// 💼 תוכנית מסחר:
+// כיוון: ${finalDirection}
+// ${tradeParams.hasPriceData && finalDirection !== "NO TRADE ❌" ? `כניסה: $${tradeParams.entryPrice}
+// יעד 1: $${tradeParams.targetPrice} (${target1Pct})
+// יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
+// סטופ: $${tradeParams.stopPrice} (${stopPct})
+// סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}` : finalDirection === "NO TRADE ❌" ? `⚠️ אין כניסה — השוק דוחה את הדוח` : `⚠️ אין מחיר`}
+
+// 📝 סיכום:
+// [כתוב משפט אחד-שניים חדים בעברית. הסבר את הסיווג ואת כיוון המסחר על בסיס הנתונים.]
+// `;
+//   try {
+//     // 🔥 השינוי הגדול: שימוש ב-Gemini Flash דרך OpenRouter
+//     const telegramMessage = await callOpenRouterAPI(
+//       [
+//         { 
+//           role: "system", 
+//           content: "אתה עיתונאי פיננסי בכיר. אתה כותב בעברית בלבד. אתה מדויק, תמציתי ומקצועי." 
+//         }, 
+//         { 
+//           role: "user", 
+//           content: prompt 
+//         }
+//       ],
+//       "google/gemini-2.0-flash-001", // המודל הזול והמהיר
+//       0.4,  // טמפרטורה בינונית ליצירתיות בטקסט
+//       1000  // מספיק טוקנים לפלט
+//     );
+
+//     logger.info(`📝 Generated Message Preview: ${telegramMessage.substring(0, 50)}...`);
+
+//     if (!telegramMessage || telegramMessage.trim().length === 0) {
+//       throw new Error("AI returned empty summary");
+//     }
+
+//     const trimmedMessage = telegramMessage.trim();
+
+//     // בדיקת תקינות (Safety Check)
+//     if (miraScore.classification === 'POSITIVE' && !trimmedMessage.includes('LONG')) {
+//        logger.warn(`⚠️ Warning: POSITIVE score but AI text missed 'LONG' keyword.`);
+//     }
+
+//     return {
+//       symbol: fullData.symbol,
+//       date: fullData.reportDate,
+//       summary: trimmedMessage,
+//       miraScore,
+//       tradingRecommendation: tradeParams,
+//       aiReasoning: "Generated by Gemini Flash",
+//       conclusion: "Report Generated",
+//       dataSources: ["Finnhub", "FMP", "Gemini"],
+//       confidence: 100
+//     };
+
+//   } catch (e) {
+//     logger.error(`❌ Error generating Final Analysis:`, e);
+//     throw e;
+//   }
+// }
+
+
 export async function finalAnalysis(fullData: FullExtractionResponse, miraScore: MiraScore): Promise<FinalAnalysis> {
   logger.info(`📝 Generating Final Telegram Report for ${fullData.symbol} using Gemini Flash...`);
 
   const currentPrice = fullData.marketData?.price || 0;
   const preFilter = fullData.hardPreFilter;
-
-  
 
   if (!currentPrice || currentPrice === 0) {
     logger.warn(`⚠️ No valid price for ${fullData.symbol} - cannot calculate trade parameters`);
@@ -1851,11 +2449,11 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   
   const tradeParams = calculateTradeParams(currentPrice, miraScore.classification);
 
-  // חישובי עזר (נשאר אותו דבר)
+  // חישובי עזר (נשארו בדיוק כמו שהיו)
   const epsDeviation = fullData.eps.estimate && fullData.eps.actual !== null
     ? (((fullData.eps.actual - fullData.eps.estimate) / Math.abs(fullData.eps.estimate)) * 100).toFixed(2)
     : "N/A";
-  const revenueDeviation = fullData.revenue.estimate
+  const revenueDeviation = fullData.revenue.estimate != null && fullData.revenue.actual != null
     ? (((fullData.revenue.actual - fullData.revenue.estimate) / fullData.revenue.estimate) * 100).toFixed(2)
     : "N/A";
 
@@ -1865,171 +2463,86 @@ export async function finalAnalysis(fullData: FullExtractionResponse, miraScore:
   const yoyRevGrowth = fullData.yoyGrowth?.revenueChange !== null && fullData.yoyGrowth?.revenueChange !== undefined
     ? `${fullData.yoyGrowth.revenueChange.toFixed(2)}%${fullData.yoyGrowth.revenueChangeType === "TTM" ? " (TTM)" : ""}`
     : "לא זמין";
-  const netMargin = fullData.margins?.netMargin !== null && fullData.margins?.netMargin !== undefined
-    ? `${fullData.margins.netMargin.toFixed(2)}%`
-    : "לא זמין";
-  const opMarginLabel = fullData.margins?.isEfficiencyRatio ? 'Efficiency' : 'Operating';
-  const opMargin = fullData.margins?.operatingMargin !== null && fullData.margins?.operatingMargin !== undefined
-    ? `${fullData.margins.operatingMargin.toFixed(2)}%`
+
+  const fcfYoy = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
+    ? `${fullData.cashFlow.yoyChange > 0 ? "+" : ""}${fullData.cashFlow.yoyChange.toFixed(1)}%`
     : "לא זמין";
 
-  const fcfStatus = fullData.cashFlow?.freeCashFlow !== null && fullData.cashFlow?.freeCashFlow !== undefined
-    ? `$${(fullData.cashFlow.freeCashFlow / 1e6).toFixed(2)}M`
-    : 'לא זמין';
-  const fcfTrend = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
-    ? ` (${fullData.cashFlow.yoyChange > 0 ? '+' : ''}${fullData.cashFlow.yoyChange.toFixed(1)}% YoY)`
-    : '';
+  const marketCapStr = fullData.marketData?.marketCap
+    ? fullData.marketData.marketCap >= 1e9
+      ? `$${(fullData.marketData.marketCap / 1e9).toFixed(1)}B`
+      : `$${(fullData.marketData.marketCap / 1e6).toFixed(0)}M`
+    : "לא זמין";
 
+  const volumeStr = fullData.marketData?.volume
+    ? `${(fullData.marketData.volume / 1e6).toFixed(1)}M`
+    : "לא זמין";
 
-const marketCapStr = fullData.marketData?.marketCap
-  ? fullData.marketData.marketCap >= 1e9
-    ? `$${(fullData.marketData.marketCap / 1e9).toFixed(1)}B`
-    : `$${(fullData.marketData.marketCap / 1e6).toFixed(0)}M`
-  : "לא זמין";
+  const sectorHeatShort = preFilter?.sectorHeatClassification
+    ? preFilter.sectorHeatClassification === "Hot" ? "🔥 חם"
+    : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
+    : "⚪ ניטרלי"
+    : "לא זמין";
 
-const volumeStr = fullData.marketData?.volume
-  ? `${(fullData.marketData.volume / 1e6).toFixed(1)}M`
-  : "לא זמין";
+  const intradayPotential = calcIntradayPotential(fullData);
+  fullData.intradayPotential = intradayPotential;
 
-const fcfYoy = fullData.cashFlow?.yoyChange !== null && fullData.cashFlow?.yoyChange !== undefined
-  ? `${fullData.cashFlow.yoyChange > 0 ? "+" : ""}${fullData.cashFlow.yoyChange.toFixed(1)}%`
-  : "לא זמין";
+  const trendPotential = calcTrendPotential(fullData);
+  fullData.trendPotential = trendPotential;
 
-// % מהכניסה עבור יעד 1, יעד 2, סטופ
-const pctFromEntry = (price: number, entry: number) =>
-  entry > 0 ? `${((price - entry) / entry * 100) > 0 ? "+" : ""}${((price - entry) / entry * 100).toFixed(1)}%` : "";
+  const supercycle = await calcSupercycle(fullData);
+  fullData.supercycle = supercycle;
 
-const target1Pct = tradeParams.hasPriceData ? pctFromEntry(tradeParams.targetPrice, tradeParams.entryPrice) : "";
-const target2Pct = tradeParams.hasPriceData && tradeParams.targetPrice2 ? pctFromEntry(tradeParams.targetPrice2, tradeParams.entryPrice) : "";
-const stopPct    = tradeParams.hasPriceData ? pctFromEntry(tradeParams.stopPrice, tradeParams.entryPrice) : "";
+  const marketTruth = calcMarketTruthOverride(fullData, tradeParams.direction);
+  fullData.marketTruthOverride = marketTruth;
 
+  const finalDirection = marketTruth.triggered
+    ? "NO TRADE ❌"
+    : tradeParams.direction;
 
+  if (miraScore.totalScore >= 9 && supercycle.confirmed) {
+    miraScore.classification = "EXTREME";
+  }
 
+  // ======================== PROMPT חדש של Mira 3.1 ========================
+  const prompt = `
+אתה Mira 3.1 — Dual Reaction Earnings Engine Extreme Filter.
+אתה חייב לפעול **בדיוק** לפי הכללים של Mira 3.1 (אל תמציא כללים חדשים).
 
-const preFilterSection = preFilter
-  ? `
-🔍 ניתוח שוק (Pre-Filter):
-- Run-Up 30 יום: ${preFilter.runUp30d !== null ? (preFilter.runUp30d >= 0 ? "+" : "") + preFilter.runUp30d.toFixed(1) + "%" : "לא זמין"}
-- Run-Up 60 יום: ${preFilter.runUp60d !== null ? (preFilter.runUp60d >= 0 ? "+" : "") + preFilter.runUp60d.toFixed(1) + "%" : "לא זמין"}
-- תגובת AH: ${preFilter.ahChangePercent !== null ? (preFilter.ahChangePercent >= 0 ? "+" : "") + preFilter.ahChangePercent.toFixed(1) + "%" : "לא זמין"}
-- נפח יחסי: ${preFilter.volumeRatio !== null ? "×" + preFilter.volumeRatio.toFixed(1) : "לא זמין"}
-- Multiple Expansion: ${preFilter.peExpansion !== null ? (preFilter.peExpansion >= 0 ? "+" : "") + preFilter.peExpansion.toFixed(1) + "%" : "לא זמין"}
-- EPS Revision: ${preFilter.epsRevision !== null ? (preFilter.epsRevision >= 0 ? "+" : "") + preFilter.epsRevision.toFixed(1) + "%" : "לא זמין"}
-- Priced-In: ${preFilter.pricedInClassification === "Fully" ? "🔴 מתומחר במלואו" : preFilter.pricedInClassification === "Partially" ? "🟡 מתומחר חלקית" : preFilter.pricedInClassification === "Not" ? "🟢 לא מתומחר" : "לא זמין"} ${preFilter.pricedInScore !== null ? `(${preFilter.pricedInScore > 0 ? "+" : ""}${preFilter.pricedInScore})` : ""}
-${preFilter.signals.filter(s => s.includes("🚨") || s.includes("🔴") || s.includes("🟡")).join("\n")}`
-  : "";
+שלב 0 – Hard Pre-Filter (חסם מוחלט):
+- Guidance לא Raised / Collapsed
+- EPS או Revenue Miss מהותי
+- Beat קטן לאחר Run-Up גדול (>15% ב-30 יום)
+- תגובת AH מנוגדת לדוח (>4%)
+- דוח טוב + מחיר נופל = Market Negative Signal
+- BV ירידה + widening spreads (ב-mREIT) = חסם
 
-const sectorHeatLine = preFilter?.sectorHeatClassification
-  ? `- מצב סקטור: ${
-      preFilter.sectorHeatClassification === "Hot"    ? "🔥 חם"
-      : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
-      : "⚪ ניטרלי"
-    } (${preFilter.sectorName ?? "?"})
-  • סקטור: ${preFilter.sectorChange !== null ? (preFilter.sectorChange >= 0 ? "+" : "") + preFilter.sectorChange.toFixed(1) + "%" : "N/A"}
-  • Peers: ${preFilter.peersAvgChange !== null ? (preFilter.peersAvgChange >= 0 ? "+" : "") + preFilter.peersAvgChange.toFixed(1) + "%" : "N/A"}
-  • ETF Flow: ${preFilter.etfFlowSignal === "positive" ? "📈 חיובי" : preFilter.etfFlowSignal === "negative" ? "📉 שלילי" : "➡️ ניטרלי"}
-  • News: ${preFilter.newsMomentumSignal === "positive" ? "📰 חיובי" : preFilter.newsMomentumSignal === "negative" ? "📰 שלילי" : "📰 ניטרלי"}${preFilter.sectorLongBlocked ? "\n  ⛔ חסם LONG" : ""}`
-  : "- מצב סקטור: לא זמין";
+שלב 1-2 – Dynamic Reaction Score:
+EPS Beat/Miss ±2.5 | Revenue ±1.5 | YoY EPS ±1.5 | YoY Revenue ±1 | FCF ±1.5 | Margins ±1 | Guidance ±2 | Management Tone ±0.5 | Sector Heat ±1 | Pre-Earnings Pricing ±1.5 | Market Reaction ±2
+SCORE < +5 = ❌ NO TRADE חובה
 
-const intradayPotential = calcIntradayPotential(fullData);
-fullData.intradayPotential = intradayPotential;
+שלב 3-8 – Priced-In, Sector Heat, Intraday/Trend Potential, Supercycle, Market Truth Override
+רק 🟢🟢🟢 Extreme = Trade Approved. כל השאר = ❌ NO TRADE
 
-
-const intradayLine = `⚡ פוטנציאל יומי: ${
-  intradayPotential.classification === "High"   ? "🟢 גבוה"
-  : intradayPotential.classification === "Medium" ? "🟡 בינוני"
-  : "🔴 נמוך — אין המלצת Day Trade"
-} (${intradayPotential.score}/6)`;
-
-
-const trendPotential = calcTrendPotential(fullData);
-fullData.trendPotential = trendPotential;
-
-const trendLine = `📈 פוטנציאל מגמה: ${
-  trendPotential.classification === "High"   ? "🟢 גבוה"
-  : trendPotential.classification === "Medium" ? "🟡 בינוני"
-  : "🔴 נמוך — אין המלצת Swing"
-} (${trendPotential.score}/7)`;
-   
-const supercycle = await calcSupercycle(fullData);
-fullData.supercycle = supercycle;
-
-const supercycleLine = `🌀 Supercycle: ${
-  supercycle.confirmed ? "✅ מאושר"  : "❌ לא מאושר"
-} (${supercycle.score}/5)`;
-
-
-
-const marketTruth = calcMarketTruthOverride(fullData, tradeParams.direction);
-fullData.marketTruthOverride = marketTruth;
-
-// אם מופעל — דורס את כיוון המסחר ל-NO TRADE
-const finalDirection = marketTruth.triggered
-  ? "NO TRADE ❌"
-  : tradeParams.direction;
-
-const marketTruthLine = marketTruth.triggered
-  ? `⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}`
-  : null;
-
-if (miraScore.totalScore >= 9 && supercycle.confirmed) {
-  miraScore.classification = "EXTREME";
-}
-
-const sectorHeatShort = preFilter?.sectorHeatClassification
-  ? preFilter.sectorHeatClassification === "Hot"  ? "🔥 חם"
-  : preFilter.sectorHeatClassification === "Cold" ? "❄️ חלש"
-  : "⚪ ניטרלי"
-  : "לא זמין";
-
-  
-const prompt = `
-אתה Mira, אנליסט פיננסי AI מומחה.
-צור דוח טלגרם מפורט ומעוצב בעברית בלבד.
-
-📊 נתונים גולמיים:
+נתונים גולמיים:
 סימול: ${fullData.symbol}
 שם: ${fullData.companyName}
-תאריך: ${fullData.reportDate}
-מחיר נוכחי: $${currentPrice}
+מחיר: $${currentPrice}
 שווי שוק: ${marketCapStr}
-נפח מסחר: ${volumeStr}
-
-ביצועים:
+נפח: ${volumeStr}
 EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate}) | סטייה: ${epsDeviation}%
-הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B) | סטייה: ${revenueDeviation}%
-תחזית (Guidance): ${fullData.guidance.status}${fullData.guidance.details ? ` - ${fullData.guidance.details}` : ''}
+הכנסות: $${fullData.revenue.actual != null ? (fullData.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'} (צפי: $${fullData.revenue.estimate != null ? (fullData.revenue.estimate / 1e9).toFixed(2) + 'B' : 'N/A'})
+Guidance: ${fullData.guidance.status}
 FCF YoY: ${fcfYoy}
-צמיחה YoY: EPS ${yoyEpsGrowth} | Revenue ${yoyRevGrowth}
+YoY EPS: ${yoyEpsGrowth} | Revenue: ${yoyRevGrowth}
 סקטור: ${sectorHeatShort}
 פוטנציאל יומי: ${intradayPotential.classification} (${intradayPotential.score}/6)
 פוטנציאל מגמה: ${trendPotential.classification} (${trendPotential.score}/7)
-ניקוד מערכת: ${miraScore.totalScore}
-סיווג מערכת: ${miraScore.classification}
-${marketTruth.triggered ? `⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}` : ''}
+Supercycle: ${supercycle.confirmed ? "✅ 5/5" : `❌ ${supercycle.score}/5`}
+Market Truth Override: ${marketTruth.triggered ? "כן — " + marketTruth.reason : "לא"}
+ניקוד Mira: ${miraScore.totalScore}
 
-הוראות סיווג קריטיות:
-- אם הסיווג "POSITIVE" → כיוון חייב להיות "LONG 🟢"
-- אם הסיווג "STRONG"   → כיוון חייב להיות "LONG 🟢🟢"
-- אם הסיווג "EXTREME"  → כיוון חייב להיות "LONG 🟢🟢🟢"
-- אם הסיווג "NEGATIVE" → כיוון חייב להיות "SHORT 🔴"
-- אם הסיווג "NEUTRAL"  → כיוון "NEUTRAL ⚪"
-- אם Market Truth Override מופעל → כיוון חייב להיות "NO TRADE ❌"
-
-המלצת מסחר (מחושבת):
-כיוון: ${finalDirection}
-${tradeParams.hasPriceData ? `
-כניסה: $${tradeParams.entryPrice}
-יעד 1: $${tradeParams.targetPrice} (${target1Pct})
-יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
-סטופ: $${tradeParams.stopPrice} (${stopPct})
-סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}
-` : 'מחיר לא זמין'}
-
-המשימה שלך:
-כתוב את ההודעה הסופית לטלגרם בדיוק בפורמט הבא — לא להוסיף שדות שלא מופיעים כאן.
-
-פורמט נדרש:
+פורמט הפלט חייב להיות **בדיוק** כזה (אל תוסיף/תשנה שום שורה):
 
 📌 סימול: ${fullData.symbol}
 🏢 חברה: ${fullData.companyName}
@@ -2038,79 +2551,54 @@ ${tradeParams.hasPriceData ? `
 📈 נפח מסחר: ${volumeStr}
 
 📊 תוצאות רבעוניות:
-• EPS: $${fullData.eps.actual} (צפי: $${fullData.eps.estimate})
-• הכנסות: $${(fullData.revenue.actual / 1e9).toFixed(2)}B (צפי: $${(fullData.revenue.estimate / 1e9).toFixed(2)}B)
+• EPS: ${fullData.eps.actual} (צפי: ${fullData.eps.estimate})
+• הכנסות: $${fullData.revenue.actual != null ? (fullData.revenue.actual / 1e9).toFixed(2) + 'B' : 'N/A'} (צפי: $${fullData.revenue.estimate != null ? (fullData.revenue.estimate / 1e9).toFixed(2) + 'B' : 'N/A'})
 
 📈 צמיחה שנתית (YoY):
-• EPS[%]: ${yoyEpsGrowth}
-• הכנסות[%]: ${yoyRevGrowth}
-• FCF[%]: ${fcfYoy}
+• EPS: ${yoyEpsGrowth}
+• הכנסות: ${yoyRevGrowth}
+• FCF: ${fcfYoy}
 
 🔥 מצב סקטור: ${sectorHeatShort}
 ⚡ פוטנציאל יומי: ${
-  intradayPotential.classification === "High"   ? "🟢 גבוה"
-  : intradayPotential.classification === "Medium" ? "🟡 בינוני"
-  : "🔴 נמוך"
-} (${intradayPotential.score}/6)
+  intradayPotential.classification === "High" ? "גבוה" : intradayPotential.classification === "Medium" ? "בינוני" : "נמוך"
+} 
 📈 פוטנציאל מגמה: ${
-  trendPotential.classification === "High"   ? "🟢 גבוה"
-  : trendPotential.classification === "Medium" ? "🟡 בינוני"
-  : "🔴 נמוך"
-} (${trendPotential.score}/7)
+  trendPotential.classification === "High" ? "גבוה" : trendPotential.classification === "Medium" ? "בינוני" : "נמוך"
+}
 📊 ניקוד: ${miraScore.totalScore}
 🎯 סיווג: ${
-  miraScore.classification === 'EXTREME'  ? '🟢🟢🟢 Extreme' :
-  miraScore.classification === 'STRONG'   ? '🟢🟢 Strong'    :
-  miraScore.classification === 'POSITIVE' ? '🟢 Positive'    :
-  miraScore.classification === 'NEGATIVE' ? '❌ Negative'    :
-  '❌ Neutral'
+  miraScore.classification === 'EXTREME' ? '🟢🟢🟢 Extreme' :
+  miraScore.classification === 'STRONG' ? '🟢🟢 Strong' :
+  miraScore.classification === 'POSITIVE' ? '🟢 Positive' :
+  miraScore.classification === 'NEGATIVE' ? '❌ Negative' : '❌ Neutral'
 }
-${miraScore.classification === 'STRONG'
-  ? `🌀 Supercycle: ${supercycle.confirmed ? "✅ מאושר" : `❌ לא מאושר (${supercycle.score}/5) — חסר ${5 - supercycle.score} תנאים ל-Extreme`}`
-  : ''}
-${marketTruth.triggered ? `\n⚠️ Market Truth Override: NO TRADE — ${marketTruth.reason}` : ''}
 
 💼 תוכנית מסחר:
 כיוון: ${finalDirection}
 ${tradeParams.hasPriceData && finalDirection !== "NO TRADE ❌" ? `כניסה: $${tradeParams.entryPrice}
-יעד 1: $${tradeParams.targetPrice} (${target1Pct})
-יעד 2: $${tradeParams.targetPrice2} (${target2Pct})
-סטופ: $${tradeParams.stopPrice} (${stopPct})
-סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}` : finalDirection === "NO TRADE ❌" ? `⚠️ אין כניסה — השוק דוחה את הדוח` : `⚠️ אין מחיר`}
+יעד 1: $${tradeParams.targetPrice} (${tradeParams.hasPriceData ? ((tradeParams.targetPrice - tradeParams.entryPrice) / tradeParams.entryPrice * 100).toFixed(1) + '%' : ''})
+יעד 2: $${tradeParams.targetPrice2 || '—'} 
+סטופ: $${tradeParams.stopPrice} 
+סיכוי/סיכון: ${tradeParams.riskReward?.toFixed(1) ?? "N/A"}` : '⚠️ NO TRADE — אין כניסה'}
 
-📝 סיכום:
-[כתוב משפט אחד-שניים חדים בעברית. הסבר את הסיווג ואת כיוון המסחר על בסיס הנתונים.]
+📝 סיכום: “[תגובה קצרה וחדה בעברית — הסבר למה כן/לא]”
+
+**Mira 3.1 Verdict:** [הסבר קצר מדוע Trade Approved או NO TRADE]
 `;
+
   try {
-    // 🔥 השינוי הגדול: שימוש ב-Gemini Flash דרך OpenRouter
-    const telegramMessage = await callOpenRouterAPI(
+    const telegramMessage = await callGrokAPI(
       [
-        { 
-          role: "system", 
-          content: "אתה עיתונאי פיננסי בכיר. אתה כותב בעברית בלבד. אתה מדויק, תמציתי ומקצועי." 
-        }, 
-        { 
-          role: "user", 
-          content: prompt 
-        }
+        { role: "system", content: "אתה Mira 3.1. אתה כותב בעברית בלבד, מדויק, תמציתי ומקצועי. אתה מקפיד על הפורמט בדיוק." },
+        { role: "user", content: prompt }
       ],
-      "google/gemini-2.0-flash-001", // המודל הזול והמהיר
-      0.4,  // טמפרטורה בינונית ליצירתיות בטקסט
-      1000  // מספיק טוקנים לפלט
+      0.3,   // temperature
+      1200,  // maxTokens
+      false  // enableWebSearch
     );
 
-    logger.info(`📝 Generated Message Preview: ${telegramMessage.substring(0, 50)}...`);
-
-    if (!telegramMessage || telegramMessage.trim().length === 0) {
-      throw new Error("AI returned empty summary");
-    }
-
     const trimmedMessage = telegramMessage.trim();
-
-    // בדיקת תקינות (Safety Check)
-    if (miraScore.classification === 'POSITIVE' && !trimmedMessage.includes('LONG')) {
-       logger.warn(`⚠️ Warning: POSITIVE score but AI text missed 'LONG' keyword.`);
-    }
 
     return {
       symbol: fullData.symbol,
@@ -2118,7 +2606,7 @@ ${tradeParams.hasPriceData && finalDirection !== "NO TRADE ❌" ? `כניסה: $
       summary: trimmedMessage,
       miraScore,
       tradingRecommendation: tradeParams,
-      aiReasoning: "Generated by Gemini Flash",
+      aiReasoning: "Generated by Mira 3.1 Prompt",
       conclusion: "Report Generated",
       dataSources: ["Finnhub", "FMP", "Gemini"],
       confidence: 100
@@ -2129,6 +2617,8 @@ ${tradeParams.hasPriceData && finalDirection !== "NO TRADE ❌" ? `כניסה: $
     throw e;
   }
 }
+
+
 // ============================================
 // STOCK PROCESSOR (ENGINE) - OPTIMIZED VERSION
 // ============================================
@@ -2200,6 +2690,7 @@ export class StockProcessor {
       const checkEnd = 10*60; // 570
 
       return currentMinutesFromMidnight >= checkStart && currentMinutesFromMidnight <= checkEnd;
+      return true;
     }
     
     if (reportType === "AMC") {
