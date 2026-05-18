@@ -391,10 +391,10 @@ export async function callGrokAPI(
   const GROK_API_URL = "https://api.x.ai/v1/responses";
   
   const requestBody: any = {
-    model: "grok-4-fast-reasoning",
+    model: "grok-4.3",
     input: messages,
     temperature,
-    max_tokens: maxTokens,
+    max_output_tokens: maxTokens,
     stream: false,
   };
 

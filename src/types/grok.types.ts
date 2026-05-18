@@ -15,7 +15,7 @@ export interface GrokRequest {
   model: string;
   messages: GrokMessage[];
   temperature?: number;
-  max_tokens?: number;
+  max_output_tokens?: number;
   stream?: boolean;
   search_parameters?: {
     mode: "auto" | "always" | "never";
