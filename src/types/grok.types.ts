@@ -13,7 +13,7 @@ export interface GrokMessage {
 
 export interface GrokRequest {
   model: string;
-  messages: GrokMessage[];
+  input: GrokMessage[];
   temperature?: number;
   max_output_tokens?: number;
   stream?: boolean;

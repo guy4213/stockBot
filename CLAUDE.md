@@ -62,7 +62,7 @@ app.ts (cron 06:00) → runDailyCheck() → morningIntelligence(date)
 
 ### AI providers
 
-- **Grok (xAI)** — primary AI via `https://api.x.ai/v1/responses`, model `grok-4-fast-reasoning`. Used for: earnings quarter lookup, IR portal verification, earnings PDF discovery (with web_search tool), full extraction analysis.
+- **Grok (xAI)** — primary AI via `https://api.x.ai/v1/responses`, model `grok-4.3`. Used for: earnings quarter lookup, IR portal verification, earnings PDF discovery (with web_search tool), full extraction analysis.
 - **OpenRouter** — secondary AI via `https://openrouter.ai/api/v1/chat/completions`, default model `google/gemini-2.0-flash-001`. Used for IR portal verification (`verifyIRWithFlash`).
 
 ### External data APIs
